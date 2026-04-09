@@ -1,177 +1,178 @@
-# AGENTS.md — Nostr Starter Kit for Identity Hackathon
+# AGENTS.md - Nostr Explorer for Identity Hackathon
 
-You are helping a participant of La Crypta's **IDENTITY Hackathon** (April 2026).
-Your goal: help them build a winning Nostr Identity app using this starter kit.
+You are helping a participant of La Crypta's IDENTITY Hackathon (April 2026).
+Your goal: help them ship a polished Nostr identity project on top of this repo's current codebase, not the original starter assumptions.
 
-## Hackathon Context
-- **Theme:** IDENTITY — Nostr Identity & Social
-- **Organizer:** La Crypta (lacrypta.ar) — Argentine Bitcoin & Nostr community
-- **Level:** Beginner-friendly, but winning projects show creativity and polish
-- **Registration:** https://tally.so/r/9qDNEY
-- **Community:** Discord La Crypta
+## Reality Check
 
-## What Judges Look For
-1. **Identity innovation** — creative use of Nostr identity primitives (keys, profiles, NIP-05, badges, delegation)
-2. **Working demo** — it must run and be interactive
-3. **UX polish** — La Crypta look and feel is already applied (dark theme, green accents, skeleton loading)
-4. **Protocol understanding** — proper use of NIPs, relay management, event kinds
-5. **Completeness** — a focused, finished feature beats many half-done ones
+This repository started from the La Crypta Nostr starter, but the current app is now graph-first:
 
-## Stack
-- **Next.js 16** + TypeScript + Tailwind CSS v4
-- **NDK** (Nostr Dev Kit v3) — high-level Nostr abstraction
-- **Zustand** — lightweight state management
-- **nostr-tools** — low-level Nostr utilities
-- **qrcode.react** — QR code generation for NIP-46 bunker flow
+- `/` renders the identity graph explorer
+- `/profile` renders the classic profile view
+- `/badges` renders the NIP-58 badge view
 
-## Project Structure
-```
+Do not assume the old `store/nav.ts` or "single-page section switcher" flow still exists. It does not match the current code.
+
+## What Judges Still Care About
+
+1. Identity innovation
+2. Working demo
+3. UX polish
+4. Protocol understanding
+5. Completeness
+
+For this repo, the strongest angle is identity graph exploration, trust signals, relay-aware discovery, and exportable evidence.
+
+## Current Stack
+
+- Next.js 16 + TypeScript + Tailwind CSS v4
+- NDK v3 for auth, profile, badges, and relay-aware fetches
+- nostr-tools for low-level NIP-19 helpers and protocol utilities
+- Zustand for auth state and the graph app store
+- deck.gl for graph rendering
+- d3-force for graph layout work
+- Dexie for client-side persistence in the graph feature
+- Web Workers for graph analysis and event processing
+- qrcode.react for NIP-46 bunker login
+
+## Current Route Map
+
+- `src/app/page.tsx`
+  Home route. Loads the graph explorer client.
+- `src/app/profile/page.tsx`
+  Profile route. Uses the shared `Navbar` and `Profile` component.
+- `src/app/badges/page.tsx`
+  Badges route. Uses the shared `Navbar` and `Badges` component.
+
+## Actual Project Structure
+
+```text
 src/
 ├── app/
-│   ├── layout.tsx        # Root layout (Inter font, La Crypta theme)
-│   ├── page.tsx          # Main page — renders active section (Profile/Badges)
-│   └── globals.css       # La Crypta design system (colors, skeletons, animations)
+│   ├── layout.tsx
+│   ├── page.tsx
+│   ├── badges/page.tsx
+│   ├── profile/page.tsx
+│   └── globals.css
 ├── components/
-│   ├── Navbar.tsx        # Fixed nav with section links (Profile, Badges) + user menu
-│   ├── LoginModal.tsx    # Modal with 3 auth methods + QR bunker flow
-│   ├── Profile.tsx       # User profile with skeleton loading
-│   └── Badges.tsx        # NIP-58 badges display with skeleton loading
+│   ├── Navbar.tsx
+│   ├── LoginModal.tsx
+│   ├── Profile.tsx
+│   ├── Badges.tsx
+│   └── SkeletonImage.tsx
+├── features/
+│   └── graph/
+│       ├── GraphApp.tsx
+│       ├── GraphClient.tsx
+│       ├── analysis/
+│       ├── app/store/
+│       ├── components/
+│       ├── db/
+│       ├── export/
+│       ├── kernel/
+│       ├── nostr/
+│       ├── render/
+│       └── workers/
 ├── lib/
-│   └── nostr.ts          # NDK setup, login, relay mgmt, data fetching (all with timeouts)
+│   ├── media.ts
+│   └── nostr.ts
 ├── store/
-│   ├── auth.ts           # Auth state (Zustand + localStorage persistence)
-│   └── nav.ts            # Navigation state (active section)
+│   └── auth.ts
 └── types/
-    └── nostr.d.ts        # NIP-07 window.nostr type declarations
-```
-
-## Commands
-```bash
-npm install          # Install dependencies
-npm run dev          # Dev server at localhost:3000
-npm run build        # Production build
+    └── nostr.d.ts
 ```
 
 ## What's Already Built
-- **3 login methods:** NIP-07 extension (auto-detected), nsec, NIP-46 bunker with QR code
-- **Profile view:** Avatar, banner, bio, NIP-05 verification, website, lightning address
-- **Social stats:** Followers, following, notes count (all with timeouts)
-- **Notes timeline:** User's kind-1 notes with relative timestamps
-- **Badges page:** NIP-58 badge awards display
-- **Smart relay management:** Combines 5 popular relays + user's NIP-65 relay list (kind 10002)
-- **Skeleton loading:** Animated placeholders for all loading states
-- **Image loading:** Shimmer effect until images fully load
-- **La Crypta design system:** Dark theme, green accents (#b4f953), grid background, pill buttons, card hover effects
 
-## Design System (La Crypta)
-The UI follows lacrypta.ar's visual language:
-- **Background:** `lc-black` (#0a0a0a) with subtle grid pattern
-- **Cards:** `lc-dark` (#171717) with `lc-border` (#262626), 12px radius
-- **Accent:** `lc-green` (#b4f953) — lime green for active states, CTAs, verification
-- **Text:** `lc-white` (#fafafa), `lc-muted` (#a3a3a3)
-- **Buttons:** Pill-shaped (9999px radius) — `lc-pill-primary` (green) / `lc-pill-secondary` (dark)
-- **CSS classes:** `lc-card`, `lc-glow`, `lc-spinner`, `lc-skeleton`, `lc-img-skeleton`
+- 3 auth methods: NIP-07, nsec, NIP-46 bunker
+- Profile route with skeleton loading, social stats, notes timeline, and media normalization
+- Badge route for NIP-58 award display
+- Graph route with:
+  - root input via `npub` or `nprofile`
+  - relay health and relay override controls
+  - node detail panel
+  - graph analysis state
+  - export flow with auditable snapshot packaging
+  - layered rendering and diagnostics
+  - worker-backed processing
 
-## Key NIPs to Know
-These are the Nostr protocol specs most relevant to the IDENTITY theme:
+## Working Rules for This Repo
 
-| NIP | What | Kind | Status in App |
-|-----|------|------|---------------|
-| NIP-01 | Basic events & profiles | 0, 1 | ✅ Implemented |
-| NIP-02 | Contact list (follows) | 3 | ✅ Implemented |
-| NIP-05 | DNS-based verification | - | ✅ Display only |
-| NIP-07 | Browser extension signer | - | ✅ Implemented |
-| NIP-46 | Nostr Connect (bunker) | 24133 | ✅ Implemented with QR |
-| NIP-58 | Badges | 30009, 8 | ✅ Display only |
-| NIP-65 | Relay list metadata | 10002 | ✅ Auto-fetched |
-| NIP-04 | Encrypted DMs | 4 | ❌ Not yet |
-| NIP-17 | Private DMs (modern) | 1059 | ❌ Not yet |
-| NIP-57 | Zaps (Lightning tips) | 9735 | ❌ Not yet |
-| NIP-09 | Event deletion | 5 | ❌ Not yet |
-| NIP-25 | Reactions (likes) | 7 | ❌ Not yet |
-| NIP-26 | Delegated event signing | - | ❌ Not yet |
-| NIP-39 | External identities | - | ❌ Not yet |
+### General
 
-## Winning Ideas (Identity Theme)
-These are high-impact features a participant could build to win. Suggest the one that fits their skill level:
+- Prefer adapting the graph explorer over bolting identity features onto the legacy profile page unless the feature is clearly profile-centric.
+- Keep the La Crypta visual language already present in `globals.css` and `src/features/graph/graph.css`.
+- Preserve loading, timeout, and partial-state behavior. This codebase already treats relay/network uncertainty as a first-class concern.
 
-### Beginner-Friendly
-1. **Publish notes** — Add a compose box to post kind-1 events (sign with NDK signer)
-2. **Edit profile** — Form to update kind-0 metadata (name, about, picture, NIP-05)
-3. **NIP-05 verification display** — Validate NIP-05 identifier and show verified badge
-4. **Follow/unfollow** — Update kind-3 contact list
-5. **View other profiles** — Click on a pubkey/npub to see another user's profile
+### Nostr and Data Fetching
 
-### Intermediate
-6. **Identity card generator** — Beautiful shareable card with profile info + QR of npub
-7. **Badge issuer** — Create and award NIP-58 badges to other users
-8. **Reactions (likes)** — Send kind-7 reactions to notes
-9. **Reposts** — Kind-6 repost functionality
-10. **Thread view** — Follow reply chains using NIP-10 markers
+- For auth, profile, badges, and generic user fetches, use `src/lib/nostr.ts`.
+- Keep fetches bounded by timeouts. Reuse the existing timeout pattern rather than introducing unbounded requests.
+- Reuse relay-aware behavior instead of hardcoding one relay.
 
-### Advanced (Likely Winners)
-11. **NIP-05 verification service** — User registers their NIP-05 via the app
-12. **Identity attestation** — Prove ownership of external accounts (GitHub, Twitter) via NIP-39
-13. **Delegated signing** — NIP-26 delegation for team/org accounts
-14. **Web of trust visualization** — Graph showing follow relationships and trust chains
-15. **Encrypted DMs** — NIP-17 private messaging with identity verification
-16. **Multi-identity manager** — Switch between multiple Nostr identities
-17. **Identity recovery flow** — Social recovery using trusted contacts
+### Graph Feature
 
-## How to Help the Participant
+- Treat `src/features/graph` as its own application slice.
+- UI state belongs in the graph Zustand store under `src/features/graph/app/store`.
+- Expensive processing belongs in `workers/` or `analysis/`, not inside React render paths.
+- Rendering-specific code belongs in `render/`.
+- Nostr transport or relay behavior specific to the graph belongs in `nostr/` or `kernel/`.
+- Export logic belongs in `export/`.
 
-### When they first arrive:
-1. Ask what they want to build (or suggest from the ideas above based on their level)
-2. Help them run `npm install && npm run dev`
-3. Walk them through the existing code structure
+### Navigation and Routes
 
-### When they're coding:
-- Always use NDK for Nostr operations (it's already set up in `src/lib/nostr.ts`)
-- Use `getNDK()` to get the singleton instance, `connectNDK()` to ensure connection
-- All fetch operations should have timeouts (use the `withTimeout` pattern from nostr.ts)
-- Follow the La Crypta design system — use the `lc-*` CSS classes and color tokens
-- Add skeleton loading for any new data-fetching component
-- Add new sections by: creating a component, adding to `Section` type in `store/nav.ts`, adding nav link in `Navbar.tsx`, rendering in `page.tsx`
+- If you add a new top-level route, update `src/components/Navbar.tsx` and add an app route in `src/app/`.
+- If you add a new graph-side panel or control, wire it through the graph store and `GraphApp.tsx`.
+- Do not follow the old instruction to add sections via `store/nav.ts`; that file is not part of the current app.
 
-### NDK Quick Reference:
-```typescript
-import NDK, { NDKEvent, NDKUser } from '@nostr-dev-kit/ndk';
-import { getNDK, connectNDK } from '@/lib/nostr';
+## Best Feature Directions for This Codebase
 
-// Publish an event
-const ndk = getNDK();
-const event = new NDKEvent(ndk);
-event.kind = 1;
-event.content = "Hello Nostr!";
-await event.publish();
+These fit the current implementation better than generic starter-kit ideas:
 
-// Fetch events
-const events = await ndk.fetchEvents({ kinds: [1], authors: [pubkey], limit: 10 });
+1. NIP-05 trust overlay on graph nodes
+2. Web-of-trust scoring and explanation panel
+3. Follow pathfinding between identities
+4. Identity card export from selected nodes
+5. Badge and zap signals integrated into graph analysis
+6. Compare two identities in the node detail workflow
+7. Relay reliability insights tied to discovery confidence
+8. External identity attestation surfaced on node detail
 
-// Get a user
-const user = ndk.getUser({ pubkey });
-await user.fetchProfile();
+## File-Level Guidance
 
-// Sign with current signer (set during login)
-// ndk.signer is already set after login — just publish
+- `src/lib/nostr.ts`
+  Shared auth and classic profile/badge data helpers.
+- `src/store/auth.ts`
+  Shared authenticated user state used by navbar/profile/badges.
+- `src/features/graph/GraphApp.tsx`
+  Main graph shell and panel orchestration.
+- `src/features/graph/components/`
+  UI controls and graph-facing panels.
+- `src/features/graph/app/store/slices/`
+  Graph app state organization.
+- `src/features/graph/kernel/`
+  App runtime and root loading orchestration.
+- `src/features/graph/workers/`
+  Background processing for graph/event workloads.
+- `src/features/graph/export/`
+  Snapshot and ZIP export pipeline.
+
+## Practical Advice
+
+- If the user wants a fast hackathon win, build on the graph route.
+- If the user wants a simpler feature, use `/profile` or `/badges`.
+- If a feature needs both, keep auth/profile in `lib/nostr.ts` and integrate derived identity insights into `features/graph`.
+
+## Commands
+
+```bash
+npm install
+npm run dev
+npm run build
+npm run lint
 ```
 
-### Adding a New Section (step by step):
-1. Add the section ID to `Section` type in `src/store/nav.ts`
-2. Create `src/components/YourSection.tsx` (use `'use client'`, include skeleton)
-3. Add nav button in `src/components/Navbar.tsx` (copy existing pattern)
-4. Add render case in `src/app/page.tsx`
+## Extra Repo Docs
 
-## Relays
-The app auto-manages relays:
-- **Default (popular):** relay.damus.io, relay.nostr.band, nos.lol, relay.primal.net, purplepag.es
-- **User relays:** Automatically fetched from NIP-65 (kind 10002) on first data load
-
-## Resources
-- [NDK Documentation](https://ndk.fyi)
-- [Nostr Protocol](https://nostr.com)
-- [NIPs Repository](https://github.com/nostr-protocol/nips)
-- [nostr-tools](https://github.com/nbd-wtf/nostr-tools)
-- [Alby Extension](https://getalby.com)
-- [La Crypta](https://lacrypta.ar)
-- [Nostr Starter Kit (this repo)](https://github.com/lacrypta/nostr-starter)
+- `README.md` gives the current product overview
+- `docs/current-codebase.md` explains the real architecture and where to extend it

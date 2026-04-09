@@ -1,88 +1,85 @@
-# 🔐 Nostr Starter Kit
+# Nostr Explorer
 
-Starter kit para la hackathon **IDENTITY** de La Crypta — Abril 2026.
+Graph-first Nostr identity explorer for La Crypta's IDENTITY Hackathon.
 
-Conectate a Nostr con extensión (Alby), nsec, o bunker. Mirá tu perfil como si fuera Twitter.
+This repo started from the original starter kit, but the current app is no longer just a profile viewer. The home route is now an identity graph explorer with relay-aware discovery, worker-backed analysis, and auditable export.
+
+## Routes
+
+- `/` - Graph explorer
+- `/profile` - Logged-in profile view
+- `/badges` - Logged-in NIP-58 badge view
 
 ## Quick Start
 
 ```bash
-# Clonar
-git clone https://github.com/lacrypta/nostr-starter
-cd nostr-starter
-
-# Instalar
 npm install
-
-# Correr
 npm run dev
 ```
 
-Abrí [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3000](http://localhost:3000).
 
-## Features
+## Current Features
 
-- 🔑 **3 métodos de login:** Extension (Alby/nos2x), nsec, Bunker (NIP-46)
-- 👤 **Perfil completo:** Avatar, banner, bio, links, Lightning address
-- 📊 **Stats:** Followers, following, cantidad de notas
-- 📝 **Timeline:** Tus últimas notas con timestamps relativos
-- 🌐 **Multi-relay:** Conecta a Damus, Nostr.band, nos.lol, Primal
+- NIP-07, nsec, and NIP-46 bunker login
+- Profile route with banner, avatar, bio, links, followers/following stats, and notes
+- Badge route for NIP-58 awards
+- Graph explorer with:
+  - `npub` and `nprofile` root input
+  - relay health and relay override controls
+  - node detail panel
+  - graph analysis state
+  - exportable auditable snapshots
+  - worker-backed processing
+  - deck.gl rendering
 
 ## Stack
 
-- [Next.js 16](https://nextjs.org/) + TypeScript
-- [Tailwind CSS](https://tailwindcss.com/)
-- [NDK](https://ndk.fyi/) (Nostr Dev Kit)
-- [Zustand](https://zustand-demo.pmnd.rs/) (State)
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS v4
+- NDK v3
+- nostr-tools
+- Zustand
+- deck.gl
+- Dexie
+- d3-force
 
-## Estructura
+## Code Map
 
-```
+```text
 src/
-├── components/
-│   ├── Navbar.tsx      # Navegación + botón login
-│   ├── LoginModal.tsx  # Modal de autenticación
-│   └── Profile.tsx     # Vista de perfil
-├── lib/
-│   └── nostr.ts        # Funciones Nostr
-└── store/
-    └── auth.ts         # Estado de autenticación
+├── app/                  # Next.js routes
+├── components/           # Shared profile/login/navbar UI
+├── features/graph/       # Graph application
+├── lib/                  # Shared Nostr and media helpers
+├── store/                # Shared auth store
+└── types/                # Browser Nostr typings
 ```
 
-## NIPs Utilizados
+Graph-specific code lives under `src/features/graph/` and is split into:
 
-- **NIP-01:** Basic protocol
-- **NIP-02:** Contact list (following)
-- **NIP-05:** DNS-based verification
-- **NIP-07:** Browser extension
-- **NIP-46:** Nostr Connect (bunker)
+- `app/store/` for Zustand slices and selectors
+- `components/` for graph panels and controls
+- `kernel/` for orchestration/runtime
+- `nostr/` for graph transport concerns
+- `render/` for rendering code
+- `workers/` for heavy background work
+- `export/` for deterministic snapshot packaging
 
-## Ideas para tu Proyecto
+## Best Hackathon Directions
 
-1. **Perfil Público** — Ver perfil de cualquier npub
-2. **Editor de Perfil** — Actualizar kind 0
-3. **Verificador NIP-05** — Check de identidad
-4. **Social Feed** — Timeline de seguidos
-5. **Nostr Login** — Auth para tu app con Nostr
-6. **Badge System** — Badges verificables
-7. **Reputation Score** — Basado en follows/WoT
+This repo is especially strong for:
 
-## Recursos
+- web-of-trust exploration
+- relay-aware identity discovery
+- NIP-05 and identity verification overlays
+- graph-based social analysis
+- evidence/export flows for identity research
 
-- 📚 [Nostr Protocol](https://nostr.com)
-- 📖 [NIPs](https://github.com/nostr-protocol/nips)
-- 🛠️ [NDK Docs](https://ndk.fyi)
-- 🦊 [Alby Extension](https://getalby.com)
+## Notes
 
-## Hackathon
-
-**IDENTITY — Nostr Identity & Social**
-
-- 📅 Abril 2026
-- ⭐ Nivel: Beginner
-- 💰 Premios: 1,000,000 sats
-- 📝 [Inscribite](https://tally.so/r/9qDNEY)
-
----
-
-Built with ⚡ by [La Crypta](https://lacrypta.ar)
+- The old starter docs are partially outdated.
+- Use [`docs/current-codebase.md`](./docs/current-codebase.md) for the adapted architecture guide.
+- Use [`AGENTS.md`](./AGENTS.md) for assistant-specific coding guidance grounded in the current repo.

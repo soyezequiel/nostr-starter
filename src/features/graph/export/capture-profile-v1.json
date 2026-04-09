@@ -1,10 +1,7 @@
 {
   "profileId": "capture-profile-v1",
   "schemaVersion": 1,
-  "executionModes": [
-    "snapshot",
-    "deep"
-  ],
+  "executionModes": ["snapshot", "deep"],
   "determinismDefinition": "same-profile-id + same-selected-users + same-capture-upper-bound-sec + same-frozen-session-relay-order + same-relay-transcript => same-export",
   "selection": {
     "snapshotIncludes": "all-discovered-users",
@@ -44,14 +41,7 @@
     "maxRawBytesPerUser": 12582912
   },
   "inboundCapture": {
-    "queryKinds": [
-      1,
-      6,
-      7,
-      16,
-      1111,
-      9735
-    ],
+    "queryKinds": [1, 6, 7, 16, 1111, 9735],
     "pageLimit": 100,
     "maxPageRounds": 10,
     "maxUniqueEventsPerUser": 1500
