@@ -1618,6 +1618,7 @@ export class AppKernel {
   ): RootGraphReplacementResult {
     const state = this.store.getState()
     state.resetGraphAnalysis()
+    state.resetExportState()
     state.resetGraph()
     state.resetZapLayer()
     state.setRootNodePubkey(rootPubkey)

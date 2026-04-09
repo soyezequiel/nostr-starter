@@ -103,9 +103,17 @@ export function NodeDetailPanel({
     mutualsDiscovered,
     hasLoadedFollowsDiscovered,
     isExpanded,
+    selectedDeepUserCount,
+    maxSelectedDeepUsers,
+    slotsRemaining,
+    isDeepSelectionLocked,
+    isSelectedForDeepCapture,
     nodeExpansionState,
     nodeStructurePreviewState,
   } = useAppStore(useShallow(selectNodeDetailContext))
+  const toggleDeepUserSelection = useAppStore(
+    (state) => state.toggleDeepUserSelection,
+  )
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const selectedProfileSnapshot = buildNodeProfileSnapshot(selectedNode)
   const selectedProfileSignature = buildProfileSignature(selectedProfileSnapshot)
@@ -122,6 +130,9 @@ export function NodeDetailPanel({
   const copyResetTimerRef = useRef<number | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
   const [expandFeedback, setExpandFeedback] = useState<ExpandFeedback | null>(null)
+  const [selectionFeedback, setSelectionFeedback] = useState<ExpandFeedback | null>(
+    null,
+  )
   
   const [avatarImageFailed, setAvatarImageFailed] = useState(false)
   const [detailAvatarSrc, setDetailAvatarSrc] = useState<string | null>(null)
@@ -142,6 +153,8 @@ export function NodeDetailPanel({
   const canExpand = Boolean(
     selectedNode && !isExpanded && !graphCapReached && !isStructurallyExpanding,
   )
+  const isRootDeepCaptureEntry =
+    selectedNodePubkey !== null && selectedNodePubkey === rootNodePubkey
   const isStructurePreviewEligible =
     Boolean(selectedNodePubkey) &&
     selectedNodePubkey !== rootNodePubkey &&
@@ -156,6 +169,19 @@ export function NodeDetailPanel({
 
   const hasAvatarImage = isSafeAvatarUrl(displayPicture) && !avatarImageFailed
   const resolvedAvatarSrc = hasAvatarImage ? detailAvatarSrc : null
+  const deepCaptureButtonLabel = isRootDeepCaptureEntry
+    ? 'Root incluido'
+    : isDeepSelectionLocked
+      ? 'Seleccion bloqueada por job'
+      : isSelectedForDeepCapture
+        ? 'Quitar de captura profunda'
+        : slotsRemaining === 0
+          ? 'Maximo alcanzado'
+          : 'Marcar para captura profunda'
+  const canToggleDeepCapture =
+    !isRootDeepCaptureEntry &&
+    !isDeepSelectionLocked &&
+    (isSelectedForDeepCapture || slotsRemaining > 0)
 
   useEffect(() => {
     if (!isOpen) {
@@ -169,6 +195,7 @@ export function NodeDetailPanel({
       setStatus('loading')
       setCopyState('idle')
       setExpandFeedback(null)
+      setSelectionFeedback(null)
       setDetailAvatarSrc(null)
       return
     }
@@ -186,6 +213,7 @@ export function NodeDetailPanel({
 
     if (isNewSelection) {
       setExpandFeedback(null)
+      setSelectionFeedback(null)
     }
 
     if (selectedNode.profileState === 'loading' || selectedNode.profileState === undefined) {
@@ -320,6 +348,55 @@ export function NodeDetailPanel({
             : 'No se pudo expandir este nodo.',
       })
     }
+  }
+
+  const handleToggleDeepCapture = () => {
+    if (!selectedNodePubkey) {
+      return
+    }
+
+    if (isRootDeepCaptureEntry) {
+      setSelectionFeedback({
+        tone: 'neutral',
+        message: 'El root siempre se incluye en la captura profunda.',
+      })
+      return
+    }
+
+    const shouldSelect = !isSelectedForDeepCapture
+    const result = toggleDeepUserSelection(selectedNodePubkey, shouldSelect)
+
+    if (result.reason === 'job-active') {
+      setSelectionFeedback({
+        tone: 'warn',
+        message:
+          'La seleccion esta bloqueada mientras el job de captura profunda sigue corriendo.',
+      })
+      return
+    }
+
+    if (result.reason === 'max-selected') {
+      setSelectionFeedback({
+        tone: 'warn',
+        message: 'Ya marcaste 4 extras. Quita uno para liberar un slot.',
+      })
+      return
+    }
+
+    if (result.reason === 'root-required') {
+      setSelectionFeedback({
+        tone: 'neutral',
+        message: 'El root siempre se incluye en la captura profunda.',
+      })
+      return
+    }
+
+    setSelectionFeedback({
+      tone: shouldSelect ? 'ok' : 'neutral',
+      message: shouldSelect
+        ? `Usuario marcado. Quedan ${result.slotsRemaining} slots extra.`
+        : `Usuario removido. Quedan ${result.slotsRemaining} slots extra.`,
+    })
   }
 
   if (!isOpen || !selectedNodePubkey || !selectedNode) {
@@ -531,10 +608,86 @@ export function NodeDetailPanel({
               </button>
             )}
 
-            <button className="node-detail-panel__secondary-action" disabled type="button">
-              Marcar para captura profunda
+            <button
+              className={
+                isSelectedForDeepCapture && canToggleDeepCapture
+                  ? 'node-detail-panel__secondary-action node-detail-panel__secondary-action--active'
+                  : 'node-detail-panel__secondary-action'
+              }
+              disabled={!canToggleDeepCapture}
+              onClick={handleToggleDeepCapture}
+              type="button"
+            >
+              {deepCaptureButtonLabel}
             </button>
           </div>
+
+          <div className="node-detail-panel__selection-caption">
+            <span>
+              Captura profunda: root + {selectedDeepUserCount} de{' '}
+              {maxSelectedDeepUsers} extras
+            </span>
+            <span>{slotsRemaining} slots restantes</span>
+          </div>
+
+          {selectionFeedback ? (
+            <div
+              aria-live="polite"
+              className={`node-detail-panel__feedback node-detail-panel__feedback--${selectionFeedback.tone}`}
+              role={selectionFeedback.tone === 'error' ? 'alert' : 'status'}
+            >
+              <p>{selectionFeedback.message}</p>
+            </div>
+          ) : null}
+
+          {isRootDeepCaptureEntry ? (
+            <div
+              aria-live="polite"
+              className="node-detail-panel__feedback node-detail-panel__feedback--neutral"
+              role="status"
+            >
+              <p>Este nodo es el root y no puede desmarcarse.</p>
+            </div>
+          ) : null}
+
+          {isDeepSelectionLocked ? (
+            <div
+              aria-live="polite"
+              className="node-detail-panel__feedback node-detail-panel__feedback--warn"
+              role="status"
+            >
+              <p>
+                La seleccion esta bloqueada hasta que termine el job de captura profunda.
+              </p>
+            </div>
+          ) : null}
+
+          {selectionFeedback === null &&
+          !isDeepSelectionLocked &&
+          !isRootDeepCaptureEntry &&
+          !isSelectedForDeepCapture &&
+          slotsRemaining === 0 ? (
+            <div
+              aria-live="polite"
+              className="node-detail-panel__feedback node-detail-panel__feedback--warn"
+              role="status"
+            >
+              <p>Ya alcanzaste el maximo de 4 extras.</p>
+            </div>
+          ) : null}
+
+          {selectionFeedback === null &&
+          !isDeepSelectionLocked &&
+          !isRootDeepCaptureEntry &&
+          isSelectedForDeepCapture ? (
+            <div
+              aria-live="polite"
+              className="node-detail-panel__feedback node-detail-panel__feedback--ok"
+              role="status"
+            >
+              <p>Este usuario ya forma parte de la captura profunda.</p>
+            </div>
+          ) : null}
 
           {expandFeedback ? (
             <div

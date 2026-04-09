@@ -11,6 +11,9 @@ const DEFAULT_IDLE_NODE_STRUCTURE_PREVIEW_STATE = {
   discoveredFollowCount: null,
 }
 
+const isExportJobActive = (phase: AppStore['exportJob']['phase']) =>
+  !['idle', 'completed', 'failed'].includes(phase)
+
 export const selectGraphSummary = (state: AppStore) => ({
   nodeCount: Object.keys(state.nodes).length,
   linkCount: state.links.length,
@@ -92,6 +95,15 @@ export const selectNodeDetailContext = (state: AppStore) => {
         nodeStructurePreviewState?.status === 'empty'
       ),
   )
+  const selectedDeepUserCount = state.selectedDeepUserPubkeys.length
+  const slotsRemaining = Math.max(
+    0,
+    state.maxSelectedDeepUsers - selectedDeepUserCount,
+  )
+  const isDeepSelectionLocked = isExportJobActive(state.exportJob.phase)
+  const isSelectedForDeepCapture =
+    selectedNodePubkey !== null &&
+    state.selectedDeepUserPubkeys.includes(selectedNodePubkey)
 
   return {
     selectedNodePubkey,
@@ -117,6 +129,11 @@ export const selectNodeDetailContext = (state: AppStore) => {
       : 0,
     hasLoadedFollowsDiscovered,
     isExpanded,
+    selectedDeepUserCount,
+    maxSelectedDeepUsers: state.maxSelectedDeepUsers,
+    slotsRemaining,
+    isDeepSelectionLocked,
+    isSelectedForDeepCapture,
     nodeExpansionState:
       selectedNodePubkey === null
         ? null
@@ -127,11 +144,61 @@ export const selectNodeDetailContext = (state: AppStore) => {
 }
 
 export const selectExportSummary = (state: AppStore) => ({
+  rootNodePubkey: state.rootNodePubkey,
   selectedDeepUserCount: state.selectedDeepUserPubkeys.length,
   maxSelectedDeepUsers: state.maxSelectedDeepUsers,
+  slotsRemaining: Math.max(
+    0,
+    state.maxSelectedDeepUsers - state.selectedDeepUserPubkeys.length,
+  ),
+  isSelectionLocked: isExportJobActive(state.exportJob.phase),
   exportJobPhase: state.exportJob.phase,
   exportJobPercent: state.exportJob.percent,
 })
+
+export const selectDeepCaptureSelectionContext = (state: AppStore) => {
+  const rootNodePubkey = state.rootNodePubkey
+  const selectedDeepUserPubkeys = state.selectedDeepUserPubkeys
+  const selectedDeepUserCount = selectedDeepUserPubkeys.length
+  const slotsRemaining = Math.max(
+    0,
+    state.maxSelectedDeepUsers - selectedDeepUserCount,
+  )
+  const isSelectionLocked = isExportJobActive(state.exportJob.phase)
+  const currentNodePubkey =
+    state.selectedNodePubkey && state.nodes[state.selectedNodePubkey]
+      ? state.selectedNodePubkey
+      : null
+
+  return {
+    rootNodePubkey,
+    rootNode: rootNodePubkey ? state.nodes[rootNodePubkey] ?? null : null,
+    selectedDeepUserPubkeys,
+    selectedDeepUserNodes: selectedDeepUserPubkeys.map((pubkey) => ({
+      pubkey,
+      node: state.nodes[pubkey] ?? null,
+    })),
+    maxSelectedDeepUsers: state.maxSelectedDeepUsers,
+    selectedDeepUserCount,
+    slotsRemaining,
+    isSelectionLocked,
+    selectionState: isSelectionLocked
+      ? ('locked' as const)
+      : selectedDeepUserCount === 0
+        ? ('empty' as const)
+        : selectedDeepUserCount >= state.maxSelectedDeepUsers
+          ? ('max' as const)
+          : ('partial' as const),
+    exportJobPhase: state.exportJob.phase,
+    currentNodePubkey,
+    currentNode: currentNodePubkey ? state.nodes[currentNodePubkey] ?? null : null,
+    currentNodeIsRoot:
+      currentNodePubkey !== null && currentNodePubkey === rootNodePubkey,
+    currentNodeIsSelected:
+      currentNodePubkey !== null &&
+      selectedDeepUserPubkeys.includes(currentNodePubkey),
+  }
+}
 
 export const selectRelayHealthData = (state: AppStore) => ({
   relayUrls: state.relayUrls,

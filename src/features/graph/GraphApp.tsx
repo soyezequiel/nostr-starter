@@ -15,6 +15,7 @@ import {
   GraphCanvas,
   type GraphCanvasDiagnostics,
 } from '@/features/graph/components/GraphCanvas'
+import { DeepCaptureSelectionPanel } from '@/features/graph/components/DeepCaptureSelectionPanel'
 import { NpubInput } from '@/features/graph/components/NpubInput'
 import { RelayConfigPanel } from '@/features/graph/components/RelayConfigPanel'
 import { RelayHealthIndicator } from '@/features/graph/components/RelayHealthIndicator'
@@ -515,7 +516,27 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
                 <div>
                   <dt>Seleccion</dt>
                   <dd>
-                    {selectedDeepUserCount}/{maxSelectedDeepUsers}
+                    root + {selectedDeepUserCount} de {maxSelectedDeepUsers} extras
+                  </dd>
+                </div>
+                <div>
+                  <dt>Slots</dt>
+                  <dd>{maxSelectedDeepUsers - selectedDeepUserCount} restantes</dd>
+                </div>
+                <div>
+                  <dt>Budget</dt>
+                  <dd>1 root fijo + {maxSelectedDeepUsers} extras</dd>
+                </div>
+                <div>
+                  <dt>Lock</dt>
+                  <dd>
+                    {exportJobPhase === 'freezing-snapshot' ||
+                    exportJobPhase === 'running-authored' ||
+                    exportJobPhase === 'running-inbound' ||
+                    exportJobPhase === 'partial' ||
+                    exportJobPhase === 'packaging'
+                      ? 'Bloqueado por job'
+                      : 'Editable'}
                   </dd>
                 </div>
                 <div>
@@ -539,9 +560,11 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
                   ? 'Congelando snapshot...'
                   : exportJobPhase === 'packaging'
                     ? `Empaquetando... ${exportJobPercent}%`
-                    : 'Descargar ZIP'}
+                  : 'Descargar ZIP'}
               </button>
             </section>
+
+            <DeepCaptureSelectionPanel />
           </section>
         )
       case 'internal': {

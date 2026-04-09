@@ -153,7 +153,7 @@ export interface UpsertGraphNodesResult {
 export interface ToggleDeepUserSelectionResult {
   selectedDeepUserPubkeys: string[]
   slotsRemaining: number
-  reason: 'job-active' | 'max-selected' | null
+  reason: 'job-active' | 'max-selected' | 'root-required' | null
 }
 
 export interface GraphSlice {
@@ -281,6 +281,7 @@ export interface ExportSlice {
   ) => ToggleDeepUserSelectionResult
   setExportJobProgress: (progress: Partial<ExportJobProgress>) => void
   resetExportJob: () => void
+  resetExportState: () => void
 }
 
 export interface AnalysisSlice {

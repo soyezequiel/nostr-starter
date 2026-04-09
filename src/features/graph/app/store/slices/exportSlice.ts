@@ -32,6 +32,16 @@ export const createExportSlice: AppStateCreator<ExportSlice> = (set, get) => ({
   ...createInitialExportSliceState(),
   toggleDeepUserSelection: (pubkey, selected) => {
     const state = get()
+    const rootPubkey = state.rootNodePubkey
+
+    if (rootPubkey !== null && pubkey === rootPubkey) {
+      return {
+        selectedDeepUserPubkeys: state.selectedDeepUserPubkeys,
+        slotsRemaining:
+          state.maxSelectedDeepUsers - state.selectedDeepUserPubkeys.length,
+        reason: 'root-required' as const,
+      }
+    }
 
     if (isExportJobActive(state.exportJob.phase)) {
       return {
@@ -83,6 +93,11 @@ export const createExportSlice: AppStateCreator<ExportSlice> = (set, get) => ({
   resetExportJob: () => {
     set({
       exportJob: createInitialExportJob(),
+    })
+  },
+  resetExportState: () => {
+    set({
+      ...createInitialExportSliceState(),
     })
   },
 })
