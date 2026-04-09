@@ -4,6 +4,7 @@ import { nip19 } from 'nostr-tools'
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
+import AvatarFallback from '@/components/AvatarFallback'
 import { selectNodeDetailContext, useAppStore } from '@/features/graph/app/store'
 import type { GraphNode, GraphNodeProfile } from '@/features/graph/app/store/types'
 import type { ExpandNodeResult, RootLoader } from '@/features/graph/kernel'
@@ -383,9 +384,10 @@ export function NodeDetailPanel({
               width={72}
             />
           ) : (
-            <span className="node-detail-panel__avatar-fallback">
-              {getAvatarMonogram(displayName)}
-            </span>
+            <AvatarFallback
+              initials={getAvatarMonogram(displayName)}
+              labelClassName="text-[1.1rem] tracking-[0.08em]"
+            />
           )}
         </div>
 

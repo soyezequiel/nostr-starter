@@ -1,5 +1,8 @@
 'use client'
 
+import { useState } from 'react'
+
+import AvatarFallback from '@/components/AvatarFallback'
 import SkeletonImage from '@/components/SkeletonImage'
 import type { SavedRootEntry } from '@/features/graph/app/store/types'
 
@@ -69,7 +72,10 @@ function formatSavedRootTime(timestamp: number) {
 
 function renderSavedRootSkeleton(index: number) {
   return (
-    <article className="saved-root-card saved-root-card--loading" key={`saved-root-skeleton-${index}`}>
+    <article
+      className="saved-root-card saved-root-card--loading"
+      key={`saved-root-skeleton-${index}`}
+    >
       <div className="saved-root-card__select saved-root-card__select--loading">
         <div className="saved-root-card__avatar saved-root-card__avatar--fallback lc-skeleton-circle" />
         <div className="saved-root-card__content">
@@ -87,47 +93,45 @@ export function SavedRootsPanel({
   onDelete,
   onSelect,
 }: SavedRootsPanelProps) {
+  const [pendingRemovalPubkey, setPendingRemovalPubkey] = useState<string | null>(
+    null,
+  )
+
   if (!isHydrated && entries.length === 0) {
     return (
       <section className="saved-roots-panel" aria-label="Identidades guardadas">
-        <div className="saved-roots-panel__header">
-          <div>
-            <p className="saved-roots-panel__eyebrow">Guardadas</p>
-            <h3>Recuperando identidades</h3>
-          </div>
+        <div className="saved-roots-grid">
+          {Array.from({ length: 3 }, (_, index) => renderSavedRootSkeleton(index))}
         </div>
-        <div className="saved-roots-grid">{Array.from({ length: 3 }, (_, index) => renderSavedRootSkeleton(index))}</div>
       </section>
     )
   }
 
   if (entries.length === 0) {
-    return null
+    return (
+      <section className="saved-roots-panel" aria-label="Identidades guardadas">
+        <p className="saved-roots-panel__empty" role="status">
+          No hay identidades guardadas todavía.
+        </p>
+      </section>
+    )
   }
 
   return (
     <section className="saved-roots-panel" aria-label="Identidades guardadas">
-      <div className="saved-roots-panel__header">
-        <div>
-          <p className="saved-roots-panel__eyebrow">Guardadas</p>
-          <h3>Elegi una identidad</h3>
-        </div>
-      </div>
-
       <div className="saved-roots-grid">
         {entries.map((entry) => {
           const displayName = getDisplayName(entry)
-          const description = [
-            entry.profile?.nip05,
-            shortenNpub(entry.npub),
-          ]
+          const description = [entry.profile?.nip05, shortenNpub(entry.npub)]
             .filter(Boolean)
             .join(' · ')
           const pictureAlt = `Avatar de ${displayName}`
+          const isConfirmingRemoval = pendingRemovalPubkey === entry.pubkey
 
           return (
             <article className="saved-root-card" key={entry.pubkey}>
               <button
+                aria-label={`Abrir ${displayName}`}
                 className="saved-root-card__select"
                 onClick={() => onSelect(entry)}
                 type="button"
@@ -138,17 +142,19 @@ export function SavedRootsPanel({
                       alt={pictureAlt}
                       className="object-cover"
                       fallback={
-                        <div className="saved-root-card__avatar-fallback">
-                          {getInitials(entry)}
-                        </div>
+                        <AvatarFallback
+                          initials={getInitials(entry)}
+                          labelClassName="text-[0.92rem] font-bold"
+                        />
                       }
                       sizes="80px"
                       src={entry.profile.picture}
                     />
                   ) : (
-                    <div className="saved-root-card__avatar-fallback">
-                      {getInitials(entry)}
-                    </div>
+                    <AvatarFallback
+                      initials={getInitials(entry)}
+                      labelClassName="text-[0.92rem] font-bold"
+                    />
                   )}
                 </div>
 
@@ -160,18 +166,43 @@ export function SavedRootsPanel({
                     </span>
                   </div>
                   <p className="saved-root-card__meta">{description}</p>
-                  <p className="saved-root-card__npub">{entry.npub}</p>
                 </div>
               </button>
 
-              <button
-                aria-label={`Eliminar ${displayName} de las identidades guardadas`}
-                className="saved-root-card__delete"
-                onClick={() => onDelete(entry)}
-                type="button"
-              >
-                Quitar
-              </button>
+              {isConfirmingRemoval ? (
+                <div
+                  aria-label={`Confirmar borrado de ${displayName}`}
+                  className="saved-root-card__confirm"
+                  role="group"
+                >
+                  <button
+                    className="saved-root-card__confirm-btn saved-root-card__confirm-btn--danger"
+                    onClick={() => {
+                      onDelete(entry)
+                      setPendingRemovalPubkey(null)
+                    }}
+                    type="button"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    className="saved-root-card__confirm-btn"
+                    onClick={() => setPendingRemovalPubkey(null)}
+                    type="button"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  aria-label={`Quitar ${displayName} de las identidades guardadas`}
+                  className="saved-root-card__delete"
+                  onClick={() => setPendingRemovalPubkey(entry.pubkey)}
+                  type="button"
+                >
+                  Quitar
+                </button>
+              )}
             </article>
           )
         })}

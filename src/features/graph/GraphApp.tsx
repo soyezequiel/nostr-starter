@@ -348,7 +348,7 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
   const rootEntryTitle = isRootEntryInline
     ? shouldShowSavedRootsSection
-      ? 'Elegi una identidad'
+      ? 'Identidades guardadas'
       : 'Ingresa una npub o nprofile'
     : shouldShowSavedRootsSection
       ? 'Cambiar identidad'
@@ -822,7 +822,7 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
             ) : null}
             <p className="root-entry-sheet__fineprint">
               {shouldShowSavedRootsSection
-                ? 'Guardadas solo en este navegador.'
+                ? 'Solo se guardan npub publicas en este navegador.'
                 : isRootEntryInline
                   ? 'Pega una identidad para abrir el grafo.'
                   : 'El grafo muestra vecindario descubierto.'}

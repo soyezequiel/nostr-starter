@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { getInitials } from '@/lib/media';
+import AvatarFallback from './AvatarFallback';
 import LoginModal from './LoginModal';
 import SkeletonImage from './SkeletonImage';
 
@@ -99,25 +100,27 @@ export default function Navbar() {
                   onClick={() => setShowMenu(!showMenu)}
                   className="flex items-center gap-2.5 py-1.5 pl-1.5 pr-4 bg-lc-dark hover:bg-lc-border rounded-full transition-all duration-200 border border-lc-border/50"
                 >
-                  {profile.picture ? (
-                    <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border">
+                  <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border">
+                    {profile.picture ? (
                       <SkeletonImage
                         src={profile.picture}
                         alt={profile.displayName || profile.name || 'Profile picture'}
                         sizes="32px"
                         className="object-cover"
                         fallback={
-                          <div className="w-full h-full rounded-full bg-lc-olive flex items-center justify-center text-lc-green text-sm font-semibold">
-                            {profileInitial}
-                          </div>
+                          <AvatarFallback
+                            initials={profileInitial}
+                            labelClassName="text-sm font-semibold"
+                          />
                         }
                       />
-                    </div>
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-lc-olive flex items-center justify-center text-lc-green text-sm font-semibold">
-                      {profileInitial}
-                    </div>
-                  )}
+                    ) : (
+                      <AvatarFallback
+                        initials={profileInitial}
+                        labelClassName="text-sm font-semibold"
+                      />
+                    )}
+                  </div>
                   <span className="text-sm text-lc-white font-medium max-w-[120px] truncate">
                     {profile.displayName || profile.name || 'Anon'}
                   </span>

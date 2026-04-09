@@ -5291,29 +5291,11 @@ main {
   gap: 0.7rem;
 }
 
-.saved-roots-panel__header {
-  display: grid;
-  gap: 0.15rem;
-}
-
-.saved-roots-panel__eyebrow {
-  margin: 0 0 0.2rem;
-  color: rgba(148, 163, 184, 0.6);
-  font:
-    700 0.58rem/1 ui-monospace,
-    'SFMono-Regular',
-    monospace;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.saved-roots-panel__header h3 {
+.saved-roots-panel__empty {
   margin: 0;
-  color: #f8fafc;
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  color: rgba(226, 232, 240, 0.68);
+  font-size: 0.92rem;
+  line-height: 1.6;
 }
 
 .saved-roots-grid {
@@ -5339,6 +5321,7 @@ main {
 
 .saved-root-card__select {
   min-width: 0;
+  min-height: 2.75rem;
   display: flex;
   align-items: center;
   gap: 0.8rem;
@@ -5350,8 +5333,21 @@ main {
   cursor: pointer;
 }
 
+.saved-root-card__select:hover .saved-root-card__name,
+.saved-root-card__select:focus-visible .saved-root-card__name {
+  color: rgba(248, 250, 252, 0.96);
+}
+
 .saved-root-card__select--loading {
   cursor: default;
+}
+
+.saved-root-card__select:focus-visible,
+.saved-root-card__delete:focus-visible,
+.saved-root-card__confirm-btn:focus-visible {
+  outline: 2px solid rgba(180, 249, 83, 0.92);
+  outline-offset: 4px;
+  border-radius: 0.9rem;
 }
 
 .saved-root-card__avatar {
@@ -5426,7 +5422,7 @@ main {
 
 .saved-root-card__delete {
   align-self: center;
-  min-height: auto;
+  min-height: 2.75rem;
   padding: 0.2rem 0 0.2rem 0.6rem;
   border: 0;
   background: transparent;
@@ -5434,6 +5430,41 @@ main {
   font-size: 0.74rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.saved-root-card__delete:hover,
+.saved-root-card__delete:focus-visible {
+  color: rgba(248, 250, 252, 0.88);
+}
+
+.saved-root-card__confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.saved-root-card__confirm-btn {
+  min-height: 2.75rem;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.saved-root-card__confirm-btn:hover,
+.saved-root-card__confirm-btn:focus-visible {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f8fafc;
+}
+
+.saved-root-card__confirm-btn--danger {
+  border-color: rgba(248, 113, 113, 0.28);
+  color: rgba(254, 202, 202, 0.96);
 }
 
 .saved-root-card__line {
@@ -5496,5 +5527,14 @@ main {
   .saved-root-card__delete {
     width: fit-content;
     padding-left: 3.8rem;
+  }
+
+  .saved-root-card__confirm {
+    padding-left: 3.8rem;
+    justify-content: flex-start;
+  }
+
+  .saved-root-card__confirm-btn {
+    min-height: 2.6rem;
   }
 }

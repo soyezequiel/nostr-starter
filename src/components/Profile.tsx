@@ -11,6 +11,7 @@ import {
   formatTimestamp,
 } from '@/lib/nostr';
 import { getInitials } from '@/lib/media';
+import AvatarFallback from '@/components/AvatarFallback';
 import SkeletonImage from '@/components/SkeletonImage';
 
 function ProfileSkeleton() {
@@ -211,15 +212,17 @@ export default function Profile() {
                 sizes="128px"
                 className="object-cover"
                 fallback={
-                  <div className="w-full h-full bg-lc-olive flex items-center justify-center text-lc-green text-4xl font-bold">
-                    {profileInitial}
-                  </div>
+                  <AvatarFallback
+                    initials={profileInitial}
+                    labelClassName="text-4xl font-bold tracking-[0.08em]"
+                  />
                 }
               />
             ) : (
-              <div className="w-full h-full bg-lc-olive flex items-center justify-center text-lc-green text-4xl font-bold">
-                {profileInitial}
-              </div>
+              <AvatarFallback
+                initials={profileInitial}
+                labelClassName="text-4xl font-bold tracking-[0.08em]"
+              />
             )}
           </div>
         </div>
@@ -342,15 +345,19 @@ export default function Profile() {
                         sizes="40px"
                         className="object-cover"
                         fallback={
-                          <div className="w-full h-full rounded-xl bg-lc-olive flex items-center justify-center text-lc-green font-semibold text-sm">
-                            {profileInitial}
-                          </div>
+                          <AvatarFallback
+                            initials={profileInitial}
+                            labelClassName="text-sm font-semibold"
+                          />
                         }
                       />
                     </div>
                   ) : (
-                    <div className="w-10 h-10 rounded-xl bg-lc-olive flex items-center justify-center text-lc-green font-semibold text-sm">
-                      {profileInitial}
+                    <div className="w-10 h-10 rounded-xl overflow-hidden">
+                      <AvatarFallback
+                        initials={profileInitial}
+                        labelClassName="text-sm font-semibold"
+                      />
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
