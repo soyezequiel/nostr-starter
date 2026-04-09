@@ -243,6 +243,16 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const rootEntryButtonLabel = isRootEntryInline
     ? 'Entrada de root activa'
     : 'Abrir entrada de npub'
+  const primaryTabs = SETTINGS_TABS.filter((tab) => tab.id !== 'internal')
+  const advancedTabs = SETTINGS_TABS.filter((tab) => tab.id === 'internal')
+  const settingsStatusItems = [
+    { label: 'Root', value: rootLoadStatus },
+    { label: 'Layer', value: activeLayer },
+    {
+      label: 'Relays',
+      value: `${relayCount} ${isGraphStale ? 'stale' : 'live'}`,
+    },
+  ]
 
   const handleOpenSettings = (tab: SettingsTab = 'appearance') => {
     if (openPanel === 'node-detail') {
@@ -665,10 +675,13 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
 
         {isSettingsOpen ? (
           <aside className="settings-drawer settings-drawer--open" data-settings-drawer>
-            <div className="settings-drawer__header">
-              <div>
-                <p className="settings-drawer__eyebrow">Workspace</p>
+            <div className="settings-drawer__hero">
+              <div className="settings-drawer__hero-copy">
+                <p className="settings-drawer__eyebrow">Workspace controls</p>
                 <h2 className="settings-drawer__title">Settings</h2>
+                <p className="settings-drawer__intro">
+                  Ajusta visualizacion, relays y export sin salir del grafo.
+                </p>
               </div>
               <button
                 aria-label="Ocultar panel de configuracion"
@@ -680,40 +693,58 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
               </button>
             </div>
 
-            <nav className="settings-tabs" aria-label="Secciones de configuracion">
-              {SETTINGS_TABS.filter((tab) => tab.id !== 'internal').map((tab) => {
-                const isActive = activeTab === tab.id
-                return (
-                  <button
-                    key={tab.id}
-                    className={`settings-tab${isActive ? ' settings-tab--active' : ''}`}
-                    onClick={() => setActiveTab(tab.id)}
-                    type="button"
-                  >
-                    {tab.label}
-                  </button>
-                )
-              })}
-            </nav>
-
-            <div className="settings-tabs settings-tabs--advanced" aria-label="Secciones internas">
-              <span className="settings-tabs__group-label">Advanced</span>
-              {SETTINGS_TABS.filter((tab) => tab.id === 'internal').map((tab) => {
-                const isActive = activeTab === tab.id
-                return (
-                  <button
-                    key={tab.id}
-                    className={`settings-tab${isActive ? ' settings-tab--active' : ''}`}
-                    onClick={() => setActiveTab(tab.id)}
-                    type="button"
-                  >
-                    {tab.label}
-                  </button>
-                )
-              })}
+            <div className="settings-drawer__status" aria-label="Estado actual del workspace">
+              {settingsStatusItems.map((item) => (
+                <div className="settings-status-pill" key={item.label}>
+                  <span className="settings-status-pill__label">{item.label}</span>
+                  <span className="settings-status-pill__value">{item.value}</span>
+                </div>
+              ))}
             </div>
 
-            <div className="settings-drawer__body">{renderSidebarContent()}</div>
+            <div className="settings-drawer__layout">
+              <nav className="settings-nav" aria-label="Secciones de configuracion">
+                <div className="settings-nav__section">
+                  <span className="settings-nav__label">Main</span>
+                  <div className="settings-tabs">
+                    {primaryTabs.map((tab) => {
+                      const isActive = activeTab === tab.id
+                      return (
+                        <button
+                          key={tab.id}
+                          className={`settings-tab${isActive ? ' settings-tab--active' : ''}`}
+                          onClick={() => setActiveTab(tab.id)}
+                          type="button"
+                        >
+                          {tab.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="settings-nav__section settings-nav__section--advanced">
+                  <span className="settings-nav__label">Advanced</span>
+                  <div className="settings-tabs settings-tabs--advanced">
+                    {advancedTabs.map((tab) => {
+                      const isActive = activeTab === tab.id
+                      return (
+                        <button
+                          key={tab.id}
+                          className={`settings-tab${isActive ? ' settings-tab--active' : ''}`}
+                          onClick={() => setActiveTab(tab.id)}
+                          type="button"
+                        >
+                          {tab.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </nav>
+
+              <div className="settings-drawer__body">{renderSidebarContent()}</div>
+            </div>
           </aside>
         ) : null}
       </section>
