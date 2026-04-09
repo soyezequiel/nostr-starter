@@ -35,6 +35,7 @@ import {
   type RelayAdapterOptions,
   type RelayEventEnvelope,
   type RelayHealthSnapshot,
+  type RelayQueryFilter,
   type RelaySubscriptionSummary,
 } from '@/features/graph/nostr'
 import type {
@@ -890,6 +891,7 @@ export class AppKernel {
     if (trimmed.length === 0) {
       const state = this.store.getState()
       state.setCurrentKeyword('')
+      this.removeKeywordSourceNodes()
       this.applyKeywordHits({})
       state.setKeywordMatches({})
 
@@ -910,6 +912,7 @@ export class AppKernel {
       }
     }
 
+    this.removeKeywordSourceNodes()
     const extracts = await this.repositories.noteExtracts.findByPubkeys(visiblePubkeys)
 
     if (this.keywordSearchSequence !== requestId) {
@@ -1004,16 +1007,6 @@ export class AppKernel {
         previousLayer,
         activeLayer: previousLayer,
         message: state.zapLayer.message ?? 'La capa de zaps no esta disponible todavia.',
-      }
-    }
-
-    if (layer === 'keywords' && state.keywordLayer.status !== 'enabled') {
-      return {
-        previousLayer,
-        activeLayer: previousLayer,
-        message:
-          state.keywordLayer.message ??
-          'La capa de keywords no esta disponible todavia.',
       }
     }
 
@@ -1902,7 +1895,47 @@ export class AppKernel {
   }
 
   private getKeywordCorpusTargetPubkeys(): string[] {
-    return Object.keys(this.store.getState().nodes).sort()
+    return Object.values(this.store.getState().nodes)
+      .filter((node) => node.source !== 'keyword')
+      .map((node) => node.pubkey)
+      .sort()
+  }
+
+  private removeKeywordSourceNodes(keepPubkeys: readonly string[] = []): void {
+    const state = this.store.getState()
+    const keepSet = new Set(keepPubkeys)
+    const removablePubkeys = Object.values(state.nodes)
+      .filter((node) => node.source === 'keyword' && !keepSet.has(node.pubkey))
+      .map((node) => node.pubkey)
+
+    if (removablePubkeys.length === 0) {
+      return
+    }
+
+    const removableSet = new Set(removablePubkeys)
+    if (
+      state.selectedNodePubkey !== null &&
+      removableSet.has(state.selectedNodePubkey)
+    ) {
+      state.setSelectedNodePubkey(null)
+      if (state.openPanel === 'node-detail') {
+        state.setOpenPanel('overview')
+      }
+    }
+
+    if (state.comparedNodePubkeys.size > 0) {
+      const nextComparedNodePubkeys = new Set(
+        Array.from(state.comparedNodePubkeys).filter(
+          (pubkey) => !removableSet.has(pubkey),
+        ),
+      )
+
+      if (nextComparedNodePubkeys.size !== state.comparedNodePubkeys.size) {
+        state.setComparedNodePubkeys(nextComparedNodePubkeys)
+      }
+    }
+
+    state.removeNodes(removablePubkeys)
   }
 
   private resetKeywordHits(): void {
@@ -1923,7 +1956,10 @@ export class AppKernel {
     )
   }
 
-  private applyKeywordHits(nodeHits: Record<string, number>): void {
+  private applyKeywordHits(
+    nodeHits: Record<string, number>,
+    createMissingNode?: (pubkey: string, hitCount: number) => GraphNode | null,
+  ): void {
     const state = this.store.getState()
     const candidatePubkeys = new Set([
       ...Object.keys(nodeHits),
@@ -1934,13 +1970,13 @@ export class AppKernel {
     const changedNodes: GraphNode[] = []
 
     for (const pubkey of candidatePubkeys) {
-      const existingNode = state.nodes[pubkey]
+      const nextHits = nodeHits[pubkey] ?? 0
+      const existingNode =
+        state.nodes[pubkey] ?? createMissingNode?.(pubkey, nextHits)
 
       if (!existingNode) {
         continue
       }
-
-      const nextHits = nodeHits[pubkey] ?? 0
 
       if (existingNode.keywordHits === nextHits) {
         continue
@@ -2972,7 +3008,7 @@ function mapStoreRelayHealthStatus(
 
 async function collectRelayEvents(
   adapter: RelayAdapterInstance,
-  filters: Filter[],
+  filters: RelayQueryFilter[],
 ): Promise<RelayCollectionResult> {
   return new Promise<RelayCollectionResult>((resolve) => {
     const events: RelayEventEnvelope[] = []

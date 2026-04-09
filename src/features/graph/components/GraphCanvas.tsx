@@ -1147,7 +1147,12 @@ export function GraphCanvas({
         setIsKeywordSearching(false)
       }
     }
-  }, [activeLayer, keywordDraft, keywordLayer.status, runtime])
+  }, [
+    activeLayer,
+    keywordDraft,
+    keywordLayer.status,
+    runtime,
+  ])
 
   useEffect(() => {
     lastViewSampleRef.current = null
@@ -1204,6 +1209,7 @@ export function GraphCanvas({
         : keywordLayer.status === 'disabled'
           ? keywordLayer.message ?? 'La capa de keywords todavia no esta lista.'
           : ''
+  const isKeywordSearchUsable = keywordLayer.status === 'enabled'
   const keywordInputPlaceholder =
     keywordLayer.status === 'enabled'
       ? 'Buscar keyword o interes'
@@ -1412,7 +1418,6 @@ export function GraphCanvas({
                 className={`graph-panel__control-btn${
                   activeLayer === 'keywords' ? ' graph-panel__control-btn--primary' : ''
                 }`}
-                disabled={keywordLayer.status !== 'enabled'}
                 onClick={() => handleToggleLayer('keywords')}
                 title={keywordLayerDisabledReason || undefined}
                 type="button"
@@ -1442,7 +1447,7 @@ export function GraphCanvas({
                 <input
                   aria-label="Buscar keyword o interes"
                   className="graph-panel__keyword-input"
-                  disabled={keywordLayer.status !== 'enabled'}
+                  disabled={!isKeywordSearchUsable}
                   onChange={(event) => handleKeywordDraftChange(event.target.value)}
                   placeholder={keywordInputPlaceholder}
                   type="search"

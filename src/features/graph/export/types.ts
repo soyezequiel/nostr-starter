@@ -1,4 +1,8 @@
-import type { GraphCaps, GraphLink, GraphNode } from '@/features/graph/app/store/types'
+import type {
+  GraphCaps,
+  GraphLink,
+  GraphNode,
+} from '@/features/graph/app/store/types'
 import type {
   AddressableHeadRecord,
   ContactListRecord,

@@ -26,6 +26,7 @@ export async function freezeSnapshot(
   const relays = [...state.relayUrls].sort()
   const graphCaps = { ...state.graphCaps }
   const pubkeys = Object.keys(state.nodes).sort()
+  const activeKeyword = state.currentKeyword.trim()
 
   const users = new Map<string, FrozenUserData>()
 
@@ -51,7 +52,7 @@ export async function freezeSnapshot(
     }),
     adjacency,
     keywordSearch: {
-      keyword: state.currentKeyword.trim() || null,
+      keyword: activeKeyword || null,
       totalHits: nodes.reduce((total, node) => total + node.keywordHits, 0),
       matchedNodeCount: nodes.filter((node) => node.keywordHits > 0).length,
     },

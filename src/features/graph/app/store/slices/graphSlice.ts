@@ -122,6 +122,62 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       rejectedPubkeys,
     }
   },
+  removeNodes: (pubkeys) => {
+    const removeSet = new Set(pubkeys.filter(Boolean))
+    if (removeSet.size === 0) {
+      return
+    }
+
+    const state = get()
+    const hasNodesToRemove = Array.from(removeSet).some(
+      (pubkey) => state.nodes[pubkey] !== undefined,
+    )
+
+    if (!hasNodesToRemove) {
+      return
+    }
+
+    const nextNodes = { ...state.nodes }
+    for (const pubkey of removeSet) {
+      delete nextNodes[pubkey]
+    }
+
+    const nextLinks = state.links.filter(
+      (link) => !removeSet.has(link.source) && !removeSet.has(link.target),
+    )
+    const nextAdjacency = Object.fromEntries(
+      Object.entries(state.adjacency)
+        .filter(([pubkey]) => !removeSet.has(pubkey))
+        .map(([pubkey, neighbors]) => [
+          pubkey,
+          neighbors.filter((neighbor) => !removeSet.has(neighbor)),
+        ]),
+    )
+    const nextExpandedNodePubkeys = new Set(
+      Array.from(state.expandedNodePubkeys).filter(
+        (pubkey) => !removeSet.has(pubkey),
+      ),
+    )
+    const nextNodeExpansionStates = Object.fromEntries(
+      Object.entries(state.nodeExpansionStates).filter(
+        ([pubkey]) => !removeSet.has(pubkey),
+      ),
+    )
+    const nextNodeStructurePreviewStates = Object.fromEntries(
+      Object.entries(state.nodeStructurePreviewStates).filter(
+        ([pubkey]) => !removeSet.has(pubkey),
+      ),
+    )
+
+    set({
+      nodes: nextNodes,
+      links: nextLinks,
+      adjacency: nextAdjacency,
+      expandedNodePubkeys: nextExpandedNodePubkeys,
+      nodeExpansionStates: nextNodeExpansionStates,
+      nodeStructurePreviewStates: nextNodeStructurePreviewStates,
+    })
+  },
   upsertLinks: (incomingLinks) => {
     const state = get()
     const nextLinks = state.links.slice()

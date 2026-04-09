@@ -1006,6 +1006,14 @@ export const buildGraphRenderModel = ({
     visiblePubkeys.add(link.target)
   }
 
+  if (activeLayer === 'keywords') {
+    for (const node of Object.values(nodes)) {
+      if (node.keywordHits > 0) {
+        visiblePubkeys.add(node.pubkey)
+      }
+    }
+  }
+
   const orderedNodes = Object.values(nodes)
     .filter((node) => visiblePubkeys.has(node.pubkey))
     .sort((left, right) => compareNodes(left, right, rootNodePubkey))

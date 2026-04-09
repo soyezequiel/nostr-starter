@@ -59,6 +59,7 @@ const isGraphNodeSource = (value: unknown): value is GraphNodeSource =>
   value === 'root' ||
   value === 'follow' ||
   value === 'inbound' ||
+  value === 'keyword' ||
   value === 'zap'
 
 const isUiLayer = (value: unknown): value is UiLayer =>

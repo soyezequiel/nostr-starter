@@ -17,7 +17,6 @@ export type KeywordLayerStatus =
   | 'loading'
   | 'enabled'
   | 'unavailable'
-export type KeywordSearchScope = 'graph' | 'global'
 export type RelayHealthStatus =
   | 'unknown'
   | 'connected'
@@ -124,7 +123,6 @@ export interface KeywordMatch {
 
 export interface KeywordLayerState {
   status: KeywordLayerStatus
-  searchScope: KeywordSearchScope
   loadedFrom: 'none' | 'cache' | 'live'
   isPartial: boolean
   message: string | null
@@ -199,6 +197,7 @@ export interface GraphSlice {
   nodeStructurePreviewStates: Record<string, NodeStructurePreviewState>
   setRootNodePubkey: (pubkey: string | null) => void
   upsertNodes: (nodes: GraphNode[]) => UpsertGraphNodesResult
+  removeNodes: (pubkeys: readonly string[]) => void
   upsertLinks: (links: GraphLink[]) => void
   markNodeExpanded: (pubkey: string) => void
   setNodeExpansionState: (pubkey: string, state: NodeExpansionState) => void
@@ -219,7 +218,6 @@ export interface ZapSlice {
 export interface KeywordSlice {
   keywordLayer: KeywordLayerState
   setKeywordLayerState: (state: Partial<KeywordLayerState>) => void
-  setKeywordSearchScope: (scope: KeywordSearchScope) => void
   setKeywordMatches: (matchesByPubkey: Record<string, KeywordMatch[]>) => void
   resetKeywordLayer: () => void
 }

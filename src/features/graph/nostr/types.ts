@@ -1,5 +1,9 @@
 import type { Event, Filter } from 'nostr-tools'
 
+export type RelayQueryFilter = Filter & {
+  search?: string
+}
+
 export type RelayHealthStatus =
   | 'idle'
   | 'connecting'
