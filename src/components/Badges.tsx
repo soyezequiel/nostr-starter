@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, ImgHTMLAttributes } from 'react';
+import { useEffect, useState } from 'react';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
 import { useAuthStore } from '@/store/auth';
 import { getNDK, connectNDK } from '@/lib/nostr';
+import SkeletonImage from '@/components/SkeletonImage';
 
 interface Badge {
   id: string;
@@ -12,19 +13,6 @@ interface Badge {
   image?: string;
   thumb?: string;
   creator: string;
-}
-
-function SkeletonImg(props: ImgHTMLAttributes<HTMLImageElement>) {
-  const [loaded, setLoaded] = useState(false);
-  return (
-    <div className="lc-img-skeleton w-full h-full">
-      <img
-        {...props}
-        className={`${props.className || ''} ${loaded ? 'loaded' : ''}`}
-        onLoad={() => setLoaded(true)}
-      />
-    </div>
-  );
 }
 
 function BadgesSkeleton() {
@@ -55,63 +43,74 @@ export default function Badges() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isConnected && profile) {
-      loadBadges();
-    }
-  }, [isConnected, profile]);
+    if (!isConnected || !profile) return;
 
-  const loadBadges = async () => {
-    if (!profile) return;
-    setLoading(true);
+    let cancelled = false;
 
-    try {
-      await connectNDK();
-      const ndk = getNDK();
+    const loadBadges = async () => {
+      setLoading(true);
 
-      const awardEvents = await Promise.race([
-        ndk.fetchEvents({ kinds: [8], '#p': [profile.pubkey] }),
-        new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 10000)),
-      ]);
+      try {
+        await connectNDK();
+        const ndk = getNDK();
 
-      const badgeDefIds = new Set<string>();
-      awardEvents.forEach((event: NDKEvent) => {
-        const aTag = event.tags.find(t => t[0] === 'a' && t[1]?.startsWith('30009:'));
-        if (aTag) badgeDefIds.add(aTag[1]);
-      });
+        const awardEvents = await Promise.race([
+          ndk.fetchEvents({ kinds: [8], '#p': [profile.pubkey] }),
+          new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 10000)),
+        ]);
 
-      const parsedBadges: Badge[] = [];
+        const badgeDefIds = new Set<string>();
+        awardEvents.forEach((event: NDKEvent) => {
+          const aTag = event.tags.find(t => t[0] === 'a' && t[1]?.startsWith('30009:'));
+          if (aTag) badgeDefIds.add(aTag[1]);
+        });
 
-      for (const defId of badgeDefIds) {
-        const [, pubkey, dTag] = defId.split(':');
-        if (!pubkey || !dTag) continue;
+        const parsedBadges: Badge[] = [];
 
-        try {
-          const defEvents = await Promise.race([
-            ndk.fetchEvents({ kinds: [30009], authors: [pubkey], '#d': [dTag], limit: 1 }),
-            new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 5000)),
-          ]);
+        for (const defId of badgeDefIds) {
+          const [, pubkey, dTag] = defId.split(':');
+          if (!pubkey || !dTag) continue;
 
-          const defEvent = Array.from(defEvents)[0];
-          if (defEvent) {
-            const name = defEvent.tags.find(t => t[0] === 'name')?.[1] || dTag;
-            const description = defEvent.tags.find(t => t[0] === 'description')?.[1] || '';
-            const image = defEvent.tags.find(t => t[0] === 'image')?.[1];
-            const thumb = defEvent.tags.find(t => t[0] === 'thumb')?.[1];
+          try {
+            const defEvents = await Promise.race([
+              ndk.fetchEvents({ kinds: [30009], authors: [pubkey], '#d': [dTag], limit: 1 }),
+              new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 5000)),
+            ]);
 
-            parsedBadges.push({ id: defId, name, description, image, thumb, creator: pubkey });
+            const defEvent = Array.from(defEvents)[0];
+            if (defEvent) {
+              const name = defEvent.tags.find(t => t[0] === 'name')?.[1] || dTag;
+              const description = defEvent.tags.find(t => t[0] === 'description')?.[1] || '';
+              const image = defEvent.tags.find(t => t[0] === 'image')?.[1];
+              const thumb = defEvent.tags.find(t => t[0] === 'thumb')?.[1];
+
+              parsedBadges.push({ id: defId, name, description, image, thumb, creator: pubkey });
+            }
+          } catch {
+            // skip
           }
-        } catch {
-          // skip
+        }
+
+        if (!cancelled) {
+          setBadges(parsedBadges);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading badges:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
       }
+    };
 
-      setBadges(parsedBadges);
-    } catch (error) {
-      console.error('Error loading badges:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    void loadBadges();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, profile]);
 
   if (!isConnected || !profile) return null;
 
@@ -139,29 +138,34 @@ export default function Badges() {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 pb-12">
-            {badges.map((badge) => (
-              <div key={badge.id} className="lc-card p-4 flex flex-col items-center text-center">
-                {(badge.thumb || badge.image) ? (
+            {badges.map((badge) => {
+              const badgeImage = badge.thumb ?? badge.image;
+
+              return (
+                <div key={badge.id} className="lc-card p-4 flex flex-col items-center text-center">
+                  {badgeImage ? (
                   <div className="w-20 h-20 rounded-xl overflow-hidden mb-3">
-                    <SkeletonImg
-                      src={badge.thumb || badge.image}
+                    <SkeletonImage
+                      src={badgeImage}
                       alt={badge.name}
-                      className="w-full h-full object-cover"
+                      sizes="80px"
+                      className="object-cover"
                     />
                   </div>
-                ) : (
-                  <div className="w-20 h-20 rounded-xl bg-lc-olive/40 flex items-center justify-center mb-3">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5">
-                      <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
-                    </svg>
-                  </div>
-                )}
-                <div className="font-semibold text-lc-white text-sm">{badge.name}</div>
-                {badge.description && (
-                  <div className="text-xs text-lc-muted mt-1 line-clamp-2">{badge.description}</div>
-                )}
-              </div>
-            ))}
+                  ) : (
+                    <div className="w-20 h-20 rounded-xl bg-lc-olive/40 flex items-center justify-center mb-3">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5">
+                        <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
+                      </svg>
+                    </div>
+                  )}
+                  <div className="font-semibold text-lc-white text-sm">{badge.name}</div>
+                  {badge.description && (
+                    <div className="text-xs text-lc-muted mt-1 line-clamp-2">{badge.description}</div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

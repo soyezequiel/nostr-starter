@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { NDKUser } from '@nostr-dev-kit/ndk';
+import { useState, useEffect, useEffectEvent, useCallback, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuthStore } from '@/store/auth';
 import {
@@ -33,6 +34,17 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const sessionRef = useRef<NostrConnectSession | null>(null);
   const { setUser, setLoading, setError, isLoading, error } = useAuthStore();
 
+  const handleBunkerConnected = useEffectEvent((user: NDKUser) => {
+    setUser(user, 'bunker');
+    onClose();
+  });
+
+  const handleBunkerError = useEffectEvent((err: unknown) => {
+    console.error('NostrConnect error:', err);
+    setError(err instanceof Error ? err.message : 'Connection failed');
+    setWaitingForScan(false);
+  });
+
   useEffect(() => {
     if (!isOpen) return;
     const check = () => setHasNip07(!!window.nostr);
@@ -44,12 +56,14 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   // Generate nostrconnect URI when bunker tab is selected
   useEffect(() => {
     if (method !== 'bunker' || bunkerTab !== 'qr') return;
-    if (connectUri) return; // already generated
 
     let cancelled = false;
 
     const generate = async () => {
       try {
+        setConnectUri('');
+        setWaitingForScan(false);
+
         const session = await createNostrConnectSession();
         if (cancelled) {
           session.cancel();
@@ -63,22 +77,20 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         const user = await session.waitForConnection();
         if (cancelled || !user) return;
 
-        setUser(user, 'bunker');
-        onClose();
+        handleBunkerConnected(user);
       } catch (err) {
         if (!cancelled) {
-          console.error('NostrConnect error:', err);
-          setError(err instanceof Error ? err.message : 'Connection failed');
-          setWaitingForScan(false);
+          handleBunkerError(err);
         }
       }
     };
 
-    generate();
+    void generate();
 
     return () => {
       cancelled = true;
       sessionRef.current?.cancel();
+      sessionRef.current = null;
     };
   }, [method, bunkerTab]);
 

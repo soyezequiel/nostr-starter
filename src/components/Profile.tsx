@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, ImgHTMLAttributes } from 'react';
+import { useEffect, useState } from 'react';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
 import { useAuthStore } from '@/store/auth';
 import {
@@ -10,19 +10,7 @@ import {
   fetchUserNotes,
   formatTimestamp,
 } from '@/lib/nostr';
-
-function SkeletonImg(props: ImgHTMLAttributes<HTMLImageElement>) {
-  const [loaded, setLoaded] = useState(false);
-  return (
-    <div className="lc-img-skeleton w-full h-full">
-      <img
-        {...props}
-        className={`${props.className || ''} ${loaded ? 'loaded' : ''}`}
-        onLoad={() => setLoaded(true)}
-      />
-    </div>
-  );
-}
+import SkeletonImage from '@/components/SkeletonImage';
 
 function ProfileSkeleton() {
   return (
@@ -106,33 +94,43 @@ export default function Profile() {
   const [activeTab, setActiveTab] = useState<'posts' | 'replies' | 'likes'>('posts');
 
   useEffect(() => {
-    if (isConnected && profile) {
-      loadProfileData();
-    }
+    if (!isConnected || !profile) return;
+
+    let cancelled = false;
+
+    const loadProfileData = async () => {
+      setLoading(true);
+      try {
+        await connectNDK();
+
+        const [followersData, followingData, notesData] = await Promise.all([
+          fetchFollowers(profile.pubkey),
+          fetchFollowing(profile.pubkey),
+          fetchUserNotes(profile.pubkey, 20),
+        ]);
+
+        if (cancelled) return;
+
+        setFollowers(followersData);
+        setFollowing(followingData);
+        setNotes(notesData);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading profile data:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadProfileData();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isConnected, profile]);
-
-  const loadProfileData = async () => {
-    if (!profile) return;
-
-    setLoading(true);
-    try {
-      await connectNDK();
-
-      const [followersData, followingData, notesData] = await Promise.all([
-        fetchFollowers(profile.pubkey),
-        fetchFollowing(profile.pubkey),
-        fetchUserNotes(profile.pubkey, 20),
-      ]);
-
-      setFollowers(followersData);
-      setFollowing(followingData);
-      setNotes(notesData);
-    } catch (error) {
-      console.error('Error loading profile data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (!isConnected || !profile) {
     return (
@@ -184,10 +182,12 @@ export default function Profile() {
       {/* Banner */}
       <div className="h-52 lc-banner-gradient relative overflow-hidden">
         {profile.banner ? (
-          <SkeletonImg
+          <SkeletonImage
             src={profile.banner}
-            alt="Banner"
-            className="w-full h-full object-cover"
+            alt="Profile banner"
+            sizes="100vw"
+            className="object-cover"
+            containerClassName="absolute inset-0"
           />
         ) : (
           <div className="absolute inset-0 lc-grid-bg opacity-40" />
@@ -201,10 +201,11 @@ export default function Profile() {
           {/* Avatar */}
           <div className="w-32 h-32 rounded-2xl border-4 border-lc-black bg-lc-dark overflow-hidden shadow-2xl">
             {profile.picture ? (
-              <SkeletonImg
+              <SkeletonImage
                 src={profile.picture}
-                alt={profile.name || 'Profile'}
-                className="w-full h-full object-cover"
+                alt={profile.displayName || profile.name || 'Profile picture'}
+                sizes="128px"
+                className="object-cover"
               />
             ) : (
               <div className="w-full h-full bg-lc-olive flex items-center justify-center text-lc-green text-4xl font-bold">
@@ -326,10 +327,11 @@ export default function Profile() {
                 <div className="flex items-center gap-3 mb-3">
                   {profile.picture ? (
                     <div className="w-10 h-10 rounded-xl overflow-hidden">
-                      <SkeletonImg
+                      <SkeletonImage
                         src={profile.picture}
                         alt=""
-                        className="w-full h-full object-cover"
+                        sizes="40px"
+                        className="object-cover"
                       />
                     </div>
                   ) : (

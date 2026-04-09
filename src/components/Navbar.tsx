@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { useNavStore } from '@/store/nav';
 import LoginModal from './LoginModal';
+import SkeletonImage from './SkeletonImage';
 
 export default function Navbar() {
   const [showLogin, setShowLogin] = useState(false);
@@ -70,11 +71,14 @@ export default function Navbar() {
                   className="flex items-center gap-2.5 py-1.5 pl-1.5 pr-4 bg-lc-dark hover:bg-lc-border rounded-full transition-all duration-200 border border-lc-border/50"
                 >
                   {profile.picture ? (
-                    <img
-                      src={profile.picture}
-                      alt={profile.name || 'Profile'}
-                      className="w-8 h-8 rounded-full object-cover ring-1 ring-lc-border"
-                    />
+                    <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border">
+                      <SkeletonImage
+                        src={profile.picture}
+                        alt={profile.displayName || profile.name || 'Profile picture'}
+                        sizes="32px"
+                        className="object-cover"
+                      />
+                    </div>
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-lc-olive flex items-center justify-center text-lc-green text-sm font-semibold">
                       {(profile.name || profile.displayName || 'N')[0].toUpperCase()}
