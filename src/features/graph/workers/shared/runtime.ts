@@ -10,6 +10,8 @@ import {
   toNormalizedWorkerError,
 } from '@/features/graph/workers/shared/protocol'
 
+export const WORKER_PROBE_ACTION = '__worker_probe__'
+
 export interface WorkerActionHandler<TRequest, TResponse> {
   validate(payload: unknown): TRequest
   handle(payload: TRequest): TResponse | Promise<TResponse>
@@ -27,6 +29,14 @@ export interface WorkerLike {
   addEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void
   removeEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void
   terminate?(): void
+}
+
+export interface WorkerClient<TMap extends WorkerActionMap> {
+  invoke<TAction extends WorkerActionName<TMap>>(
+    action: TAction,
+    payload: TMap[TAction]['request'],
+  ): Promise<TMap[TAction]['response']>
+  dispose(): void
 }
 
 function buildFailureEnvelope(
@@ -62,6 +72,17 @@ export async function dispatchWorkerRequest<TMap extends WorkerActionMap>(
       action,
       new WorkerProtocolError('INVALID_MESSAGE', 'Worker request must be an object.'),
     )
+  }
+
+  if (action === WORKER_PROBE_ACTION) {
+    const response: WorkerSuccessEnvelope<string, { ready: true }> = {
+      requestId,
+      action,
+      ok: true,
+      payload: { ready: true },
+    }
+
+    return response
   }
 
   if (typeof request.payload === 'undefined') {
@@ -148,7 +169,9 @@ interface PendingWorkerRequest {
   reject: (reason: unknown) => void
 }
 
-export class TypedWorkerClient<TMap extends WorkerActionMap> {
+export class TypedWorkerClient<TMap extends WorkerActionMap>
+  implements WorkerClient<TMap>
+{
   private readonly pending = new Map<string, PendingWorkerRequest>()
   private requestSequence = 0
   private disposed = false

@@ -2259,9 +2259,8 @@ export class ImageRuntime {
         mode: 'cors',
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
-        // @ts-ignore - fetchpriority is a hint supported by modern browsers
         priority: highPriority ? 'high' : 'auto',
-      } as RequestInit)
+      } as RequestInit & { priority?: 'auto' | 'high' | 'low' })
 
       if (!response.ok) {
         throw buildImageFetchError(

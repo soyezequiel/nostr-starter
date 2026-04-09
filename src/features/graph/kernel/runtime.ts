@@ -14,9 +14,9 @@ import { createNostrGraphDatabase, createRepositories, type NostrGraphRepositori
 import type { ProfileRecord, ZapRecord } from '@/features/graph/db/entities'
 import { appStore } from '@/features/graph/app/store/createAppStore'
 import {
-  createInlineEventsWorkerGateway,
-  createInlineGraphWorkerGateway,
-} from '@/features/graph/workers/gateway'
+  createEventsWorkerGateway,
+  createGraphWorkerGateway,
+} from '@/features/graph/workers/browser'
 import type {
   EventsWorkerActionMap,
   KeywordExtractInput,
@@ -27,7 +27,7 @@ import type {
   AnalyzeDiscoveredGraphRequest,
   GraphWorkerActionMap,
 } from '@/features/graph/workers/graph/contracts'
-import type { TypedWorkerClient } from '@/features/graph/workers/shared/runtime'
+import type { WorkerClient } from '@/features/graph/workers/shared/runtime'
 import {
   createRelayPoolAdapter,
   normalizeRelayUrl,
@@ -167,8 +167,8 @@ type RelayAdapterInstance = Pick<
 export interface AppKernelDependencies {
   store: AppStoreApi
   repositories: NostrGraphRepositories
-  eventsWorker: TypedWorkerClient<EventsWorkerActionMap>
-  graphWorker: TypedWorkerClient<GraphWorkerActionMap>
+  eventsWorker: WorkerClient<EventsWorkerActionMap>
+  graphWorker: WorkerClient<GraphWorkerActionMap>
   createRelayAdapter: (options: RelayAdapterOptions) => RelayAdapterInstance
   defaultRelayUrls?: string[]
   now?: () => number
@@ -2284,8 +2284,8 @@ const browserDatabase = createNostrGraphDatabase()
 export const browserAppKernel = createAppKernel({
   store: appStore,
   repositories: createRepositories(browserDatabase),
-  eventsWorker: createInlineEventsWorkerGateway(),
-  graphWorker: createInlineGraphWorkerGateway(),
+  eventsWorker: createEventsWorkerGateway(),
+  graphWorker: createGraphWorkerGateway(),
   createRelayAdapter: createRelayPoolAdapter,
 })
 
