@@ -237,6 +237,7 @@ function validateUiLayer(value: unknown, path: string): UiLayer {
   if (
     value !== 'graph' &&
     value !== 'mutuals' &&
+    value !== 'followers' &&
     value !== 'keywords' &&
     value !== 'zaps' &&
     value !== 'pathfinding'
@@ -589,6 +590,12 @@ function validateBuildRenderModelRequest(
     ),
     links: expectArray(request.links, 'payload.links').map((link, index) =>
       validateGraphLinkForRender(link, `payload.links[${index}]`),
+    ),
+    inboundLinks: expectArray(
+      request.inboundLinks,
+      'payload.inboundLinks',
+    ).map((link, index) =>
+      validateGraphLinkForRender(link, `payload.inboundLinks[${index}]`),
     ),
     zapEdges: expectArray(request.zapEdges, 'payload.zapEdges').map(
       (edge, index) => validateZapEdge(edge, `payload.zapEdges[${index}]`),

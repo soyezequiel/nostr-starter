@@ -31,6 +31,8 @@ export const createInitialGraphSliceState = (): Pick<
   | 'nodes'
   | 'links'
   | 'adjacency'
+  | 'inboundLinks'
+  | 'inboundAdjacency'
   | 'rootNodePubkey'
   | 'graphCaps'
   | 'expandedNodePubkeys'
@@ -40,6 +42,8 @@ export const createInitialGraphSliceState = (): Pick<
   nodes: {},
   links: [],
   adjacency: {},
+  inboundLinks: [],
+  inboundAdjacency: {},
   rootNodePubkey: null,
   graphCaps: createInitialGraphCaps(),
   expandedNodePubkeys: new Set(),
@@ -142,6 +146,28 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
     set({
       links: nextLinks,
       adjacency: nextAdjacency,
+    })
+  },
+  upsertInboundLinks: (incomingLinks) => {
+    const state = get()
+    const nextLinks = state.inboundLinks.slice()
+    const nextAdjacency = cloneAdjacency(state.inboundAdjacency)
+    const seenLinks = new Set(state.inboundLinks.map(getLinkKey))
+
+    for (const link of incomingLinks) {
+      const key = getLinkKey(link)
+
+      if (!seenLinks.has(key)) {
+        nextLinks.push(link)
+        seenLinks.add(key)
+      }
+
+      addNeighbor(nextAdjacency, link.target, link.source)
+    }
+
+    set({
+      inboundLinks: nextLinks,
+      inboundAdjacency: nextAdjacency,
     })
   },
   markNodeExpanded: (pubkey) => {

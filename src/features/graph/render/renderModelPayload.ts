@@ -23,6 +23,7 @@ export interface BuildRenderModelNodeInput {
 export interface BuildRenderModelRequest {
   nodes: Record<string, BuildRenderModelNodeInput>
   links: GraphLink[]
+  inboundLinks: GraphLink[]
   zapEdges: ZapLayerEdge[]
   activeLayer: UiLayer
   rootNodePubkey: string | null
@@ -64,6 +65,7 @@ const isGraphNodeSource = (value: unknown): value is GraphNodeSource =>
 const isUiLayer = (value: unknown): value is UiLayer =>
   value === 'graph' ||
   value === 'mutuals' ||
+  value === 'followers' ||
   value === 'keywords' ||
   value === 'zaps' ||
   value === 'pathfinding'
@@ -315,6 +317,7 @@ const sanitizePreviousPositions = (
 export const serializeBuildGraphRenderModelInput = ({
   nodes,
   links,
+  inboundLinks,
   zapEdges,
   activeLayer,
   rootNodePubkey,
@@ -329,6 +332,7 @@ export const serializeBuildGraphRenderModelInput = ({
 }: BuildGraphRenderModelInput): BuildRenderModelRequest => ({
   nodes: sanitizeNodes(nodes),
   links: sanitizeLinks(links),
+  inboundLinks: sanitizeLinks(inboundLinks),
   zapEdges: sanitizeZapEdges(zapEdges),
   activeLayer: isUiLayer(activeLayer) ? activeLayer : 'graph',
   rootNodePubkey: sanitizeString(rootNodePubkey),
@@ -355,6 +359,7 @@ export const serializeBuildGraphRenderModelInput = ({
 export const deserializeBuildGraphRenderModelInput = ({
   nodes,
   links,
+  inboundLinks,
   zapEdges,
   activeLayer,
   rootNodePubkey,
@@ -381,6 +386,7 @@ export const deserializeBuildGraphRenderModelInput = ({
     ]),
   ),
   links,
+  inboundLinks,
   zapEdges,
   activeLayer,
   rootNodePubkey,

@@ -11,6 +11,7 @@ import type {
   UiLayer,
   RelayHealthStatus as StoreRelayHealthStatus,
 } from '@/features/graph/app/store'
+import { deriveDirectedEvidence } from '@/features/graph/evidence/directedEvidence'
 import { createNostrGraphDatabase, createRepositories, type NostrGraphRepositories } from '@/features/graph/db'
 import type { ProfileRecord, ZapRecord } from '@/features/graph/db/entities'
 import { appStore } from '@/features/graph/app/store/createAppStore'
@@ -64,6 +65,8 @@ const NODE_EXPAND_CONNECT_TIMEOUT_MS = 1_200
 const NODE_EXPAND_PAGE_TIMEOUT_MS = 1_500
 const NODE_EXPAND_RETRY_COUNT = 0
 const NODE_EXPAND_STRAGGLER_GRACE_MS = 150
+const NODE_EXPAND_INBOUND_QUERY_LIMIT = 250
+const NODE_EXPAND_INBOUND_PARSE_CONCURRENCY = 8
 const DISCOVERED_GRAPH_ANALYSIS_LOADING_MESSAGE =
   'Analizando grupos detectados en el vecindario descubierto...'
 const NODE_PROFILE_HYDRATION_BATCH_SIZE = 50
@@ -149,7 +152,13 @@ interface PreservedExpandedNeighborhood {
   nodePubkeys: string[]
   nodes: GraphNode[]
   links: GraphLink[]
+  inboundLinks: GraphLink[]
   expandedNodePubkeys: string[]
+}
+
+interface InboundFollowerEvidence {
+  followerPubkeys: string[]
+  partial: boolean
 }
 
 export interface LoadRootOptions {

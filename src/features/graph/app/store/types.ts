@@ -26,7 +26,13 @@ export type RelayOverrideStatus =
   | 'applied'
   | 'revertible'
   | 'invalid'
-export type UiLayer = 'graph' | 'mutuals' | 'keywords' | 'zaps' | 'pathfinding'
+export type UiLayer =
+  | 'graph'
+  | 'mutuals'
+  | 'followers'
+  | 'keywords'
+  | 'zaps'
+  | 'pathfinding'
 export type UiPanel =
   | 'none'
   | 'overview'
@@ -167,6 +173,8 @@ export interface GraphSlice {
   nodes: Record<string, GraphNode>
   links: GraphLink[]
   adjacency: Record<string, string[]>
+  inboundLinks: GraphLink[]
+  inboundAdjacency: Record<string, string[]>
   rootNodePubkey: string | null
   graphCaps: GraphCaps
   expandedNodePubkeys: Set<string>
@@ -175,6 +183,7 @@ export interface GraphSlice {
   setRootNodePubkey: (pubkey: string | null) => void
   upsertNodes: (nodes: GraphNode[]) => UpsertGraphNodesResult
   upsertLinks: (links: GraphLink[]) => void
+  upsertInboundLinks: (links: GraphLink[]) => void
   markNodeExpanded: (pubkey: string) => void
   setNodeExpansionState: (pubkey: string, state: NodeExpansionState) => void
   setNodeStructurePreviewState: (

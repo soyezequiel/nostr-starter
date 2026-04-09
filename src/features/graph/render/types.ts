@@ -142,6 +142,7 @@ export interface GraphRenderModel {
 export interface BuildGraphRenderModelInput {
   nodes: Record<string, GraphNode>
   links: readonly GraphLink[]
+  inboundLinks: readonly GraphLink[]
   zapEdges: readonly ZapLayerEdge[]
   activeLayer: UiLayer
   rootNodePubkey: string | null
