@@ -7,6 +7,7 @@ import {
 
 import type { DiscoveredGraphAnalysisState } from '@/features/graph/analysis/types'
 import type { GraphLink, GraphNode, ZapLayerEdge } from '@/features/graph/app/store/types'
+import { deriveDirectedEvidence } from '@/features/graph/evidence/directedEvidence'
 
 import {
   FOLLOW_NODE_RADIUS,
@@ -973,6 +974,7 @@ const resolveNodeVisuals = ({
 export const buildGraphRenderModel = ({
   nodes,
   links,
+  inboundLinks,
   zapEdges,
   activeLayer,
   rootNodePubkey,
@@ -985,8 +987,28 @@ export const buildGraphRenderModel = ({
   previousPositions,
   previousLayoutKey,
 }: BuildGraphRenderModelInput): GraphRenderModel => {
+  const evidence = deriveDirectedEvidence({
+    links,
+    inboundLinks,
+  })
+  const mutualLayerLinks: GraphLink[] = evidence.mutualPairs.map((pair) => ({
+    source: pair.source,
+    target: pair.target,
+    relation: 'follow',
+  }))
+  const followerLayerLinks: GraphLink[] = evidence.inboundEdges.map((edge) => ({
+    source: edge.source,
+    target: edge.target,
+    relation: 'inbound',
+  }))
   const renderedLinks =
-    activeLayer === 'zaps' ? [...links, ...zapEdges] : [...links]
+    activeLayer === 'zaps'
+      ? [...links, ...zapEdges]
+      : activeLayer === 'mutuals'
+        ? mutualLayerLinks
+        : activeLayer === 'followers'
+          ? followerLayerLinks
+          : [...links]
   const visiblePubkeys = new Set<string>()
 
   if (rootNodePubkey) {
@@ -997,8 +1019,10 @@ export const buildGraphRenderModel = ({
     visiblePubkeys.add(selectedNodePubkey)
   }
 
-  for (const pubkey of expandedNodePubkeys) {
-    visiblePubkeys.add(pubkey)
+  if (activeLayer !== 'mutuals' && activeLayer !== 'followers') {
+    for (const pubkey of expandedNodePubkeys) {
+      visiblePubkeys.add(pubkey)
+    }
   }
 
   for (const link of renderedLinks) {
@@ -1174,7 +1198,11 @@ export const buildGraphRenderModel = ({
   const comparedArray = Array.from(comparedNodePubkeys)
   const commonFollowPubkeys = new Set<string>()
 
-  if (comparedArray.length >= 2) {
+  if (
+    comparedArray.length >= 2 &&
+    activeLayer !== 'mutuals' &&
+    activeLayer !== 'followers'
+  ) {
     const followsBySource = new Map<string, Set<string>>()
     
     // Group follows by their expanded source

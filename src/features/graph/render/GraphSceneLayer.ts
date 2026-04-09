@@ -191,7 +191,11 @@ const getNodeFillColor = (
     return node.fillColor ?? [100, 116, 139, 214]
   }
 
-  if (node.isCommonFollow) {
+  if (
+    node.isCommonFollow &&
+    activeLayer !== 'mutuals' &&
+    activeLayer !== 'followers'
+  ) {
     return COMMON_FOLLOW_NODE_COLOR
   }
 
@@ -409,7 +413,10 @@ const getGraphSceneTopologyData = (
       0,
     ),
     sharedEmphasisNodes: getSharedEmphasisNodes(model.nodes),
-    commonFollowNodes: getCommonFollowNodes(model.nodes),
+    commonFollowNodes:
+      model.activeLayer === 'mutuals' || model.activeLayer === 'followers'
+        ? []
+        : getCommonFollowNodes(model.nodes),
   }
 
   graphSceneTopologyCache.set(layerId, nextEntry)
@@ -670,7 +677,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       )
       .join('|')
 
-    const visibleArrowData = arrowType !== 'none' ? arrowData : []
+    const visibleArrowData =
+      arrowType !== 'none' && model.activeLayer !== 'mutuals' ? arrowData : []
 
     const baseAvatarNodes = model.nodes.filter(
       (node) => baseReadyImagesByPubkey[node.pubkey] !== undefined,
