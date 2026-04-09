@@ -65,6 +65,9 @@ const NODE_EXPAND_RETRY_COUNT = 0
 const NODE_EXPAND_STRAGGLER_GRACE_MS = 150
 const DISCOVERED_GRAPH_ANALYSIS_LOADING_MESSAGE =
   'Analizando grupos detectados en el vecindario descubierto...'
+const NODE_PROFILE_HYDRATION_BATCH_SIZE = 50
+const NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY = 2
+const NODE_PROFILE_PERSIST_CONCURRENCY = 8
 
 export interface LoadRootResult {
   status: 'ready' | 'partial' | 'empty' | 'error'
@@ -756,16 +759,25 @@ export class AppKernel {
       return
     }
 
-    const BATCH_SIZE = 50
+    const batches: string[][] = []
+    for (
+      let index = 0;
+      index < uniquePubkeys.length;
+      index += NODE_PROFILE_HYDRATION_BATCH_SIZE
+    ) {
+      batches.push(
+        uniquePubkeys.slice(index, index + NODE_PROFILE_HYDRATION_BATCH_SIZE),
+      )
+    }
+
     const adapter = this.createRelayAdapter({ relayUrls })
 
     try {
-      for (let i = 0; i < uniquePubkeys.length; i += BATCH_SIZE) {
+      const processBatch = async (batch: string[]) => {
         if (this.isStaleLoad(loadId)) {
           return
         }
 
-        const batch = uniquePubkeys.slice(i, i + BATCH_SIZE)
         const cachedProfiles = await Promise.all(
           batch.map((pubkey) => this.repositories.profiles.get(pubkey)),
         )
@@ -797,8 +809,16 @@ export class AppKernel {
           return
         }
 
-        for (const envelope of selectLatestReplaceableEventsByPubkey(profileResult.events)) {
-          await this.persistProfileEvent(envelope)
+        await runWithConcurrencyLimit(
+          selectLatestReplaceableEventsByPubkey(profileResult.events),
+          NODE_PROFILE_PERSIST_CONCURRENCY,
+          async (envelope) => {
+            await this.persistProfileEvent(envelope)
+          },
+        )
+
+        if (this.isStaleLoad(loadId)) {
+          return
         }
 
         for (const pubkey of batch) {
@@ -810,6 +830,12 @@ export class AppKernel {
           this.markNodeProfileMissing(pubkey)
         }
       }
+
+      await runWithConcurrencyLimit(
+        batches,
+        NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY,
+        processBatch,
+      )
     } catch {
       // Background hydration failures are non-fatal
     } finally {
@@ -2468,6 +2494,33 @@ async function collectRelayEvents(
       },
     })
   })
+}
+
+async function runWithConcurrencyLimit<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) {
+    return
+  }
+
+  const concurrency = Math.max(1, Math.min(limit, items.length))
+  let nextIndex = 0
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex]
+      nextIndex += 1
+      await worker(item)
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => {
+      await runWorker()
+    }),
+  )
 }
 
 function selectLatestReplaceableEvent(

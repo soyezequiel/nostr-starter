@@ -166,6 +166,92 @@ const getNodeLineColor = (node: GraphRenderNode) => {
   return node.lineColor ?? [226, 232, 240, 118]
 }
 
+const mixColor = (
+  left: readonly [number, number, number, number] | readonly [number, number, number],
+  right: readonly [number, number, number, number] | readonly [number, number, number],
+  ratio: number,
+): [number, number, number, number] => {
+  const clampedRatio = Math.max(0, Math.min(1, ratio))
+  const inverseRatio = 1 - clampedRatio
+  const leftAlpha = left[3] ?? 255
+  const rightAlpha = right[3] ?? 255
+
+  return [
+    Math.round(left[0] * inverseRatio + right[0] * clampedRatio),
+    Math.round(left[1] * inverseRatio + right[1] * clampedRatio),
+    Math.round(left[2] * inverseRatio + right[2] * clampedRatio),
+    Math.round(leftAlpha * inverseRatio + rightAlpha * clampedRatio),
+  ]
+}
+
+const GLASS_FROST_COLOR = [236, 245, 255, 255] as const
+const GLASS_EDGE_COLOR = [255, 255, 255, 255] as const
+const GLASS_SHADOW_COLOR = [125, 211, 252, 255] as const
+
+const getNodeGlassFillColor = (
+  node: GraphRenderNode,
+  paintedAvatarPubkeySet: ReadonlySet<string>,
+) => {
+  const tint = getNodeFillColor(node)
+  const frosted = mixColor(tint, GLASS_FROST_COLOR, 0.72)
+  const hasAvatarPainted = paintedAvatarPubkeySet.has(node.pubkey)
+
+  return [
+    frosted[0],
+    frosted[1],
+    frosted[2],
+    hasAvatarPainted ? 88 : 122,
+  ] as const
+}
+
+const getNodeGlassLineColor = (
+  node: GraphRenderNode,
+  paintedAvatarPubkeySet: ReadonlySet<string>,
+) => {
+  const tint = getNodeLineColor(node)
+  const edged = mixColor(tint, GLASS_EDGE_COLOR, 0.68)
+  const hasAvatarPainted = paintedAvatarPubkeySet.has(node.pubkey)
+
+  return [
+    edged[0],
+    edged[1],
+    edged[2],
+    hasAvatarPainted ? 150 : 196,
+  ] as const
+}
+
+const getNodeGlassHaloColor = (
+  node: GraphRenderNode,
+  paintedAvatarPubkeySet: ReadonlySet<string>,
+) => {
+  const tint = getNodeFillColor(node)
+  const halo = mixColor(tint, GLASS_SHADOW_COLOR, 0.5)
+  const hasAvatarPainted = paintedAvatarPubkeySet.has(node.pubkey)
+
+  return [
+    halo[0],
+    halo[1],
+    halo[2],
+    hasAvatarPainted ? 24 : 40,
+  ] as const
+}
+
+const getNodeGlassHighlightColor = (
+  node: GraphRenderNode,
+  paintedAvatarPubkeySet: ReadonlySet<string>,
+) => {
+  const tint = getNodeFillColor(node)
+  const highlight = mixColor(tint, GLASS_EDGE_COLOR, 0.88)
+  const hasAvatarPainted = paintedAvatarPubkeySet.has(node.pubkey)
+
+  return [
+    highlight[0],
+    highlight[1],
+    highlight[2],
+    hasAvatarPainted ? 34 : 64,
+  ] as const
+}
+
 const getEmphasisNodes = (
   nodes: readonly GraphRenderNode[],
   hoveredNodePubkey: string | null,
@@ -816,6 +902,22 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         },
       }),
       new ScatterplotLayer<GraphRenderNode>({
+        id: `${this.props.id}-node-glass-halo`,
+        data: model.nodes,
+        pickable: false,
+        stroked: false,
+        filled: true,
+        radiusUnits: 'pixels',
+        getPosition: (node) => node.position,
+        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 1.14,
+        getFillColor: (node) =>
+          getNodeGlassHaloColor(node, paintedAvatarPubkeySet),
+        updateTriggers: {
+          getRadius: [nodeScreenRadii, nodeSizeFactor],
+          getFillColor: [imageFrame.paintedPubkeys.join(',')],
+        },
+      }),
+      new ScatterplotLayer<GraphRenderNode>({
         id: `${this.props.id}-nodes`,
         data: model.nodes,
         pickable: true,
@@ -825,8 +927,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         lineWidthUnits: 'pixels',
         getPosition: (node) => node.position,
         getRadius: (node) => getScreenRadius(node.pubkey, node.radius),
-        getFillColor: (node) => getNodeFillColor(node),
-        getLineColor: (node) => getNodeLineColor(node),
+        getFillColor: (node) =>
+          getNodeGlassFillColor(node, paintedAvatarPubkeySet),
+        getLineColor: (node) =>
+          getNodeGlassLineColor(node, paintedAvatarPubkeySet),
         getLineWidth: (node) =>
           node.isRoot
             ? 2.2
@@ -838,6 +942,22 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           getFillColor: [imageFrame.paintedPubkeys.join(',')],
           getLineColor: [imageFrame.paintedPubkeys.join(',')],
           getLineWidth: [imageFrame.paintedPubkeys.join(',')],
+        },
+      }),
+      new ScatterplotLayer<GraphRenderNode>({
+        id: `${this.props.id}-node-glass-highlight`,
+        data: model.nodes,
+        pickable: false,
+        stroked: false,
+        filled: true,
+        radiusUnits: 'pixels',
+        getPosition: (node) => node.position,
+        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 0.72,
+        getFillColor: (node) =>
+          getNodeGlassHighlightColor(node, paintedAvatarPubkeySet),
+        updateTriggers: {
+          getRadius: [nodeScreenRadii, nodeSizeFactor],
+          getFillColor: [imageFrame.paintedPubkeys.join(',')],
         },
       }),
       new IconLayer<GraphRenderNode>({
