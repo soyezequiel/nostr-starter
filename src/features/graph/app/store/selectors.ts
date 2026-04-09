@@ -138,6 +138,111 @@ export const selectRelayHealthData = (state: AppStore) => ({
   relayHealth: state.relayHealth,
 })
 
+export type CoverageRecoveryReason =
+  | 'zero-follows'
+  | 'relays-unavailable'
+  | 'browser-offline'
+
+export interface CoverageRecoveryState {
+  shouldOfferRecovery: boolean
+  reason: CoverageRecoveryReason | null
+  rootFollowCount: number
+  relaySummary: {
+    totalCount: number
+    connectedCount: number
+    degradedCount: number
+    offlineCount: number
+    unavailableCount: number
+  }
+}
+
+export const deriveCoverageRecovery = (input: {
+  browserOnline: boolean
+  relayUrls: readonly string[]
+  relayHealth: AppStore['relayHealth']
+  rootNodePubkey: string | null
+  rootLoadStatus: AppStore['rootLoad']['status']
+  links: AppStore['links']
+}): CoverageRecoveryState => {
+  const relaySummary = input.relayUrls.reduce(
+    (summary, relayUrl) => {
+      const status = input.relayHealth[relayUrl]?.status ?? 'unknown'
+
+      if (status === 'connected') {
+        summary.connectedCount += 1
+      }
+
+      if (status === 'degraded') {
+        summary.degradedCount += 1
+        summary.unavailableCount += 1
+      }
+
+      if (status === 'offline') {
+        summary.offlineCount += 1
+        summary.unavailableCount += 1
+      }
+
+      return summary
+    },
+    {
+      totalCount: input.relayUrls.length,
+      connectedCount: 0,
+      degradedCount: 0,
+      offlineCount: 0,
+      unavailableCount: 0,
+    },
+  )
+
+  if (
+    input.rootNodePubkey === null ||
+    input.rootLoadStatus === 'idle' ||
+    input.rootLoadStatus === 'loading'
+  ) {
+    return {
+      shouldOfferRecovery: false,
+      reason: null,
+      rootFollowCount: 0,
+      relaySummary,
+    }
+  }
+
+  const rootFollowCount = input.links.filter(
+    (link) =>
+      link.source === input.rootNodePubkey && link.relation === 'follow',
+  ).length
+  const allRelaysUnavailable =
+    relaySummary.totalCount > 0 &&
+    relaySummary.unavailableCount === relaySummary.totalCount
+
+  const reason: CoverageRecoveryReason | null = !input.browserOnline
+    ? 'browser-offline'
+    : allRelaysUnavailable
+      ? 'relays-unavailable'
+      : rootFollowCount === 0
+        ? 'zero-follows'
+        : null
+
+  return {
+    shouldOfferRecovery: reason !== null,
+    reason,
+    rootFollowCount,
+    relaySummary,
+  }
+}
+
+export const selectCoverageRecovery = (
+  state: AppStore,
+  options: { browserOnline: boolean },
+): CoverageRecoveryState =>
+  deriveCoverageRecovery({
+    browserOnline: options.browserOnline,
+    relayUrls: state.relayUrls,
+    relayHealth: state.relayHealth,
+    rootNodePubkey: state.rootNodePubkey,
+    rootLoadStatus: state.rootLoad.status,
+    links: state.links,
+  })
+
 export const selectDegreeCounts = (state: AppStore) => {
   const degreeCounts: Record<string, number> = {}
 

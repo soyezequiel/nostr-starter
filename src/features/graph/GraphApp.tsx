@@ -20,7 +20,12 @@ import { RelayConfigPanel } from '@/features/graph/components/RelayConfigPanel'
 import { RelayHealthIndicator } from '@/features/graph/components/RelayHealthIndicator'
 import { RenderConfigPanel } from '@/features/graph/components/RenderConfigPanel'
 import { SavedRootsPanel } from '@/features/graph/components/SavedRootsPanel'
-import { browserAppKernel, type RootLoader } from '@/features/graph/kernel'
+import {
+  browserAppKernel,
+  CURATED_SAMPLE_ROOT,
+  type LoadRootOptions,
+  type RootLoader,
+} from '@/features/graph/kernel'
 import {
   fetchProfileByPubkey,
   type NostrProfile,
@@ -374,26 +379,41 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
 
   const handleResolveRoot = ({
     kind,
+    npub,
     pubkey,
   }: {
+    npub?: string
     pubkey: string
     kind: 'npub' | 'nprofile'
-  }) => {
+  }, loadOptions?: LoadRootOptions) => {
     setRootKind(kind)
     upsertSavedRoot({
       pubkey,
-      npub: nip19.npubEncode(pubkey),
+      npub: npub ?? nip19.npubEncode(pubkey),
       openedAt: Date.now(),
     })
+    setIsSettingsOpen(false)
     setIsRootEntryOpen(false)
-    void rootLoader.loadRoot(pubkey)
+    void rootLoader.loadRoot(pubkey, loadOptions)
   }
 
   const handleSelectSavedRoot = (savedRoot: SavedRootEntry) => {
     handleResolveRoot({
       pubkey: savedRoot.pubkey,
       kind: 'npub',
+      npub: savedRoot.npub,
     })
+  }
+
+  const handleLoadCuratedSampleRoot = () => {
+    handleResolveRoot(
+      {
+        pubkey: CURATED_SAMPLE_ROOT.pubkey,
+        kind: 'npub',
+        npub: CURATED_SAMPLE_ROOT.npub,
+      },
+      { useDefaultRelays: true },
+    )
   }
 
   const handleOpenSettings = (tab: SettingsTab = 'appearance') => {
@@ -706,6 +726,7 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
     <main className="app-shell app-shell--immersive">
       <section className="workspace-shell">
         <GraphCanvas
+          onTrySampleRoot={handleLoadCuratedSampleRoot}
           onDiagnosticsChange={setGraphDiagnostics}
           runtime={rootLoader}
         />

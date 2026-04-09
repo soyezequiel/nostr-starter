@@ -13,8 +13,13 @@ import {
 } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
-import { appStore, useAppStore } from '@/features/graph/app/store'
+import {
+  appStore,
+  deriveCoverageRecovery,
+  useAppStore,
+} from '@/features/graph/app/store'
 import type { AppStore } from '@/features/graph/app/store/types'
+import { CoverageRecoveryCard } from '@/features/graph/components/CoverageRecoveryCard'
 import { createPerfCounters } from '@/features/graph/components/perfCounters'
 import type { RootLoader } from '@/features/graph/kernel'
 import {
@@ -50,12 +55,15 @@ const selectGraphCanvasState = (state: AppStore) => ({
   links: state.links,
   zapEdges: state.zapLayer.edges,
   zapLayerStatus: state.zapLayer.status,
+  relayUrls: state.relayUrls,
+  relayHealth: state.relayHealth,
   rootNodePubkey: state.rootNodePubkey,
   selectedNodePubkey: state.selectedNodePubkey,
   comparedNodePubkeys: state.comparedNodePubkeys,
   expandedNodePubkeys: state.expandedNodePubkeys,
   graphAnalysis: state.graphAnalysis,
   rootLoadStatus: state.rootLoad.status,
+  rootLoadMessage: state.rootLoad.message,
   activeLayer: state.activeLayer,
   capReached: state.graphCaps.capReached,
   maxNodes: state.graphCaps.maxNodes,
@@ -96,6 +104,7 @@ export interface GraphCanvasDiagnostics {
 
 interface GraphCanvasProps {
   runtime: RootLoader
+  onTrySampleRoot: () => void
   onDiagnosticsChange?: (snapshot: GraphCanvasDiagnostics | null) => void
 }
 
@@ -256,6 +265,7 @@ const emptyStateCopy = (status: ReturnType<typeof deriveGraphRenderState>) => {
 
 export function GraphCanvas({
   runtime,
+  onTrySampleRoot,
   onDiagnosticsChange,
 }: GraphCanvasProps) {
   const {
@@ -263,12 +273,15 @@ export function GraphCanvas({
     links,
     zapEdges,
     zapLayerStatus,
+    relayUrls,
+    relayHealth,
     rootNodePubkey,
     selectedNodePubkey,
     comparedNodePubkeys,
     expandedNodePubkeys,
     graphAnalysis,
     rootLoadStatus,
+    rootLoadMessage,
     activeLayer,
     capReached,
     maxNodes,
@@ -342,6 +355,46 @@ export function GraphCanvas({
   const [viewportQuietForMs, setViewportQuietForMs] = useState(
     QUIET_VIEWPORT_READY_MS,
   )
+  const [isBrowserOnline, setIsBrowserOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  )
+  const coverageRecovery = useMemo(
+    () =>
+      deriveCoverageRecovery({
+        browserOnline: isBrowserOnline,
+        relayUrls,
+        relayHealth,
+        rootNodePubkey,
+        rootLoadStatus,
+        links,
+      }),
+    [
+      isBrowserOnline,
+      links,
+      relayHealth,
+      relayUrls,
+      rootLoadStatus,
+      rootNodePubkey,
+    ],
+  )
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsBrowserOnline(true)
+    }
+
+    const handleOffline = () => {
+      setIsBrowserOnline(false)
+    }
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
 
   useEffect(() => {
     const nextImageRuntime = new ImageRuntime()
@@ -1015,6 +1068,10 @@ export function GraphCanvas({
     !shouldMountRenderer &&
     rootNodePubkey !== null &&
     rootLoadStatus !== 'loading'
+  const shouldShowRecoveryEmptyState =
+    shouldShowEmptyState && coverageRecovery.shouldOfferRecovery
+  const shouldShowRecoveryOverlay =
+    shouldMountRenderer && coverageRecovery.shouldOfferRecovery
   const statusCopy = capReached
     ? `Cap ${maxNodes} alcanzado`
     : activeLayer === 'zaps'
@@ -1117,6 +1174,21 @@ export function GraphCanvas({
             containerRef.current = element
           }}
         >
+          {shouldShowRecoveryOverlay && coverageRecovery.reason ? (
+            <div className="graph-panel__overlay-stack">
+              <CoverageRecoveryCard
+                onChangeRelays={() => {
+                  appStore.getState().setOpenPanel('relay-config')
+                }}
+                onTrySampleRoot={onTrySampleRoot}
+                reason={coverageRecovery.reason}
+                relaySummary={coverageRecovery.relaySummary}
+                rootLoadMessage={rootLoadMessage}
+                variant="overlay"
+              />
+            </div>
+          ) : null}
+
           {isNodeDetailOpen ? (
             <Suspense fallback={null}>
               <NodeDetailPanel imageRuntime={imageRuntime} runtime={runtime} />
@@ -1144,7 +1216,20 @@ export function GraphCanvas({
             />
           ) : null}
 
-          {shouldShowEmptyState ? (
+          {shouldShowRecoveryEmptyState && coverageRecovery.reason ? (
+            <CoverageRecoveryCard
+              onChangeRelays={() => {
+                appStore.getState().setOpenPanel('relay-config')
+              }}
+              onTrySampleRoot={onTrySampleRoot}
+              reason={coverageRecovery.reason}
+              relaySummary={coverageRecovery.relaySummary}
+              rootLoadMessage={rootLoadMessage}
+              variant="empty"
+            />
+          ) : null}
+
+          {shouldShowEmptyState && !shouldShowRecoveryEmptyState ? (
             <div aria-live="polite" className="graph-panel__empty">
               <p className="graph-panel__empty-title">{overlayCopy.title}</p>
               <p className="graph-panel__empty-copy">{overlayCopy.body}</p>

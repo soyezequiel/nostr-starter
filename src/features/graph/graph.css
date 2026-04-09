@@ -2383,6 +2383,7 @@ main {
 .settings-pill,
 .settings-primary-btn,
 .settings-secondary-btn,
+.coverage-recovery-card__action,
 .relay-config-panel__actions button,
 .relay-health__cta-btn {
   min-height: 2.4rem;
@@ -2663,6 +2664,98 @@ main {
 .graph-panel__empty-copy {
   margin: 0.55rem 0 0;
   color: rgba(255, 255, 255, 0.58);
+}
+
+.coverage-recovery-card {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1.25rem 1.35rem;
+  border-radius: 1.4rem;
+  background: rgba(19, 19, 19, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.coverage-recovery-card--empty {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(34rem, calc(100% - 3rem));
+  z-index: 14;
+}
+
+.coverage-recovery-card--overlay {
+  width: 100%;
+}
+
+.coverage-recovery-card__eyebrow {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.coverage-recovery-card__title {
+  margin: 0;
+  font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.2rem;
+  letter-spacing: -0.04em;
+  color: #fbfbf7;
+}
+
+.coverage-recovery-card__body,
+.coverage-recovery-card__meta,
+.coverage-recovery-card__detail {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.coverage-recovery-card__meta {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.82rem;
+}
+
+.coverage-recovery-card__detail {
+  padding: 0.8rem 0.9rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 0.9rem;
+}
+
+.coverage-recovery-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.coverage-recovery-card__action {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.coverage-recovery-card__action:hover {
+  transform: translateY(-1px);
+}
+
+.coverage-recovery-card__action--primary {
+  background: #fbfbf7;
+  color: #121212;
+}
+
+.coverage-recovery-card__action--secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fbfbf7;
 }
 
 .graph-panel__comparison-badge {

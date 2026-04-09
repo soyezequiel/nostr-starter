@@ -151,8 +151,9 @@ interface PreservedExpandedNeighborhood {
   expandedNodePubkeys: string[]
 }
 
-interface LoadRootOptions {
+export interface LoadRootOptions {
   preserveExistingGraph?: boolean
+  useDefaultRelays?: boolean
   relayUrls?: string[]
 }
 
@@ -248,13 +249,19 @@ export class AppKernel {
 
     const storeState = this.store.getState()
     const preserveExistingGraph = options.preserveExistingGraph ?? false
-    const relayUrls =
-      options.relayUrls?.slice() ??
-      (storeState.relayUrls.length > 0
-        ? storeState.relayUrls.slice()
-        : this.defaultRelayUrls.slice())
+    const relayUrls = options.useDefaultRelays
+      ? this.defaultRelayUrls.slice()
+      : options.relayUrls?.slice() ??
+        (storeState.relayUrls.length > 0
+          ? storeState.relayUrls.slice()
+          : this.defaultRelayUrls.slice())
 
     storeState.setRelayUrls(relayUrls)
+    if (options.useDefaultRelays) {
+      this.pendingRelayOverride = null
+      storeState.resetRelayHealth(relayUrls)
+      storeState.setRelayOverrideStatus('applied')
+    }
     if (!preserveExistingGraph) {
       storeState.markGraphStale(false)
       storeState.setSelectedNodePubkey(null)
@@ -2290,7 +2297,10 @@ export class KernelCommandError extends Error {
 }
 
 export interface RootLoader {
-  loadRoot: (rootPubkey: string) => Promise<LoadRootResult>
+  loadRoot: (
+    rootPubkey: string,
+    options?: LoadRootOptions,
+  ) => Promise<LoadRootResult>
   reconfigureRelays: (
     input: ReconfigureRelaysInput,
   ) => Promise<ReconfigureRelaysResult>
