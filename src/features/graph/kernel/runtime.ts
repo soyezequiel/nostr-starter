@@ -1956,13 +1956,21 @@ export class AppKernel {
       return null
     }
 
-    const expandedNodePubkeys = Array.from(state.expandedNodePubkeys).filter(
-      (pubkey) => pubkey !== rootPubkey,
-    )
+    const expandedNodePubkeys = Array.from(state.expandedNodePubkeys)
     const links = state.links.filter((link) => link.source !== rootPubkey)
+    const inboundLinks = state.inboundLinks.slice()
     const nodePubkeys = new Set<string>(expandedNodePubkeys)
 
     for (const link of links) {
+      if (link.source !== rootPubkey) {
+        nodePubkeys.add(link.source)
+      }
+      if (link.target !== rootPubkey) {
+        nodePubkeys.add(link.target)
+      }
+    }
+
+    for (const link of inboundLinks) {
       if (link.source !== rootPubkey) {
         nodePubkeys.add(link.source)
       }
@@ -1981,6 +1989,7 @@ export class AppKernel {
         .map((pubkey) => state.nodes[pubkey])
         .filter((node): node is GraphNode => node !== undefined),
       links,
+      inboundLinks,
       expandedNodePubkeys,
     }
   }
@@ -2004,6 +2013,10 @@ export class AppKernel {
       state.upsertLinks(preservedExpandedNeighborhood.links)
     }
 
+    if (preservedExpandedNeighborhood.inboundLinks.length > 0) {
+      state.upsertInboundLinks(preservedExpandedNeighborhood.inboundLinks)
+    }
+
     for (const pubkey of preservedExpandedNeighborhood.expandedNodePubkeys) {
       if (state.nodes[pubkey]) {
         state.markNodeExpanded(pubkey)
@@ -2013,6 +2026,7 @@ export class AppKernel {
     if (
       missingNodes.length > 0 ||
       preservedExpandedNeighborhood.links.length > 0 ||
+      preservedExpandedNeighborhood.inboundLinks.length > 0 ||
       preservedExpandedNeighborhood.expandedNodePubkeys.length > 0
     ) {
       this.scheduleDiscoveredGraphAnalysis()
@@ -2941,57 +2955,18 @@ export function createAppKernel(dependencies: AppKernelDependencies): AppKernel 
 }
 
 function buildMutualAdjacency(
-  state: Pick<AppStore, 'links' | 'nodes'>,
+  state: Pick<AppStore, 'links' | 'inboundLinks' | 'nodes'>,
 ): Record<string, string[]> {
-  const followAdjacency = new Map<string, Set<string>>()
-
-  Object.keys(state.nodes).forEach((pubkey) => {
-    followAdjacency.set(pubkey, new Set())
-  })
-
-  state.links.forEach((link) => {
-    if (
-      link.relation !== 'follow' ||
-      !state.nodes[link.source] ||
-      !state.nodes[link.target]
-    ) {
-      return
-    }
-
-    const neighbors = followAdjacency.get(link.source) ?? new Set<string>()
-    neighbors.add(link.target)
-    followAdjacency.set(link.source, neighbors)
-
-    if (!followAdjacency.has(link.target)) {
-      followAdjacency.set(link.target, new Set())
-    }
+  const evidence = deriveDirectedEvidence({
+    links: state.links,
+    inboundLinks: state.inboundLinks,
   })
 
   const mutualAdjacency = Object.fromEntries(
-    Array.from(followAdjacency.keys())
+    Object.keys(state.nodes)
       .sort()
-      .map((pubkey) => [pubkey, [] as string[]]),
+      .map((pubkey) => [pubkey, evidence.mutualAdjacency[pubkey] ?? []]),
   )
-
-  Array.from(followAdjacency.entries()).forEach(([sourcePubkey, neighbors]) => {
-    Array.from(neighbors).forEach((targetPubkey) => {
-      if (!followAdjacency.get(targetPubkey)?.has(sourcePubkey)) {
-        return
-      }
-
-      if (!mutualAdjacency[sourcePubkey].includes(targetPubkey)) {
-        mutualAdjacency[sourcePubkey].push(targetPubkey)
-      }
-
-      if (!mutualAdjacency[targetPubkey].includes(sourcePubkey)) {
-        mutualAdjacency[targetPubkey].push(sourcePubkey)
-      }
-    })
-  })
-
-  Object.values(mutualAdjacency).forEach((neighbors) => {
-    neighbors.sort()
-  })
 
   return mutualAdjacency
 }
