@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 
 import { useAppStore } from '@/features/graph/app/store'
-import type { RootLoadStatus, UiPanel } from '@/features/graph/app/store/types'
+import type { UiPanel } from '@/features/graph/app/store/types'
 import {
   GraphCanvas,
   type GraphCanvasDiagnostics,
@@ -20,8 +20,6 @@ interface AppProps {
 }
 
 type SettingsTab = 'appearance' | 'relay' | 'zip' | 'internal'
-
-const APP_VERSION = 'v0.1.0'
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'appearance', label: 'Visualization' },
@@ -81,42 +79,6 @@ function mapPanelToSettingsTab(panel: UiPanel): SettingsTab | null {
   }
 }
 
-function getDiscoveryHeadline(
-  status: RootLoadStatus,
-  connectedRelayCount: number,
-  relayCount: number,
-) {
-  const relayCopy = `${connectedRelayCount}/${relayCount} relays`
-
-  switch (status) {
-    case 'loading':
-      return `Descubriendo vecindario desde ${relayCopy}`
-    case 'partial':
-      return `Vecindario parcial descubierto desde ${relayCopy}`
-    case 'ready':
-    case 'empty':
-      return `Vecindario descubierto desde ${relayCopy}`
-    case 'error':
-      return `No se pudo descubrir el vecindario desde ${relayCopy}`
-    case 'idle':
-      return 'Esperando root para descubrir vecindario'
-  }
-}
-
-function getStatusTone(status: RootLoadStatus) {
-  switch (status) {
-    case 'ready':
-      return 'ok'
-    case 'partial':
-    case 'loading':
-      return 'pending'
-    case 'error':
-      return 'error'
-    default:
-      return 'idle'
-  }
-}
-
 function formatMs(value: number) {
   return value > 0 ? `${value.toFixed(1)} ms` : 'n/a'
 }
@@ -160,7 +122,6 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('appearance')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isRootEntryOpen, setIsRootEntryOpen] = useState(false)
-  const [isDiscoveryExpanded, setIsDiscoveryExpanded] = useState(false)
   const [graphDiagnostics, setGraphDiagnostics] =
     useState<GraphCanvasDiagnostics | null>(null)
   const rootPubkey = useAppStore((state) => state.rootNodePubkey)
@@ -169,7 +130,6 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const maxNodes = useAppStore((state) => state.graphCaps.maxNodes)
   const capReached = useAppStore((state) => state.graphCaps.capReached)
   const relayUrls = useAppStore((state) => state.relayUrls)
-  const relayHealth = useAppStore((state) => state.relayHealth)
   const relayOverrideStatus = useAppStore((state) => state.relayOverrideStatus)
   const isGraphStale = useAppStore((state) => state.isGraphStale)
   const openPanel = useAppStore((state) => state.openPanel)
@@ -179,9 +139,6 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const rootLoadStatus = useAppStore((state) => state.rootLoad.status)
   const rootLoadMessage = useAppStore((state) => state.rootLoad.message)
   const rootLoadSource = useAppStore((state) => state.rootLoad.loadedFrom)
-  const showDiscoveryState = useAppStore(
-    (state) => state.renderConfig.showDiscoveryState ?? true,
-  )
   const selectedDeepUserCount = useAppStore(
     (state) => state.selectedDeepUserPubkeys.length,
   )
@@ -279,15 +236,13 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   }, [isNodeDetailOpen, rootLoader])
 
   const relayCount = relayUrls.length
-  const connectedRelayCount = relayUrls.filter(
-    (url) => relayHealth[url]?.status === 'connected',
-  ).length
-  const discoveryHeadline = getDiscoveryHeadline(
-    rootLoadStatus,
-    connectedRelayCount,
-    relayCount,
-  )
-  const statusTone = getStatusTone(rootLoadStatus)
+  const isRootEntryInline = rootPubkey === null
+  const shouldShowRootEntry = isRootEntryInline || isRootEntryOpen
+  const rootEntryTitle = isRootEntryInline ? 'Ingresa una npub o nprofile' : 'Cambiar root'
+  const rootEntryEyebrow = isRootEntryInline ? 'Start exploring' : 'Entry point'
+  const rootEntryButtonLabel = isRootEntryInline
+    ? 'Entrada de root activa'
+    : 'Abrir entrada de npub'
 
   const handleOpenSettings = (tab: SettingsTab = 'appearance') => {
     if (openPanel === 'node-detail') {
@@ -316,6 +271,9 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   }
 
   const handleCloseRootEntry = () => {
+    if (isRootEntryInline) {
+      return
+    }
     setIsRootEntryOpen(false)
   }
 
@@ -601,20 +559,15 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
         />
 
         <header className="workspace-topbar">
-          <div className="workspace-brand">
-            <span className="workspace-brand__name">Nostr Graph Explorer</span>
-            <span className="workspace-brand__version">{APP_VERSION}</span>
-          </div>
-
           <div className="workspace-topbar__actions">
             <button
-              aria-expanded={isRootEntryOpen}
-              aria-label="Abrir entrada de npub"
+              aria-expanded={shouldShowRootEntry}
+              aria-label={rootEntryButtonLabel}
               className={`workspace-icon-btn${
-                isRootEntryOpen ? ' workspace-icon-btn--active' : ''
+                shouldShowRootEntry ? ' workspace-icon-btn--active' : ''
               }`}
               onClick={() => {
-                if (isRootEntryOpen) {
+                if (shouldShowRootEntry) {
                   handleCloseRootEntry()
                 } else {
                   handleOpenRootEntry()
@@ -644,74 +597,12 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
           </div>
         </header>
 
-        {showDiscoveryState ? (
-          <section
-            className={`discovery-strip${
-              isDiscoveryExpanded ? ' discovery-strip--expanded' : ''
-            }`}
-            aria-live="polite"
-          >
-            <div className="discovery-strip__summary">
-              <div className="discovery-strip__primary">
-                <p className="discovery-strip__eyebrow">Discovery state</p>
-                <h1 className="discovery-strip__headline">{discoveryHeadline}</h1>
-              </div>
-
-              <div className="discovery-strip__side">
-                <RelayHealthIndicator mode="summary" />
-                <button
-                  aria-expanded={isDiscoveryExpanded}
-                  className="discovery-strip__toggle"
-                  onClick={() => setIsDiscoveryExpanded((current) => !current)}
-                  type="button"
-                >
-                  {isDiscoveryExpanded ? 'Ocultar detalle' : 'Ver detalle'}
-                </button>
-              </div>
-            </div>
-
-            <div className="discovery-strip__chips">
-              <span
-                className={`discovery-chip discovery-chip--${statusTone}`}
-                data-testid="discovery-status-chip"
-              >
-                {rootLoadStatus}
-              </span>
-              <span className="discovery-chip">{nodeCount} nodos</span>
-              <span className="discovery-chip">{linkCount} follows descubiertos</span>
-              {isGraphStale ? (
-                <span className="discovery-chip discovery-chip--warn">stale</span>
-              ) : null}
-              {comparedNodeCount > 0 ? (
-                <span className="discovery-chip">comparando {comparedNodeCount}</span>
-              ) : null}
-            </div>
-
-            {isDiscoveryExpanded ? (
-              <div className="discovery-strip__details">
-                <p className="discovery-strip__source">
-                  {rootLoadSource !== 'none'
-                    ? `Fuente ${rootLoadSource}`
-                    : rootPubkey
-                      ? 'Sin fuente confirmada'
-                      : 'Sin root cargado'}
-                </p>
-                {rootLoadMessage ? (
-                  <p className="discovery-notice" role="status">
-                    {rootLoadMessage}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {(isSettingsOpen || isRootEntryOpen) && (
+        {(isSettingsOpen || (isRootEntryOpen && !isRootEntryInline)) && (
           <button
             aria-hidden="true"
             className="workspace-scrim"
             onClick={() => {
-              if (isRootEntryOpen) {
+              if (isRootEntryOpen && !isRootEntryInline) {
                 handleCloseRootEntry()
               }
               if (isSettingsOpen) {
@@ -723,26 +614,30 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
           />
         )}
 
-        {isRootEntryOpen ? (
+        {shouldShowRootEntry ? (
           <section
             aria-labelledby="root-entry-title"
-            aria-modal="true"
-            className="root-entry-sheet"
-            role="dialog"
+            aria-modal={isRootEntryInline ? undefined : 'true'}
+            className={`root-entry-sheet${
+              isRootEntryInline ? ' root-entry-sheet--inline' : ''
+            }`}
+            role={isRootEntryInline ? 'region' : 'dialog'}
           >
             <div className="root-entry-sheet__header">
               <div>
-                <p className="root-entry-sheet__eyebrow">Entry point</p>
-                <h2 id="root-entry-title">Npub / Nprofile</h2>
+                <p className="root-entry-sheet__eyebrow">{rootEntryEyebrow}</p>
+                <h2 id="root-entry-title">{rootEntryTitle}</h2>
               </div>
-              <button
-                aria-label="Cerrar entrada de root"
-                className="root-entry-sheet__close"
-                onClick={handleCloseRootEntry}
-                type="button"
-              >
-                X
-              </button>
+              {!isRootEntryInline ? (
+                <button
+                  aria-label="Cerrar entrada de root"
+                  className="root-entry-sheet__close"
+                  onClick={handleCloseRootEntry}
+                  type="button"
+                >
+                  X
+                </button>
+              ) : null}
             </div>
 
             <NpubInput
@@ -755,8 +650,15 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
                 void rootLoader.loadRoot(pubkey)
               }}
             />
+            {rootLoadMessage ? (
+              <p className="root-entry-sheet__status" role="status">
+                {rootLoadMessage}
+              </p>
+            ) : null}
             <p className="root-entry-sheet__fineprint">
-              Este producto muestra vecindario descubierto, no cobertura total de la red.
+              {isRootEntryInline
+                ? 'Carga una identidad para entrar directo al grafo. El canvas queda libre apenas se resuelve la root.'
+                : 'Este producto muestra vecindario descubierto, no cobertura total de la red.'}
             </p>
           </section>
         ) : null}

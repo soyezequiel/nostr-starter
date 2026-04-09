@@ -288,8 +288,8 @@ const MAX_STORAGE_BUDGET_BYTES = 512 * 1024 * 1024
 const PREFETCH_RING_FACTOR = 0.5
 const MAX_UPLOADS_PER_FRAME = 8
 const MAX_UPLOAD_BYTES_PER_FRAME = 4 * 1024 * 1024
-const FETCH_CONCURRENCY = 4
-const IMAGE_FETCH_TIMEOUT_MS = 8_000
+const FETCH_CONCURRENCY = 8
+const IMAGE_FETCH_TIMEOUT_MS = 5_000
 const FETCH_FAILURE_BASE_COOLDOWN_MS = 30_000
 const FETCH_FAILURE_TIMEOUT_COOLDOWN_MS = 5_000
 const FETCH_FAILURE_NOT_FOUND_COOLDOWN_MS = 10 * 60 * 1000
@@ -1089,6 +1089,64 @@ export class ImageRuntime {
       this.persistentBudgetBytes = budget
     })
     this.schedulePersistentSummaryRefresh()
+    this.preloadCachedVariants()
+  }
+
+  private async preloadCachedVariants() {
+    try {
+      const records = await this.repositories.imageVariants.getAll()
+      const frameNow = now()
+      let processed = 0
+      const BATCH_SIZE = 20 // Procesar en chunks para no bloquear el hilo
+
+      const processRecords = () => {
+        for (let i = 0; i < BATCH_SIZE && processed < records.length; i++) {
+          const record = records[processed++]
+          const bucket = record.bucket as ImageLodBucket
+          const key = buildVariantKey(record.sourceUrl, bucket)
+
+          if (this.decodedCache.has(key)) {
+            continue
+          }
+
+          if (record.expiresAt <= frameNow) {
+            void this.repositories.imageVariants
+              .delete([record.sourceUrl, bucket])
+              .catch(console.warn)
+            continue
+          }
+
+          const compressed = this.toCompressedEntry(record)
+          this.compressedCache.set(key, compressed)
+
+          const url = this.createBlobUrl(
+            record.sourceUrl,
+            bucket,
+            compressed.blob,
+          )
+          this.decodedCache.set(key, {
+            key,
+            sourceUrl: record.sourceUrl,
+            bucket,
+            byteSize: compressed.byteSize,
+            lastUsedAt: frameNow,
+            url,
+          })
+        }
+
+        if (processed < records.length) {
+          queueMicrotask(processRecords)
+          return
+        }
+
+        this.refreshMemoryTierSnapshots()
+        this.scheduleNotify()
+      }
+
+      processRecords()
+    } catch (error) {
+      console.warn('Failed to preload cached image variants:', error)
+    }
   }
 
   public subscribe(listener: () => void) {
@@ -1445,6 +1503,9 @@ export class ImageRuntime {
       visibleRequests: visibilitySnapshot.visibleNodes,
       prefetchRequests: visibilitySnapshot.prefetchNodes,
     }
+
+    // Batch-cargar desde IndexedDB todos los que no están en memoria de una sola transacción
+    this.batchPreloadFromPersistent(requests, frameNow)
 
     for (const request of requests) {
       this.scheduleEnsureVariant({
@@ -1830,6 +1891,50 @@ export class ImageRuntime {
     })
   }
 
+  // Lee todas las imágenes faltantes de IndexedDB en una sola transacción (bulkGet),
+  // las pone en compressedCache para que scheduleEnsureVariant las decodifique sin red.
+  private batchPreloadFromPersistent(requests: CandidateRequest[], frameNow: number) {
+    const seen = new Set<string>()
+    const keysToFetch: Array<{ sourceUrl: string; bucket: ImageLodBucket }> = []
+
+    for (const request of requests) {
+      for (const bucket of [request.provisionalBucket, request.targetBucket]) {
+        const key = buildVariantKey(request.sourceUrl, bucket)
+        if (seen.has(key)) continue
+        seen.add(key)
+        if (
+          this.decodedCache.has(key) ||
+          this.compressedCache.has(key) ||
+          this.isSourceCoolingDown(request.sourceUrl)
+        ) {
+          continue
+        }
+        keysToFetch.push({ sourceUrl: request.sourceUrl, bucket })
+      }
+    }
+
+    if (keysToFetch.length === 0) return
+
+    void this.repositories.imageVariants
+      .getManyFresh(keysToFetch, frameNow)
+      .then((records) => {
+        let loaded = 0
+        for (let i = 0; i < keysToFetch.length; i++) {
+          const record = records[i]
+          if (!record) continue
+          const bucket = record.bucket as ImageLodBucket
+          const key = buildVariantKey(record.sourceUrl, bucket)
+          if (this.compressedCache.has(key)) continue
+          this.compressedCache.set(key, this.toCompressedEntry(record))
+          loaded++
+        }
+        if (loaded > 0) {
+          this.scheduleNotify()
+        }
+      })
+      .catch(console.warn)
+  }
+
   private scheduleEnsureVariant({
     sourceUrl,
     bucket,
@@ -1843,6 +1948,24 @@ export class ImageRuntime {
   }) {
     const key = buildVariantKey(sourceUrl, bucket)
     if (this.decodedCache.has(key) || this.isSourceCoolingDown(sourceUrl)) {
+      return
+    }
+
+    // Si está en compressed cache, decodificamos inmediatamente sin pasar por la cola
+    const compressed = this.compressedCache.get(key)
+    if (compressed) {
+      const frameNow = now()
+      const url = this.createBlobUrl(sourceUrl, bucket, compressed.blob)
+      this.decodedCache.set(key, {
+        key,
+        sourceUrl,
+        bucket,
+        byteSize: compressed.byteSize,
+        lastUsedAt: frameNow,
+        url,
+      })
+      this.refreshMemoryTierSnapshots()
+      this.scheduleNotify()
       return
     }
 
@@ -1966,6 +2089,7 @@ export class ImageRuntime {
         request.sourceUrl,
         request.bucket,
         request.abortController,
+        request.visible && request.lane === 'base',
       )
     } catch (error) {
       this.recordSourceFailure(request.sourceUrl, error)
@@ -2008,6 +2132,7 @@ export class ImageRuntime {
     sourceUrl: string,
     bucket: ImageLodBucket,
     abortController: AbortController | null = null,
+    highPriority = false,
   ) {
     const key = buildVariantKey(sourceUrl, bucket)
     if (this.decodedCache.has(key)) {
@@ -2027,7 +2152,7 @@ export class ImageRuntime {
         compressed = this.toCompressedEntry(persisted)
       } else {
         this.schedulePersistentSummaryRefresh()
-        compressed = await this.fetchVariant(sourceUrl, bucket, abortController)
+        compressed = await this.fetchVariant(sourceUrl, bucket, abortController, highPriority)
       }
       this.compressedCache.set(key, compressed)
     }
@@ -2051,13 +2176,14 @@ export class ImageRuntime {
     sourceUrl: string,
     bucket: ImageLodBucket,
     abortController: AbortController | null,
+    highPriority = false,
   ) {
     const fetchUrl = resolveAvatarFetchUrl(sourceUrl, undefined, bucket)
     let blob: Blob
     let proxyError: unknown = null
 
     try {
-      blob = await this.fetchBlob(fetchUrl, abortController)
+      blob = await this.fetchBlob(fetchUrl, abortController, highPriority)
     } catch (error) {
       proxyError = error
       if (isTimeoutError(error) || isCancelledError(error)) {
@@ -2073,7 +2199,7 @@ export class ImageRuntime {
       }
 
       try {
-        blob = await this.fetchBlob(sourceUrl, abortController)
+        blob = await this.fetchBlob(sourceUrl, abortController, highPriority)
       } catch (sourceError) {
         if (isTimeoutError(sourceError) || isCancelledError(sourceError)) {
           throw sourceError
@@ -2117,6 +2243,7 @@ export class ImageRuntime {
   private async fetchBlob(
     url: string,
     abortController: AbortController | null,
+    highPriority = false,
   ) {
     const controller = abortController ?? new AbortController()
     let timedOut = false
@@ -2132,7 +2259,9 @@ export class ImageRuntime {
         mode: 'cors',
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
-      })
+        // @ts-ignore - fetchpriority is a hint supported by modern browsers
+        priority: highPriority ? 'high' : 'auto',
+      } as RequestInit)
 
       if (!response.ok) {
         throw buildImageFetchError(
@@ -2142,7 +2271,7 @@ export class ImageRuntime {
         )
       }
 
-      return response.blob()
+      return await response.blob()
     } catch (error) {
       if (timedOut || controller.signal.reason === 'timeout') {
         throw buildImageFetchTimeoutError(url)

@@ -405,6 +405,14 @@ export class ImageVariantRepository {
     }
   }
 
+  public async getAll(): Promise<ImageVariantRecord[]> {
+    return this.db.imageVariants.toArray()
+  }
+
+  public async delete(key: [string, number]): Promise<void> {
+    await this.db.imageVariants.delete(key)
+  }
+
   public async enforceByteBudget(maxBytes: number): Promise<void> {
     type VariantMeta = { cacheKey: [string, number]; byteSize: number }
     const metaRecords: VariantMeta[] = []

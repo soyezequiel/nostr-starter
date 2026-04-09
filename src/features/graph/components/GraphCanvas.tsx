@@ -26,7 +26,6 @@ import {
   deriveGraphRenderState,
   ImageRuntime,
   resolveGraphNodeScreenRadii,
-  sanitizeGraphViewState,
   selectVisibleGraphLabels,
   type GraphRenderLabel,
   type GraphRenderModel,
@@ -211,13 +210,6 @@ const equalNodeScreenRadii = (
   return true
 }
 
-const formatZoomLevel = (zoom: number) => zoom.toFixed(2)
-
-const formatZoomScale = (zoom: number) => {
-  const scale = 2 ** zoom
-  return `${scale >= 10 ? scale.toFixed(1) : scale.toFixed(2)}x`
-}
-
 const readNowMs = () =>
   typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
@@ -297,9 +289,7 @@ export function GraphCanvas({
     viewState: GraphViewState
   } | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
-  const [isFullscreen, setIsFullscreen] = useState(false)
   const [isShiftPressed, setIsShiftPressed] = useState(false)
-  const canvasFrameRef = useRef<HTMLDivElement | null>(null)
   const previousRenderSnapshotRef = useRef({
     nodes,
     links,
@@ -879,29 +869,6 @@ export function GraphCanvas({
     [],
   )
 
-  const handleFullscreenToggle = useCallback(() => {
-    const frame = canvasFrameRef.current
-    if (!frame) {
-      return
-    }
-
-    if (document.fullscreenElement === frame) {
-      void document.exitFullscreen()
-    } else {
-      void frame.requestFullscreen()
-    }
-  }, [])
-
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === canvasFrameRef.current)
-    }
-
-    document.addEventListener('fullscreenchange', onFullscreenChange)
-    return () =>
-      document.removeEventListener('fullscreenchange', onFullscreenChange)
-  }, [])
-
   const handleSelectNode = useCallback(
     (pubkey: string | null, options?: { shiftKey?: boolean }) => {
       const state = appStore.getState()
@@ -1038,46 +1005,16 @@ export function GraphCanvas({
     setViewportQuietForMs(QUIET_VIEWPORT_READY_MS)
   }, [fitSignature])
 
-  const handleStepZoom = useCallback(
-    (delta: number) => {
-      const baseViewState = viewState ?? fittedViewState
-      if (!baseViewState) {
-        return
-      }
-
-      markViewportInteraction()
-
-      setInteractionViewState({
-        signature: fitSignature,
-        viewState: sanitizeGraphViewState({
-          ...baseViewState,
-          zoom: baseViewState.zoom + delta,
-          target: baseViewState.target,
-        }),
-      })
-    },
-    [fitSignature, fittedViewState, markViewportInteraction, viewState],
-  )
-
-  const handleResetView = useCallback(() => {
-    if (!fittedViewState) {
-      return
-    }
-
-    markViewportInteraction()
-
-    setInteractionViewState({
-      signature: fitSignature,
-      viewState: fittedViewState,
-    })
-  }, [fitSignature, fittedViewState, markViewportInteraction])
-
   const overlayCopy = emptyStateCopy(renderState)
   const shouldMountRenderer =
     model.nodes.length > 0 &&
     size.width > 0 &&
     size.height > 0 &&
     viewState !== null
+  const shouldShowEmptyState =
+    !shouldMountRenderer &&
+    rootNodePubkey !== null &&
+    rootLoadStatus !== 'loading'
   const statusCopy = capReached
     ? `Cap ${maxNodes} alcanzado`
     : activeLayer === 'zaps'
@@ -1095,18 +1032,6 @@ export function GraphCanvas({
             : rootLoadStatus === 'empty'
               ? 'Sin follows'
               : 'Esperando root'
-  const analysisOverlay = model.analysisOverlay
-  const avatarQualityGuide = imageDiagnosticsSnapshot.qualityGuide
-  const zoomOverlay = useMemo(
-    () =>
-      viewState
-        ? {
-            levelLabel: formatZoomLevel(viewState.zoom),
-            scaleLabel: formatZoomScale(viewState.zoom),
-          }
-        : null,
-    [viewState],
-  )
 
   const diagnostics = useMemo<GraphCanvasDiagnostics>(
     () => ({
@@ -1187,12 +1112,9 @@ export function GraphCanvas({
           Grafo dirigido descubierto
         </h2>
         <div
-          className={`graph-panel__canvas-frame${
-            isFullscreen ? ' graph-panel__canvas-frame--fullscreen' : ''
-          }`}
+          className="graph-panel__canvas-frame"
           ref={(element) => {
             containerRef.current = element
-            canvasFrameRef.current = element
           }}
         >
           {isNodeDetailOpen ? (
@@ -1222,7 +1144,7 @@ export function GraphCanvas({
             />
           ) : null}
 
-          {!shouldMountRenderer ? (
+          {shouldShowEmptyState ? (
             <div aria-live="polite" className="graph-panel__empty">
               <p className="graph-panel__empty-title">{overlayCopy.title}</p>
               <p className="graph-panel__empty-copy">{overlayCopy.body}</p>
@@ -1231,129 +1153,6 @@ export function GraphCanvas({
               ) : null}
             </div>
           ) : null}
-
-          <div className="graph-panel__stream-status" aria-live="polite">
-            <span className="graph-panel__stream-dot" />
-            <span className="graph-panel__stream-label">{streamLabel}</span>
-            <span className="graph-panel__stream-meta">{statusCopy}</span>
-          </div>
-
-          {zoomOverlay ? (
-            <div className="graph-panel__zoom-status" aria-live="polite">
-              <span className="graph-panel__zoom-status-badge">Zoom</span>
-              <span className="graph-panel__zoom-status-value">
-                {zoomOverlay.levelLabel}
-              </span>
-              <span className="graph-panel__zoom-status-detail">
-                {zoomOverlay.scaleLabel}
-              </span>
-            </div>
-          ) : null}
-
-          {analysisOverlay.summary || renderConfig.showAvatarQualityGuide ? (
-            <div className="graph-panel__overlay-stack">
-              {analysisOverlay.summary ? (
-                <div className="graph-panel__analysis" aria-live="polite">
-                  <div className="graph-panel__analysis-header">
-                    {analysisOverlay.badgeLabel ? (
-                      <span className="graph-panel__analysis-badge">
-                        {analysisOverlay.badgeLabel}
-                      </span>
-                    ) : null}
-                    {analysisOverlay.isStale ? (
-                      <span className="graph-panel__analysis-badge graph-panel__analysis-badge--muted">
-                        stale
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="graph-panel__analysis-copy">
-                    {analysisOverlay.summary}
-                  </p>
-                  {analysisOverlay.detail ? (
-                    <p className="graph-panel__analysis-detail">
-                      {analysisOverlay.detail}
-                    </p>
-                  ) : null}
-                  {analysisOverlay.legendItems.length > 0 ? (
-                    <div className="graph-panel__analysis-legend">
-                      {analysisOverlay.legendItems.map((item) => (
-                        <div
-                          className="graph-panel__analysis-legend-item"
-                          key={item.id}
-                        >
-                          <span
-                            className="graph-panel__analysis-swatch"
-                            style={{
-                              backgroundColor: `rgba(${item.color[0]}, ${item.color[1]}, ${item.color[2]}, ${item.color[3] / 255})`,
-                            }}
-                          />
-                          <span>{`${item.label} (${item.nodeCount})`}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {renderConfig.showAvatarQualityGuide ? (
-                <div
-                  aria-live="polite"
-                  className={`graph-panel__avatar-quality-guide graph-panel__avatar-quality-guide--${avatarQualityGuide.tier}`}
-                >
-                  <span className="graph-panel__avatar-quality-guide-badge">
-                    Guia de calidad visible
-                  </span>
-                  <p className="graph-panel__avatar-quality-guide-summary">
-                    {avatarQualityGuide.headline}
-                  </p>
-                  {avatarQualityGuide.detail ? (
-                    <p className="graph-panel__avatar-quality-guide-detail">
-                      {avatarQualityGuide.detail}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="graph-panel__control-bar">
-            <div className="graph-panel__control-group">
-              <button
-                aria-label="Alejar"
-                className="graph-panel__control-btn"
-                onClick={() => handleStepZoom(-0.3)}
-                type="button"
-              >
-                -
-              </button>
-              <button
-                aria-label="Acercar"
-                className="graph-panel__control-btn"
-                onClick={() => handleStepZoom(0.3)}
-                type="button"
-              >
-                +
-              </button>
-              <button
-                aria-label={
-                  isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'
-                }
-                className="graph-panel__control-btn"
-                onClick={handleFullscreenToggle}
-                type="button"
-              >
-                {isFullscreen ? 'Exit' : 'Full'}
-              </button>
-            </div>
-
-            <button
-              className="graph-panel__control-btn graph-panel__control-btn--primary"
-              onClick={handleResetView}
-              type="button"
-            >
-              Reset view
-            </button>
-          </div>
         </div>
       </section>
     </Profiler>

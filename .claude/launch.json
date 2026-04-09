@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "next-dev",
-      "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": [".claude/start-dev.sh"],
-      "port": 3000
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }
