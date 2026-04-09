@@ -7,6 +7,7 @@ import type {
 
 export const createInitialKeywordLayerState = (): KeywordLayerState => ({
   status: 'disabled',
+  searchScope: 'graph',
   loadedFrom: 'none',
   isPartial: false,
   message: null,
@@ -45,6 +46,14 @@ export const createKeywordSlice: AppStateCreator<KeywordSlice> = (set) => ({
           keywordLayerPatch.matchesByPubkey !== undefined
             ? normalizeMatchesByPubkey(keywordLayerPatch.matchesByPubkey)
             : state.keywordLayer.matchesByPubkey,
+      },
+    }))
+  },
+  setKeywordSearchScope: (searchScope) => {
+    set((state) => ({
+      keywordLayer: {
+        ...state.keywordLayer,
+        searchScope,
       },
     }))
   },

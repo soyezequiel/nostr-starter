@@ -113,6 +113,7 @@ export function NodeDetailPanel({
       ? state.keywordLayer.matchesByPubkey[selectedNodePubkey] ??
         EMPTY_KEYWORD_MATCHES
       : EMPTY_KEYWORD_MATCHES,
+  )
   const setOpenPanel = useAppStore((state) => state.setOpenPanel)
   const setPathfindingEndpoint = useAppStore((state) => state.setPathfindingEndpoint)
   const setPathfindingSelectionMode = useAppStore(
