@@ -1,0 +1,89 @@
+{
+  "profileId": "capture-profile-v1",
+  "schemaVersion": 1,
+  "executionModes": [
+    "snapshot",
+    "deep"
+  ],
+  "determinismDefinition": "same-profile-id + same-selected-users + same-capture-upper-bound-sec + same-frozen-session-relay-order + same-relay-transcript => same-export",
+  "selection": {
+    "snapshotIncludes": "all-discovered-users",
+    "deepIncludesRoot": true,
+    "deepSelectionMode": "explicit-marked-users",
+    "maxDeepUsers": 5
+  },
+  "bootstrapRelays": [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://purplepag.es",
+    "wss://relay.snort.social"
+  ],
+  "relayPlan": {
+    "source": "frozen-session-relays",
+    "freezeMoment": "export-start",
+    "reuseInteractiveRelaySet": true,
+    "allowMidExportRelayChanges": false,
+    "maxRelaysPerSession": 8
+  },
+  "time": {
+    "captureUpperBoundSec": "floor(nowUtc / 3600) * 3600",
+    "inboundLookbackDays": 365
+  },
+  "timeouts": {
+    "relayConnectTimeoutMs": 4000,
+    "relayPageTimeoutMs": 6000,
+    "relayRetryCount": 1,
+    "stragglerGraceMs": 250
+  },
+  "authoredCapture": {
+    "queryKinds": "all-authored",
+    "pageLimit": 200,
+    "maxPageRounds": 25,
+    "maxUniqueEventsPerUser": 5000,
+    "maxRawBytesPerUser": 12582912
+  },
+  "inboundCapture": {
+    "queryKinds": [
+      1,
+      6,
+      7,
+      16,
+      1111,
+      9735
+    ],
+    "pageLimit": 100,
+    "maxPageRounds": 10,
+    "maxUniqueEventsPerUser": 1500
+  },
+  "archiveBudget": {
+    "maxUncompressedBytes": 67108864,
+    "overflowStrategy": "split-into-multiple-zip-parts",
+    "partBoundary": "complete-user-directory",
+    "archiveNamePattern": "nostr-archive-<captureId>-part-<nnn>.zip"
+  },
+  "validation": {
+    "verifyEventSignatures": true,
+    "dropInvalidEvents": true
+  },
+  "canonicalization": {
+    "dedupeKey": "event.id",
+    "replaceableHeadKey": "pubkey+kind",
+    "addressableHeadKey": "pubkey+kind+dTag",
+    "replaceableTieBreak": "created_at desc, id asc",
+    "addressableTieBreak": "created_at desc, id asc",
+    "rawOrder": "created_at asc, kind asc, id asc",
+    "zipPathOrder": "lexicographic",
+    "zipEntryTimestamp": "1980-01-01T00:00:00Z",
+    "jsonEncoding": "utf-8-lf-sorted-keys"
+  },
+  "provenance": {
+    "persistCaptureProfileVersion": true,
+    "persistCaptureUpperBoundSec": true,
+    "persistRelayOrder": true,
+    "persistPageRound": true,
+    "persistQueryFilter": true,
+    "persistRelayStatus": true,
+    "persistEventVerification": true
+  }
+}

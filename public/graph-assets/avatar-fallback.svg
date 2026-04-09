@@ -1,0 +1,12 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="64" fill="#102033"/>
+  <circle cx="64" cy="64" r="60" fill="url(#avatar-fallback-bg)" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
+  <circle cx="64" cy="48" r="20" fill="#D9E3F0"/>
+  <path d="M31 97.5C35.7 80.9 48.7 72 64 72C79.3 72 92.3 80.9 97 97.5" fill="#D9E3F0"/>
+  <defs>
+    <linearGradient id="avatar-fallback-bg" x1="20" y1="18" x2="108" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E3A5F"/>
+      <stop offset="1" stop-color="#0F1C2D"/>
+    </linearGradient>
+  </defs>
+</svg>

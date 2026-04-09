@@ -9,10 +9,16 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@deck.gl/core": "^9.2.11",
+    "@deck.gl/layers": "^9.2.11",
+    "@deck.gl/react": "^9.2.11",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@nostr-dev-kit/ndk": "^3.0.3",
     "@nostr-dev-kit/ndk-cache-dexie": "^2.6.44",
+    "d3-force": "^3.0.0",
+    "dexie": "^4.4.2",
+    "fflate": "^0.8.2",
     "next": "16.2.2",
     "nostr-tools": "^2.23.3",
     "qrcode.react": "^4.2.0",
@@ -22,6 +28,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
