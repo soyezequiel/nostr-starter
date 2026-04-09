@@ -62,6 +62,7 @@ const selectGraphCanvasState = (state: AppStore) => ({
   comparedNodePubkeys: state.comparedNodePubkeys,
   expandedNodePubkeys: state.expandedNodePubkeys,
   graphAnalysis: state.graphAnalysis,
+  pathfinding: state.pathfinding,
   rootLoadStatus: state.rootLoad.status,
   rootLoadMessage: state.rootLoad.message,
   activeLayer: state.activeLayer,
@@ -70,11 +71,17 @@ const selectGraphCanvasState = (state: AppStore) => ({
   renderConfig: state.renderConfig,
   isNodeDetailOpen:
     state.openPanel === 'node-detail' && state.selectedNodePubkey !== null,
+  isPathfindingOpen: state.openPanel === 'pathfinding',
 })
 
 const NodeDetailPanel = lazy(async () => {
   const module = await import('@/features/graph/components/NodeDetailPanel')
   return { default: module.NodeDetailPanel }
+})
+
+const PathfindingPanel = lazy(async () => {
+  const module = await import('@/features/graph/components/PathfindingPanel')
+  return { default: module.PathfindingPanel }
 })
 
 export interface GraphCanvasDiagnostics {
@@ -280,6 +287,7 @@ export function GraphCanvas({
     comparedNodePubkeys,
     expandedNodePubkeys,
     graphAnalysis,
+    pathfinding,
     rootLoadStatus,
     rootLoadMessage,
     activeLayer,
@@ -287,6 +295,7 @@ export function GraphCanvas({
     maxNodes,
     renderConfig,
     isNodeDetailOpen,
+    isPathfindingOpen,
   } = useAppStore(useShallow(selectGraphCanvasState))
   const containerRef = useRef<HTMLDivElement | null>(null)
   const perfCountersRef = useRef(createPerfCounters())
@@ -315,6 +324,7 @@ export function GraphCanvas({
     viewState: null as GraphViewState | null,
     renderConfig,
     comparedNodePubkeys,
+    pathfinding,
   })
   const lastProfiledModelRef = useRef<GraphRenderModel | null>(null)
   const modelRef = useRef<GraphRenderModel>(
@@ -527,6 +537,10 @@ export function GraphCanvas({
       selectedNodePubkey,
       expandedNodePubkeys,
       comparedNodePubkeys,
+      pathfinding: {
+        status: pathfinding.status,
+        path: pathfinding.path,
+      },
       graphAnalysis,
       renderConfig,
     }
@@ -630,6 +644,8 @@ export function GraphCanvas({
     graphRenderWorker,
     links,
     nodes,
+    pathfinding.path,
+    pathfinding.status,
     rootNodePubkey,
     selectedNodePubkey,
     zapEdges,
@@ -731,6 +747,8 @@ export function GraphCanvas({
       counters.lastRenderTrigger = 'view'
     } else if (renderConfig !== previous.renderConfig) {
       counters.lastRenderTrigger = 'renderConfig'
+    } else if (pathfinding !== previous.pathfinding) {
+      counters.lastRenderTrigger = 'pathfinding'
     } else {
       counters.lastRenderTrigger = 'other'
     }
@@ -747,6 +765,7 @@ export function GraphCanvas({
       viewState,
       renderConfig,
       comparedNodePubkeys,
+      pathfinding,
     }
   }, [
     activeLayer,
@@ -759,6 +778,7 @@ export function GraphCanvas({
     selectedNodePubkey,
     size,
     viewState,
+    pathfinding,
     zapEdges,
   ])
 
@@ -925,6 +945,20 @@ export function GraphCanvas({
   const handleSelectNode = useCallback(
     (pubkey: string | null, options?: { shiftKey?: boolean }) => {
       const state = appStore.getState()
+
+      if (
+        pubkey &&
+        state.openPanel === 'pathfinding' &&
+        state.pathfinding.selectionMode !== 'idle'
+      ) {
+        state.setSelectedNodePubkey(pubkey)
+        state.setPathfindingEndpoint(state.pathfinding.selectionMode, {
+          pubkey,
+          query: pubkey,
+        })
+        return
+      }
+
       const effectiveShift = options?.shiftKey || isShiftPressed
 
       if (effectiveShift && pubkey) {
@@ -1074,11 +1108,15 @@ export function GraphCanvas({
     shouldMountRenderer && coverageRecovery.shouldOfferRecovery
   const statusCopy = capReached
     ? `Cap ${maxNodes} alcanzado`
+    : activeLayer === 'pathfinding' && pathfinding.path
+      ? `Camino de ${Math.max(0, pathfinding.path.length - 1)} saltos`
     : activeLayer === 'zaps'
       ? `${zapEdges.length} zaps visibles`
       : `${model.edges.length} links visibles`
   const streamLabel =
-    rootLoadStatus === 'loading'
+    pathfinding.status === 'computing'
+      ? 'Calculando camino'
+      : rootLoadStatus === 'loading'
       ? 'Descubriendo'
       : rootLoadStatus === 'partial'
         ? 'Evidencia parcial'
@@ -1192,6 +1230,12 @@ export function GraphCanvas({
           {isNodeDetailOpen ? (
             <Suspense fallback={null}>
               <NodeDetailPanel imageRuntime={imageRuntime} runtime={runtime} />
+            </Suspense>
+          ) : null}
+
+          {isPathfindingOpen ? (
+            <Suspense fallback={null}>
+              <PathfindingPanel runtime={runtime} />
             </Suspense>
           ) : null}
 

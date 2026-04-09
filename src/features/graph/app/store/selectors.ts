@@ -11,6 +11,20 @@ const DEFAULT_IDLE_NODE_STRUCTURE_PREVIEW_STATE = {
   discoveredFollowCount: null,
 }
 
+const DEFAULT_IDLE_PATHFINDING_STATE = {
+  sourceQuery: '',
+  targetQuery: '',
+  sourcePubkey: null,
+  targetPubkey: null,
+  selectionMode: 'idle' as const,
+  status: 'idle' as const,
+  path: null,
+  visitedCount: 0,
+  algorithm: 'bfs' as const,
+  message: null,
+  previousLayer: null,
+}
+
 export const selectGraphSummary = (state: AppStore) => ({
   nodeCount: Object.keys(state.nodes).length,
   linkCount: state.links.length,
@@ -131,6 +145,18 @@ export const selectExportSummary = (state: AppStore) => ({
   maxSelectedDeepUsers: state.maxSelectedDeepUsers,
   exportJobPhase: state.exportJob.phase,
   exportJobPercent: state.exportJob.percent,
+})
+
+export const selectPathfindingContext = (state: AppStore) => ({
+  pathfinding: state.pathfinding ?? DEFAULT_IDLE_PATHFINDING_STATE,
+  openPanel: state.openPanel,
+  activeLayer: state.activeLayer,
+  selectedNodePubkey: state.selectedNodePubkey,
+  comparedNodePubkeys: state.comparedNodePubkeys,
+  rootNodePubkey: state.rootNodePubkey,
+  rootLoadStatus: state.rootLoad.status,
+  rootLoadMessage: state.rootLoad.message,
+  nodeCount: Object.keys(state.nodes).length,
 })
 
 export const selectRelayHealthData = (state: AppStore) => ({

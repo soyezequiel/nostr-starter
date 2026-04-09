@@ -1,0 +1,23 @@
+
+> nostr-starter@0.1.0 prestart
+> npm run workers:build
+
+
+> nostr-starter@0.1.0 workers:build
+> node scripts/build-graph-workers.mjs
+
+
+  public\workers\graph.worker.js       103.1kb
+  public\workers\events.worker.js       15.0kb
+  public\workers\graph.worker.js.map   232.5kb
+  public\workers\events.worker.js.map   35.0kb
+
+Done in 16ms
+
+> nostr-starter@0.1.0 start
+> next start
+
+▲ Next.js 16.2.2
+- Local:         http://localhost:3100
+- Network:       http://192.168.0.196:3100
+✓ Ready in 132ms

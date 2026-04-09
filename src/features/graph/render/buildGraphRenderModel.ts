@@ -108,6 +108,10 @@ const COMMUNITY_NEUTRAL_COLOR = [100, 116, 139, 214] as const
 const COMMUNITY_MUTED_COLOR = [94, 106, 124, 188] as const
 const COMMUNITY_STROKE_COLOR = [226, 232, 240, 118] as const
 const ROOT_STROKE_COLOR = [255, 224, 178, 220] as const
+const PATH_NODE_COLOR = [56, 189, 248, 240] as const
+const PATH_ENDPOINT_COLOR = [167, 243, 208, 248] as const
+const PATH_MUTED_FILL_COLOR = [51, 65, 85, 108] as const
+const PATH_MUTED_LINE_COLOR = [94, 106, 124, 84] as const
 const EMPTY_GRAPH_ANALYSIS: DiscoveredGraphAnalysisState = {
   status: 'idle',
   isStale: false,
@@ -136,6 +140,9 @@ const createLinkId = (
   relation: GraphLink['relation'] | ZapLayerEdge['relation'],
 ) => `${source}->${target}:${relation}`
 
+const createPathPairKey = (source: string, target: string) =>
+  [source, target].sort().join('<->')
+
 const compareNodes = (
   left: GraphNode,
   right: GraphNode,
@@ -159,6 +166,63 @@ const compareNodes = (
 
 const compareEdges = (left: GraphRenderEdge, right: GraphRenderEdge) =>
   left.id.localeCompare(right.id)
+
+const resolvePathfindingNodeVisuals = ({
+  baseFillColor,
+  baseLineColor,
+  baseBridgeHaloColor,
+  activeLayer,
+  pathOrder,
+  pathLength,
+}: {
+  baseFillColor: [number, number, number, number]
+  baseLineColor: [number, number, number, number]
+  baseBridgeHaloColor: [number, number, number, number] | null
+  activeLayer: BuildGraphRenderModelInput['activeLayer']
+  pathOrder: number | null
+  pathLength: number
+}): {
+  fillColor: [number, number, number, number]
+  lineColor: [number, number, number, number]
+  bridgeHaloColor: [number, number, number, number] | null
+} => {
+  if (activeLayer !== 'pathfinding' || pathLength === 0) {
+    return {
+      fillColor: baseFillColor,
+      lineColor: baseLineColor,
+      bridgeHaloColor: baseBridgeHaloColor,
+    }
+  }
+
+  if (pathOrder === null) {
+    return {
+      fillColor: blendColor(baseFillColor, PATH_MUTED_FILL_COLOR, 0.76),
+      lineColor: blendColor(baseLineColor, PATH_MUTED_LINE_COLOR, 0.72),
+      bridgeHaloColor: null,
+    }
+  }
+
+  const isEndpoint = pathOrder === 0 || pathOrder === pathLength - 1
+  const emphasisColor = isEndpoint ? PATH_ENDPOINT_COLOR : PATH_NODE_COLOR
+
+  return {
+    fillColor: blendColor(baseFillColor, emphasisColor, isEndpoint ? 0.78 : 0.62),
+    lineColor: blendColor(
+      baseLineColor,
+      [255, 255, 255, 232] as const,
+      isEndpoint ? 0.7 : 0.48,
+    ),
+    bridgeHaloColor:
+      isEndpoint
+        ? ([emphasisColor[0], emphasisColor[1], emphasisColor[2], 52] as [
+            number,
+            number,
+            number,
+            number,
+          ])
+        : baseBridgeHaloColor,
+  }
+}
 
 const createSeededRandom = (seed: number) => {
   let state = seed >>> 0
@@ -915,6 +979,7 @@ export const buildGraphRenderModel = ({
   selectedNodePubkey,
   expandedNodePubkeys,
   comparedNodePubkeys = new Set<string>(),
+  pathfinding,
   graphAnalysis = EMPTY_GRAPH_ANALYSIS,
   renderConfig,
   previousPositions,
@@ -958,6 +1023,21 @@ export const buildGraphRenderModel = ({
     links,
     expandedNodePubkeys,
   })
+  const pathPubkeys = pathfinding?.status === 'found' && pathfinding.path ? pathfinding.path : []
+  const pathOrderByPubkey = new Map(
+    pathPubkeys.map((pubkey, index) => [pubkey, index]),
+  )
+  const pathPairs = new Set<string>()
+
+  pathPubkeys.forEach((pubkey, index) => {
+    const nextPubkey = pathPubkeys[index + 1]
+    if (!nextPubkey) {
+      return
+    }
+
+    pathPairs.add(createPathPairKey(pubkey, nextPubkey))
+  })
+
   const averageVisibleDegree =
     degreeValues.length > 0
       ? degreeValues.reduce((sum, degree) => sum + degree, 0) /
@@ -1130,6 +1210,15 @@ export const buildGraphRenderModel = ({
       graphAnalysis,
       communityColorMap,
     })
+    const pathOrder = pathOrderByPubkey.get(node.pubkey) ?? null
+    const pathfindingNodeVisuals = resolvePathfindingNodeVisuals({
+      baseFillColor: nodeVisuals.fillColor,
+      baseLineColor: nodeVisuals.lineColor,
+      baseBridgeHaloColor: nodeVisuals.bridgeHaloColor,
+      activeLayer,
+      pathOrder,
+      pathLength: pathPubkeys.length,
+    })
 
     return {
       id: node.pubkey,
@@ -1153,10 +1242,15 @@ export const buildGraphRenderModel = ({
       source: node.source,
       discoveredAt: node.discoveredAt,
       sharedByExpandedCount: sharedByExpandedCount.get(node.pubkey) ?? 0,
-      fillColor: nodeVisuals.fillColor,
-      lineColor: nodeVisuals.lineColor,
-      bridgeHaloColor: nodeVisuals.bridgeHaloColor,
+      fillColor: pathfindingNodeVisuals.fillColor,
+      lineColor: pathfindingNodeVisuals.lineColor,
+      bridgeHaloColor: pathfindingNodeVisuals.bridgeHaloColor,
       analysisCommunityId: nodeVisuals.analysisCommunityId,
+      isPathNode: pathOrder !== null,
+      isPathEndpoint:
+        pathOrder !== null &&
+        (pathOrder === 0 || pathOrder === pathPubkeys.length - 1),
+      pathOrder,
     }
   })
 
@@ -1201,11 +1295,15 @@ export const buildGraphRenderModel = ({
     .map((link) => {
       const sourceNode = nodeByPubkey.get(link.source)!
       const targetNode = nodeByPubkey.get(link.target)!
+      const isPathEdge =
+        link.relation === 'follow' &&
+        pathPairs.has(createPathPairKey(link.source, link.target))
       const isPriority =
         sourceNode.pubkey === rootNodePubkey ||
         targetNode.pubkey === rootNodePubkey ||
         sourceNode.pubkey === selectedNodePubkey ||
-        targetNode.pubkey === selectedNodePubkey
+        targetNode.pubkey === selectedNodePubkey ||
+        isPathEdge
 
       return {
         id: createLinkId(link.source, link.target, link.relation),
@@ -1219,6 +1317,7 @@ export const buildGraphRenderModel = ({
         targetRadius: targetNode.radius,
         isPriority,
         targetSharedByExpandedCount: targetNode.sharedByExpandedCount,
+        isPathEdge,
       } satisfies GraphRenderEdge
     })
 

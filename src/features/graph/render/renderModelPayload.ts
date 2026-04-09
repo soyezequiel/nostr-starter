@@ -29,6 +29,10 @@ export interface BuildRenderModelRequest {
   selectedNodePubkey: string | null
   expandedNodePubkeys: string[]
   comparedNodePubkeys?: string[]
+  pathfinding?: {
+    status: 'idle' | 'computing' | 'found' | 'not-found' | 'error'
+    path: string[] | null
+  }
   graphAnalysis?: DiscoveredGraphAnalysisState
   renderConfig: RenderConfig
   previousPositions?: Record<string, [number, number]>
@@ -147,6 +151,38 @@ const sanitizeExpandedNodePubkeys = (
         .filter((pubkey): pubkey is string => pubkey !== null),
     ),
   ).sort()
+
+const sanitizeOrderedPubkeyList = (pubkeys: readonly string[]) => {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  pubkeys.forEach((pubkey) => {
+    const sanitizedPubkey = sanitizeString(pubkey)
+    if (!sanitizedPubkey || seen.has(sanitizedPubkey)) {
+      return
+    }
+
+    seen.add(sanitizedPubkey)
+    ordered.push(sanitizedPubkey)
+  })
+
+  return ordered
+}
+
+const sanitizePathfindingState = (
+  pathfinding: BuildGraphRenderModelInput['pathfinding'],
+): NonNullable<BuildRenderModelRequest['pathfinding']> => ({
+  status:
+    pathfinding?.status === 'computing' ||
+    pathfinding?.status === 'found' ||
+    pathfinding?.status === 'not-found' ||
+    pathfinding?.status === 'error'
+      ? pathfinding.status
+      : 'idle',
+  path: pathfinding?.path
+    ? sanitizeOrderedPubkeyList(pathfinding.path)
+    : null,
+})
 
 const sanitizeGraphAnalysisConfidence = (
   value: unknown,
@@ -285,6 +321,7 @@ export const serializeBuildGraphRenderModelInput = ({
   selectedNodePubkey,
   expandedNodePubkeys,
   comparedNodePubkeys,
+  pathfinding,
   graphAnalysis,
   renderConfig,
   previousPositions,
@@ -298,6 +335,7 @@ export const serializeBuildGraphRenderModelInput = ({
   selectedNodePubkey: sanitizeString(selectedNodePubkey),
   expandedNodePubkeys: sanitizeExpandedNodePubkeys(expandedNodePubkeys),
   comparedNodePubkeys: sanitizeExpandedNodePubkeys(comparedNodePubkeys ?? new Set()),
+  pathfinding: sanitizePathfindingState(pathfinding),
   graphAnalysis: sanitizeGraphAnalysisState(graphAnalysis),
   renderConfig: {
     edgeThickness: sanitizeFiniteNumber(renderConfig.edgeThickness, 1),
@@ -323,6 +361,7 @@ export const deserializeBuildGraphRenderModelInput = ({
   selectedNodePubkey,
   expandedNodePubkeys,
   comparedNodePubkeys,
+  pathfinding,
   graphAnalysis,
   renderConfig,
   previousPositions,
@@ -348,6 +387,12 @@ export const deserializeBuildGraphRenderModelInput = ({
   selectedNodePubkey,
   expandedNodePubkeys: new Set(expandedNodePubkeys),
   comparedNodePubkeys: new Set(comparedNodePubkeys ?? []),
+  pathfinding: pathfinding
+    ? {
+        status: pathfinding.status,
+        path: pathfinding.path ? [...pathfinding.path] : null,
+      }
+    : undefined,
   graphAnalysis,
   renderConfig,
   previousPositions: previousPositions

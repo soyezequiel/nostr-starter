@@ -51,6 +51,13 @@ export type ExportJobStatus =
   | 'partial'
   | 'completed'
   | 'failed'
+export type PathfindingStatus =
+  | 'idle'
+  | 'computing'
+  | 'found'
+  | 'not-found'
+  | 'error'
+export type PathfindingSelectionMode = 'idle' | 'source' | 'target'
 
 export interface GraphNode {
   pubkey: string
@@ -218,6 +225,20 @@ export interface RenderConfig {
   showImageResidencyDebug?: boolean
 }
 
+export interface PathfindingState {
+  sourceQuery: string
+  targetQuery: string
+  sourcePubkey: string | null
+  targetPubkey: string | null
+  selectionMode: PathfindingSelectionMode
+  status: PathfindingStatus
+  path: string[] | null
+  visitedCount: number
+  algorithm: 'bfs' | 'dijkstra'
+  message: string | null
+  previousLayer: UiLayer | null
+}
+
 export interface SavedRootProfileSnapshot {
   displayName: string | null
   name: string | null
@@ -298,11 +319,45 @@ export interface AnalysisSlice {
   resetGraphAnalysis: () => void
 }
 
+export interface PathfindingSlice {
+  pathfinding: PathfindingState
+  setPathfindingInput: (
+    role: 'source' | 'target',
+    query: string,
+  ) => void
+  setPathfindingEndpoint: (
+    role: 'source' | 'target',
+    endpoint: {
+      pubkey: string | null
+      query?: string | null
+    },
+  ) => void
+  setPathfindingSelectionMode: (mode: PathfindingSelectionMode) => void
+  setPathfindingPending: (algorithm?: 'bfs' | 'dijkstra') => void
+  setPathfindingResult: (result: {
+    path: string[] | null
+    visitedCount: number
+    algorithm: 'bfs' | 'dijkstra'
+    message: string | null
+    previousLayer?: UiLayer | null
+  }) => void
+  setPathfindingError: (
+    message: string,
+    options?: {
+      algorithm?: 'bfs' | 'dijkstra'
+      previousLayer?: UiLayer | null
+    },
+  ) => void
+  clearPathfindingResult: () => void
+  resetPathfinding: () => void
+}
+
 export type AppStore = GraphSlice &
   ZapSlice &
   RelaySlice &
   UiSlice &
   ExportSlice &
-  AnalysisSlice
+  AnalysisSlice &
+  PathfindingSlice
 export type AppStoreApi = StoreApi<AppStore>
 export type AppStateCreator<T> = StateCreator<AppStore, [], [], T>

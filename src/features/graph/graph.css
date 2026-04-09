@@ -4068,6 +4068,116 @@ main {
   overflow: auto;
 }
 
+.pathfinding-panel {
+  width: min(26rem, calc(100vw - 2.5rem));
+}
+
+.pathfinding-panel__copy {
+  margin: 0.55rem 0 0;
+  color: rgba(226, 232, 240, 0.66);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.pathfinding-panel__section {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.pathfinding-panel__section + .pathfinding-panel__section,
+.pathfinding-panel__compare,
+.pathfinding-panel__result {
+  margin-top: 1rem;
+}
+
+.pathfinding-panel__actions {
+  margin-top: 0.1rem;
+}
+
+.pathfinding-panel__selection-btn--active {
+  background: linear-gradient(
+    135deg,
+    rgba(14, 165, 233, 0.28) 0%,
+    rgba(16, 185, 129, 0.22) 100%
+  );
+  color: #e0f2fe;
+}
+
+.pathfinding-panel__compare {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 0.95rem;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pathfinding-panel__compare-copy,
+.pathfinding-panel__path-title,
+.pathfinding-panel__path-pubkey {
+  margin: 0;
+}
+
+.pathfinding-panel__compare-copy {
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 0.82rem;
+}
+
+.pathfinding-panel__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.pathfinding-panel__metrics > div {
+  padding: 0.85rem 0.9rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pathfinding-panel__path-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pathfinding-panel__path-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.85rem 0.9rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pathfinding-panel__path-index {
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: rgba(167, 243, 208, 0.16);
+  color: rgba(167, 243, 208, 0.98);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.pathfinding-panel__path-title {
+  color: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.pathfinding-panel__path-pubkey {
+  display: block;
+  margin-top: 0.2rem;
+  color: rgba(226, 232, 240, 0.66);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
 .node-detail-panel__eyebrow {
   margin-bottom: 0.55rem;
 }

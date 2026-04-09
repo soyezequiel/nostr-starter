@@ -106,6 +106,11 @@ export function NodeDetailPanel({
     nodeExpansionState,
     nodeStructurePreviewState,
   } = useAppStore(useShallow(selectNodeDetailContext))
+  const setOpenPanel = useAppStore((state) => state.setOpenPanel)
+  const setPathfindingEndpoint = useAppStore((state) => state.setPathfindingEndpoint)
+  const setPathfindingSelectionMode = useAppStore(
+    (state) => state.setPathfindingSelectionMode,
+  )
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const selectedProfileSnapshot = buildNodeProfileSnapshot(selectedNode)
   const selectedProfileSignature = buildProfileSignature(selectedProfileSnapshot)
@@ -156,6 +161,19 @@ export function NodeDetailPanel({
 
   const hasAvatarImage = isSafeAvatarUrl(displayPicture) && !avatarImageFailed
   const resolvedAvatarSrc = hasAvatarImage ? detailAvatarSrc : null
+
+  const handleSendToPathfinding = (role: 'source' | 'target') => {
+    if (!selectedNodePubkey) {
+      return
+    }
+
+    setPathfindingSelectionMode('idle')
+    setPathfindingEndpoint(role, {
+      pubkey: selectedNodePubkey,
+      query: selectedNodePubkey,
+    })
+    setOpenPanel('pathfinding')
+  }
 
   useEffect(() => {
     if (!isOpen) {
@@ -531,8 +549,20 @@ export function NodeDetailPanel({
               </button>
             )}
 
-            <button className="node-detail-panel__secondary-action" disabled type="button">
-              Marcar para captura profunda
+            <button
+              className="node-detail-panel__secondary-action"
+              onClick={() => handleSendToPathfinding('source')}
+              type="button"
+            >
+              Usar como origen
+            </button>
+
+            <button
+              className="node-detail-panel__secondary-action"
+              onClick={() => handleSendToPathfinding('target')}
+              type="button"
+            >
+              Usar como destino
             </button>
           </div>
 
