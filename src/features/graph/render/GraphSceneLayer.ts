@@ -27,6 +27,7 @@ import {
   createEmptyImageRenderPayload,
   type ImageRenderPayload,
   type ImageRendererDeliverySnapshot,
+  type ImageSourceHandle,
 } from '@/features/graph/render/imageRuntime'
 import { AvatarAtlasManager } from '@/features/graph/render/avatarAtlasManager'
 import type {
@@ -362,6 +363,7 @@ type DebugAvatarIconLayerProps = {
   deliveryLane: 'base' | 'hd'
   onDeliveryDebug?: (snapshot: ImageRendererDeliverySnapshot) => void
   explicitFailedPubkeys?: string[]
+  emitDeliveryDebugOnDraw?: boolean
 }
 
 type GraphSceneTopologyCacheEntry = {
@@ -377,8 +379,34 @@ type GraphSceneTopologyCacheEntry = {
   commonFollowNodes: readonly GraphRenderNode[]
 }
 
+type GraphSceneEmphasisCacheEntry = {
+  signature: string
+  hasPathHighlight: boolean
+  emphasisNodes: readonly GraphRenderNode[]
+}
+
+type GraphSceneImageDataCacheEntry = {
+  signature: string
+  paintedAvatarPubkeySet: ReadonlySet<string>
+  fallbackAvatarNodes: readonly GraphRenderNode[]
+  hasKeywordMatches: boolean
+  keywordMutedNodes: readonly GraphRenderNode[]
+  baseReadyImageSignature: string
+  hdReadyImageSignature: string
+  baseAvatarNodes: readonly GraphRenderNode[]
+  hdAvatarNodes: readonly GraphRenderNode[]
+  avatarNodesByIconId: ReadonlyMap<string, readonly GraphRenderNode[]>
+  hdAvatarNodesByIconId: ReadonlyMap<string, readonly GraphRenderNode[]>
+}
+
 const rendererAvatarAtlases = new Map<string, AvatarAtlasManager>()
 const graphSceneTopologyCache = new Map<string, GraphSceneTopologyCacheEntry>()
+const graphSceneEmphasisCache = new Map<string, GraphSceneEmphasisCacheEntry>()
+const graphSceneImageDataCache = new Map<string, GraphSceneImageDataCacheEntry>()
+const imageHandleRecordSignatureCache = new WeakMap<
+  Record<string, ImageSourceHandle>,
+  string
+>()
 const HD_ATLAS_MAX_TEXTURE_SIZE = 4096
 const HD_ATLAS_BUCKETS = [256, 512, 1024] as const
 
@@ -429,6 +457,153 @@ const getGraphSceneTopologyData = (
   }
 
   graphSceneTopologyCache.set(layerId, nextEntry)
+
+  return nextEntry
+}
+
+const createImageHandleRecordSignature = (
+  imagesByPubkey: Record<string, ImageSourceHandle>,
+) => {
+  const cachedSignature = imageHandleRecordSignatureCache.get(imagesByPubkey)
+  if (cachedSignature !== undefined) {
+    return cachedSignature
+  }
+
+  const signature = Object.entries(imagesByPubkey)
+    .sort(([leftPubkey], [rightPubkey]) =>
+      leftPubkey.localeCompare(rightPubkey),
+    )
+    .map(
+      ([pubkey, handle]) =>
+        `${pubkey}:${handle.key}:${handle.url}:${handle.bucket}`,
+    )
+    .join('|')
+
+  imageHandleRecordSignatureCache.set(imagesByPubkey, signature)
+
+  return signature
+}
+
+const buildAvatarNodesByIconId = (
+  avatarNodes: readonly GraphRenderNode[],
+  imagesByPubkey: Record<string, ImageSourceHandle>,
+) => {
+  const avatarNodesByIconId = new Map<string, GraphRenderNode[]>()
+
+  for (const node of avatarNodes) {
+    const iconId = imagesByPubkey[node.pubkey].key
+    const iconNodes = avatarNodesByIconId.get(iconId) ?? []
+    iconNodes.push(node)
+    avatarNodesByIconId.set(iconId, iconNodes)
+  }
+
+  return avatarNodesByIconId
+}
+
+const getGraphSceneEmphasisData = ({
+  layerId,
+  model,
+  hoveredNodePubkey,
+  hoveredEdgePubkeys,
+}: {
+  layerId: string
+  model: GraphRenderModel
+  hoveredNodePubkey: string | null
+  hoveredEdgePubkeys: readonly string[]
+}): GraphSceneEmphasisCacheEntry => {
+  const signature = [
+    resolveGraphSceneTopologySignature(model),
+    hoveredNodePubkey ?? '',
+    hoveredEdgePubkeys.join(','),
+  ].join('|')
+  const cachedEntry = graphSceneEmphasisCache.get(layerId)
+
+  if (cachedEntry && cachedEntry.signature === signature) {
+    return cachedEntry
+  }
+
+  const nextEntry: GraphSceneEmphasisCacheEntry = {
+    signature,
+    hasPathHighlight: model.nodes.some((node) => node.isPathNode),
+    emphasisNodes: getEmphasisNodes(
+      model.nodes,
+      hoveredNodePubkey,
+      hoveredEdgePubkeys,
+    ),
+  }
+
+  graphSceneEmphasisCache.set(layerId, nextEntry)
+
+  return nextEntry
+}
+
+const getGraphSceneImageData = ({
+  layerId,
+  model,
+  imageFrame,
+}: {
+  layerId: string
+  model: GraphRenderModel
+  imageFrame: ImageRenderPayload
+}): GraphSceneImageDataCacheEntry => {
+  const baseReadyImagesByPubkey =
+    imageFrame.baseReadyImagesByPubkey ?? imageFrame.readyImagesByPubkey
+  const hdReadyImagesByPubkey = imageFrame.hdReadyImagesByPubkey ?? {}
+  const baseReadyImageSignature =
+    createImageHandleRecordSignature(baseReadyImagesByPubkey)
+  const hdReadyImageSignature =
+    createImageHandleRecordSignature(hdReadyImagesByPubkey)
+  const paintedAvatarPubkeysSignature = imageFrame.paintedPubkeys.join(',')
+  const signature = [
+    resolveGraphSceneTopologySignature(model),
+    model.activeLayer,
+    paintedAvatarPubkeysSignature,
+    baseReadyImageSignature,
+    hdReadyImageSignature,
+  ].join('|')
+  const cachedEntry = graphSceneImageDataCache.get(layerId)
+
+  if (cachedEntry && cachedEntry.signature === signature) {
+    return cachedEntry
+  }
+
+  const paintedAvatarPubkeySet = new Set(imageFrame.paintedPubkeys)
+  const fallbackAvatarNodes = model.nodes.filter(
+    (node) => !paintedAvatarPubkeySet.has(node.pubkey),
+  )
+  const hasKeywordMatches =
+    model.activeLayer === 'keywords' &&
+    model.nodes.some((node) => node.keywordHits > 0)
+  const keywordMutedNodes = hasKeywordMatches
+    ? model.nodes.filter((node) => node.keywordHits <= 0)
+    : []
+  const baseAvatarNodes = model.nodes.filter(
+    (node) => baseReadyImagesByPubkey[node.pubkey] !== undefined,
+  )
+  const hdAvatarNodes = model.nodes.filter(
+    (node) => hdReadyImagesByPubkey[node.pubkey] !== undefined,
+  )
+  const nextEntry: GraphSceneImageDataCacheEntry = {
+    signature,
+    paintedAvatarPubkeySet,
+    fallbackAvatarNodes,
+    hasKeywordMatches,
+    keywordMutedNodes,
+    baseReadyImageSignature,
+    hdReadyImageSignature,
+    baseAvatarNodes,
+    hdAvatarNodes,
+    avatarNodesByIconId: buildAvatarNodesByIconId(
+      baseAvatarNodes,
+      baseReadyImagesByPubkey,
+    ),
+    hdAvatarNodesByIconId: buildAvatarNodesByIconId(
+      hdAvatarNodes,
+      hdReadyImagesByPubkey,
+    ),
+  }
+
+  graphSceneImageDataCache.set(layerId, nextEntry)
 
   return nextEntry
 }
@@ -572,7 +747,9 @@ class DebugAvatarIconLayer extends IconLayer<
 
   public override draw({ uniforms }: { uniforms: unknown }) {
     super.draw({ uniforms })
-    this.emitDeliveryDebug()
+    if (this.props.emitDeliveryDebugOnDraw === true) {
+      this.emitDeliveryDebug()
+    }
   }
 
   // Una capa cuenta como pintada recien cuando deck.gl termino de cargar
@@ -634,12 +811,12 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       onAvatarRendererDelivery,
     } = this.props
     const topologyData = getGraphSceneTopologyData(this.props.id, model)
-    const hasPathHighlight = model.nodes.some((node) => node.isPathNode)
-    const emphasisNodes = getEmphasisNodes(
-      model.nodes,
+    const { hasPathHighlight, emphasisNodes } = getGraphSceneEmphasisData({
+      layerId: this.props.id,
+      model,
       hoveredNodePubkey,
       hoveredEdgePubkeys,
-    )
+    })
     const {
       maxZapWeight,
       sharedEmphasisNodes,
@@ -657,44 +834,25 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
     const baseReadyImagesByPubkey =
       imageFrame.baseReadyImagesByPubkey ?? imageFrame.readyImagesByPubkey
     const hdReadyImagesByPubkey = imageFrame.hdReadyImagesByPubkey ?? {}
-    const paintedAvatarPubkeySet = new Set(imageFrame.paintedPubkeys)
-    const fallbackAvatarNodes = model.nodes.filter(
-      (node) => !paintedAvatarPubkeySet.has(node.pubkey),
-    )
-    const hasKeywordMatches =
-      model.activeLayer === 'keywords' &&
-      model.nodes.some((node) => node.keywordHits > 0)
-    const keywordMutedNodes = hasKeywordMatches
-      ? model.nodes.filter((node) => node.keywordHits <= 0)
-      : []
-    const baseReadyImageSignature = Object.entries(baseReadyImagesByPubkey)
-      .sort(([leftPubkey], [rightPubkey]) =>
-        leftPubkey.localeCompare(rightPubkey),
-      )
-      .map(
-        ([pubkey, handle]) =>
-          `${pubkey}:${handle.key}:${handle.url}:${handle.bucket}`,
-      )
-      .join('|')
-    const hdReadyImageSignature = Object.entries(hdReadyImagesByPubkey)
-      .sort(([leftPubkey], [rightPubkey]) =>
-        leftPubkey.localeCompare(rightPubkey),
-      )
-      .map(
-        ([pubkey, handle]) =>
-          `${pubkey}:${handle.key}:${handle.url}:${handle.bucket}`,
-      )
-      .join('|')
+    const {
+      paintedAvatarPubkeySet,
+      fallbackAvatarNodes,
+      keywordMutedNodes,
+      baseReadyImageSignature,
+      hdReadyImageSignature,
+      baseAvatarNodes,
+      hdAvatarNodes,
+      avatarNodesByIconId,
+      hdAvatarNodesByIconId,
+    } = getGraphSceneImageData({
+      layerId: this.props.id,
+      model,
+      imageFrame,
+    })
 
     const visibleArrowData =
       arrowType !== 'none' && model.activeLayer !== 'mutuals' ? arrowData : []
 
-    const baseAvatarNodes = model.nodes.filter(
-      (node) => baseReadyImagesByPubkey[node.pubkey] !== undefined,
-    )
-    const hdAvatarNodes = model.nodes.filter(
-      (node) => hdReadyImagesByPubkey[node.pubkey] !== undefined,
-    )
     const baseAvatarLayerId = `${this.props.id}-avatars-base`
     const avatarAtlas = getRendererAvatarAtlas(baseAvatarLayerId)
     avatarAtlas.setSnapshotChangeListener(() => {
@@ -723,13 +881,6 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
     avatarDeliveryAggregator.setExplicitFailedPubkeys(
       avatarAtlasSnapshot.delivery.failedPubkeys,
     )
-    const avatarNodesByIconId = new Map<string, GraphRenderNode[]>()
-    for (const node of baseAvatarNodes) {
-      const iconId = baseReadyImagesByPubkey[node.pubkey].key
-      const iconNodes = avatarNodesByIconId.get(iconId) ?? []
-      iconNodes.push(node)
-      avatarNodesByIconId.set(iconId, iconNodes)
-    }
     const visibleAvatarPageIds = new Set<string>()
     const avatarLayers =
       avatarAtlasSnapshot.pages.length > 0
@@ -798,13 +949,6 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         }
       }),
     })
-    const hdAvatarNodesByIconId = new Map<string, GraphRenderNode[]>()
-    for (const node of hdAvatarNodes) {
-      const iconId = hdReadyImagesByPubkey[node.pubkey].key
-      const iconNodes = hdAvatarNodesByIconId.get(iconId) ?? []
-      iconNodes.push(node)
-      hdAvatarNodesByIconId.set(iconId, iconNodes)
-    }
     const hdAvatarLayers =
       hdAvatarAtlasSnapshot.pages.length > 0
         ? hdAvatarAtlasSnapshot.pages.map((page) => {

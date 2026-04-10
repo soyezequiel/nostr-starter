@@ -118,6 +118,7 @@ export interface ZapLayerEdge {
 export interface ZapLayerState {
   status: ZapLayerStatus
   edges: ZapLayerEdge[]
+  revision: number
   skippedReceipts: number
   loadedFrom: 'none' | 'cache' | 'live'
   targetPubkeys: string[]
@@ -217,6 +218,8 @@ export interface GraphSlice {
   adjacency: Record<string, string[]>
   inboundLinks: GraphLink[]
   inboundAdjacency: Record<string, string[]>
+  graphRevision: number
+  inboundGraphRevision: number
   rootNodePubkey: string | null
   graphCaps: GraphCaps
   expandedNodePubkeys: Set<string>

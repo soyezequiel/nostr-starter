@@ -20,9 +20,18 @@ import type { NodeDetailProfile } from '@/features/graph/kernel/runtime'
 import {
   MAX_SESSION_RELAYS,
   MAX_ZAP_RECEIPTS,
+  NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
+  NODE_EXPAND_INBOUND_QUERY_LIMIT,
 } from '@/features/graph/kernel/modules/constants'
 import type { RelayAdapterInstance } from '@/features/graph/kernel/modules/context'
-import type { ZapReceiptInput } from '@/features/graph/workers/events/contracts'
+import type {
+  EventsWorkerActionMap,
+  ZapReceiptInput,
+} from '@/features/graph/workers/events/contracts'
+import type { WorkerClient } from '@/features/graph/workers/shared/runtime'
+
+const RECIPROCAL_AUTHOR_CHUNK_SIZE = 100
+const RECIPROCAL_QUERY_CONCURRENCY = 2
 
 export interface MergedRelayEventEnvelope {
   event: Event
@@ -35,6 +44,11 @@ export interface RelayCollectionResult {
   events: RelayEventEnvelope[]
   summary: RelaySubscriptionSummary | null
   error: Error | null
+}
+
+export interface InboundFollowerEvidence {
+  followerPubkeys: string[]
+  partial: boolean
 }
 
 export type RelayOverrideValidationResult =
@@ -260,6 +274,130 @@ export async function collectRelayEvents(
       },
     })
   })
+}
+
+export async function collectInboundFollowerEvidence(
+  eventsWorker: WorkerClient<EventsWorkerActionMap>,
+  envelopes: readonly RelayEventEnvelope[],
+  targetPubkey: string,
+): Promise<InboundFollowerEvidence> {
+  if (envelopes.length === 0) {
+    return {
+      followerPubkeys: [],
+      partial: false,
+    }
+  }
+
+  const followerPubkeys = new Set<string>()
+  let partial = false
+
+  await runWithConcurrencyLimit(
+    envelopes,
+    NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
+    async (envelope) => {
+      try {
+        const parsedContactList = await eventsWorker.invoke(
+          'PARSE_CONTACT_LIST',
+          {
+            event: serializeContactListEvent(envelope.event),
+          },
+        )
+
+        if (
+          parsedContactList.followPubkeys.includes(targetPubkey) &&
+          envelope.event.pubkey !== targetPubkey
+        ) {
+          followerPubkeys.add(envelope.event.pubkey)
+        }
+      } catch {
+        partial = true
+      }
+    },
+  )
+
+  return {
+    followerPubkeys: Array.from(followerPubkeys).sort(),
+    partial,
+  }
+}
+
+export function mergeInboundFollowerEvidence(
+  ...evidenceItems: readonly InboundFollowerEvidence[]
+): InboundFollowerEvidence {
+  const followerPubkeys = new Set<string>()
+
+  for (const evidence of evidenceItems) {
+    for (const pubkey of evidence.followerPubkeys) {
+      followerPubkeys.add(pubkey)
+    }
+  }
+
+  return {
+    followerPubkeys: Array.from(followerPubkeys).sort(),
+    partial: evidenceItems.some((evidence) => evidence.partial),
+  }
+}
+
+export async function collectTargetedReciprocalFollowerEvidence({
+  adapter,
+  eventsWorker,
+  followPubkeys,
+  targetPubkey,
+}: {
+  adapter: RelayAdapterInstance
+  eventsWorker: WorkerClient<EventsWorkerActionMap>
+  followPubkeys: readonly string[]
+  targetPubkey: string
+}): Promise<InboundFollowerEvidence> {
+  const candidatePubkeys = Array.from(
+    new Set(
+      followPubkeys
+        .map((pubkey) => pubkey.trim())
+        .filter((pubkey) => pubkey.length > 0 && pubkey !== targetPubkey),
+    ),
+  ).sort()
+
+  if (candidatePubkeys.length === 0) {
+    return {
+      followerPubkeys: [],
+      partial: false,
+    }
+  }
+
+  const reciprocalEnvelopes: RelayEventEnvelope[] = []
+  let partial = false
+
+  await runWithConcurrencyLimit(
+    chunkIntoBatches(candidatePubkeys, RECIPROCAL_AUTHOR_CHUNK_SIZE),
+    RECIPROCAL_QUERY_CONCURRENCY,
+    async (authorPubkeys) => {
+      const result = await collectRelayEvents(adapter, [
+        {
+          authors: authorPubkeys,
+          kinds: [3],
+          '#p': [targetPubkey],
+          limit: Math.min(
+            NODE_EXPAND_INBOUND_QUERY_LIMIT,
+            Math.max(50, authorPubkeys.length),
+          ),
+        } satisfies Filter & { '#p': string[] },
+      ])
+
+      reciprocalEnvelopes.push(...result.events)
+      partial = partial || result.error !== null
+    },
+  )
+
+  const parsedEvidence = await collectInboundFollowerEvidence(
+    eventsWorker,
+    selectLatestReplaceableEventsByPubkey(reciprocalEnvelopes),
+    targetPubkey,
+  )
+
+  return {
+    followerPubkeys: parsedEvidence.followerPubkeys,
+    partial: partial || parsedEvidence.partial,
+  }
 }
 
 export async function runWithConcurrencyLimit<T>(

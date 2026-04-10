@@ -38,6 +38,8 @@ export const createInitialGraphSliceState = (): Pick<
   | 'adjacency'
   | 'inboundLinks'
   | 'inboundAdjacency'
+  | 'graphRevision'
+  | 'inboundGraphRevision'
   | 'rootNodePubkey'
   | 'graphCaps'
   | 'expandedNodePubkeys'
@@ -49,6 +51,8 @@ export const createInitialGraphSliceState = (): Pick<
   adjacency: {},
   inboundLinks: [],
   inboundAdjacency: {},
+  graphRevision: 0,
+  inboundGraphRevision: 0,
   rootNodePubkey: null,
   graphCaps: createInitialGraphCaps(),
   expandedNodePubkeys: new Set(),
@@ -75,13 +79,28 @@ const addNeighbor = (
   const neighbors = adjacency[source] ?? []
 
   if (neighbors.includes(target)) {
-    return
+    return false
   }
 
   adjacency[source] = [...neighbors, target]
+  return true
 }
 
 const getNodeCount = (nodes: Record<string, GraphNode>) => Object.keys(nodes).length
+
+const hasGraphNodeChanged = (left: GraphNode, right: GraphNode) =>
+  left.pubkey !== right.pubkey ||
+  left.label !== right.label ||
+  left.picture !== right.picture ||
+  left.about !== right.about ||
+  left.nip05 !== right.nip05 ||
+  left.lud16 !== right.lud16 ||
+  left.profileEventId !== right.profileEventId ||
+  left.profileFetchedAt !== right.profileFetchedAt ||
+  left.profileState !== right.profileState ||
+  left.keywordHits !== right.keywordHits ||
+  left.discoveredAt !== right.discoveredAt ||
+  left.source !== right.source
 
 export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
   ...createInitialGraphSliceState(),
@@ -94,36 +113,49 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
     const acceptedPubkeys: string[] = []
     const rejectedPubkeys: string[] = []
     let capReached = state.graphCaps.capReached
+    let changed = false
+    let capsChanged = false
 
     for (const node of incomingNodes) {
       const existingNode = nextNodes[node.pubkey]
 
       if (existingNode) {
-        nextNodes[node.pubkey] = {
+        const nextNode = {
           ...existingNode,
           ...node,
+        }
+        if (hasGraphNodeChanged(existingNode, nextNode)) {
+          nextNodes[node.pubkey] = nextNode
+          changed = true
         }
         acceptedPubkeys.push(node.pubkey)
         continue
       }
 
       if (getNodeCount(nextNodes) >= state.graphCaps.maxNodes) {
-        capReached = true
+        if (!capReached) {
+          capReached = true
+          capsChanged = true
+        }
         rejectedPubkeys.push(node.pubkey)
         continue
       }
 
       nextNodes[node.pubkey] = node
       acceptedPubkeys.push(node.pubkey)
+      changed = true
     }
 
-    set({
-      nodes: nextNodes,
-      graphCaps: {
-        ...state.graphCaps,
-        capReached,
-      },
-    })
+    if (changed || capsChanged) {
+      set({
+        nodes: nextNodes,
+        graphRevision: changed ? state.graphRevision + 1 : state.graphRevision,
+        graphCaps: {
+          ...state.graphCaps,
+          capReached,
+        },
+      })
+    }
 
     return {
       acceptedPubkeys,
@@ -194,6 +226,7 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       adjacency: nextAdjacency,
       inboundLinks: nextInboundLinks,
       inboundAdjacency: nextInboundAdjacency,
+      graphRevision: state.graphRevision + 1,
       expandedNodePubkeys: nextExpandedNodePubkeys,
       nodeExpansionStates: nextNodeExpansionStates,
       nodeStructurePreviewStates: nextNodeStructurePreviewStates,
@@ -208,6 +241,7 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
     const nextLinks = state.links.slice()
     const nextAdjacency = cloneAdjacency(state.adjacency)
     const seenLinks = new Set(state.links.map(getLinkKey))
+    let changed = false
 
     for (const link of incomingLinks) {
       const key = getLinkKey(link)
@@ -215,14 +249,20 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       if (!seenLinks.has(key)) {
         nextLinks.push(link)
         seenLinks.add(key)
+        changed = true
       }
 
-      addNeighbor(nextAdjacency, link.source, link.target)
+      changed = addNeighbor(nextAdjacency, link.source, link.target) || changed
+    }
+
+    if (!changed) {
+      return
     }
 
     set({
       links: nextLinks,
       adjacency: nextAdjacency,
+      graphRevision: state.graphRevision + 1,
     })
   },
   upsertInboundLinks: (incomingLinks) => {
@@ -230,6 +270,7 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
     const nextLinks = state.inboundLinks.slice()
     const nextAdjacency = cloneAdjacency(state.inboundAdjacency)
     const seenLinks = new Set(state.inboundLinks.map(getLinkKey))
+    let changed = false
 
     for (const link of incomingLinks) {
       const key = getLinkKey(link)
@@ -237,14 +278,20 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       if (!seenLinks.has(key)) {
         nextLinks.push(link)
         seenLinks.add(key)
+        changed = true
       }
 
-      addNeighbor(nextAdjacency, link.target, link.source)
+      changed = addNeighbor(nextAdjacency, link.target, link.source) || changed
+    }
+
+    if (!changed) {
+      return
     }
 
     set({
       inboundLinks: nextLinks,
       inboundAdjacency: nextAdjacency,
+      inboundGraphRevision: state.inboundGraphRevision + 1,
     })
   },
   markNodeExpanded: (pubkey) => {
@@ -302,6 +349,11 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
     })
   },
   resetGraph: () => {
-    set(createInitialGraphSliceState())
+    const state = get()
+    set({
+      ...createInitialGraphSliceState(),
+      graphRevision: state.graphRevision + 1,
+      inboundGraphRevision: state.inboundGraphRevision + 1,
+    })
   },
 })

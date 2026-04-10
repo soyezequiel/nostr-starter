@@ -8,14 +8,13 @@ import type {
 } from '@/features/graph/kernel/runtime'
 import type { KernelContext, RelayAdapterInstance } from '@/features/graph/kernel/modules/context'
 import { ROOT_LOADING_MESSAGE, COVERAGE_RECOVERY_MESSAGE } from '@/features/graph/kernel/modules/constants'
+import { NODE_EXPAND_INBOUND_QUERY_LIMIT } from '@/features/graph/kernel/modules/constants'
 import {
-  NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
-  NODE_EXPAND_INBOUND_QUERY_LIMIT,
-} from '@/features/graph/kernel/modules/constants'
-import {
+  collectInboundFollowerEvidence,
   collectRelayEvents,
+  collectTargetedReciprocalFollowerEvidence,
   mapProfileRecordToNodeProfile,
-  runWithConcurrencyLimit,
+  mergeInboundFollowerEvidence,
   selectLatestReplaceableEvent,
   selectLatestReplaceableEventsByPubkey,
   serializeContactListEvent,
@@ -51,11 +50,6 @@ interface ActiveLoadSession {
   loadId: number
   adapter: RelayAdapterInstance
   detachRelayHealth: () => void
-}
-
-interface InboundFollowerEvidence {
-  followerPubkeys: string[]
-  partial: boolean
 }
 
 function mergeRelayUrls(
@@ -229,7 +223,8 @@ export function createRootLoaderModule(
       if (isStaleLoad(loadId)) {
         return finalize(rootPubkey, createCancelledResult(relayUrls))
       }
-      const inboundFollowerEvidence = await collectInboundFollowerEvidence(
+      let inboundFollowerEvidence = await collectInboundFollowerEvidence(
+        ctx.eventsWorker,
         selectLatestReplaceableEventsByPubkey(inboundFollowerResult.events),
         rootPubkey,
       )
@@ -289,6 +284,20 @@ export function createRootLoaderModule(
       if (isStaleLoad(loadId)) {
         return finalize(rootPubkey, createCancelledResult(relayUrls))
       }
+      const targetedReciprocalFollowerEvidence =
+        await collectTargetedReciprocalFollowerEvidence({
+          adapter,
+          eventsWorker: ctx.eventsWorker,
+          followPubkeys: parsedContactList.followPubkeys,
+          targetPubkey: rootPubkey,
+        })
+      if (isStaleLoad(loadId)) {
+        return finalize(rootPubkey, createCancelledResult(relayUrls))
+      }
+      inboundFollowerEvidence = mergeInboundFollowerEvidence(
+        inboundFollowerEvidence,
+        targetedReciprocalFollowerEvidence,
+      )
       await collaborators.persistence.persistContactListEvent(
         latestContactListEvent,
         parsedContactList,
@@ -649,51 +658,6 @@ export function createRootLoaderModule(
     }
   }
 
-  async function collectInboundFollowerEvidence(
-    envelopes: Awaited<
-      ReturnType<typeof selectLatestReplaceableEventsByPubkey>
-    >,
-    targetPubkey: string,
-  ): Promise<InboundFollowerEvidence> {
-    if (envelopes.length === 0) {
-      return {
-        followerPubkeys: [],
-        partial: false,
-      }
-    }
-
-    const followerPubkeys = new Set<string>()
-    let partial = false
-
-    await runWithConcurrencyLimit(
-      envelopes,
-      NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
-      async (envelope) => {
-        try {
-          const parsedContactList = await ctx.eventsWorker.invoke(
-            'PARSE_CONTACT_LIST',
-            {
-              event: serializeContactListEvent(envelope.event),
-            },
-          )
-
-          if (
-            parsedContactList.followPubkeys.includes(targetPubkey) &&
-            envelope.event.pubkey !== targetPubkey
-          ) {
-            followerPubkeys.add(envelope.event.pubkey)
-          }
-        } catch {
-          partial = true
-        }
-      },
-    )
-
-    return {
-      followerPubkeys: Array.from(followerPubkeys).sort(),
-      partial,
-    }
-  }
   return {
     loadRoot,
     cancelActiveLoad,

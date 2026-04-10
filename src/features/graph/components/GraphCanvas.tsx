@@ -60,8 +60,11 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
   nodes: state.nodes,
   links: state.links,
   inboundLinks: state.inboundLinks,
+  graphRevision: state.graphRevision,
+  inboundGraphRevision: state.inboundGraphRevision,
   zapEdges: state.zapLayer.edges,
   zapLayerStatus: state.zapLayer.status,
+  zapLayerRevision: state.zapLayer.revision,
   keywordLayerStatus: state.keywordLayer.status,
   keywordLayerMessage: state.keywordLayer.message,
   keywordExtractCount: state.keywordLayer.extractCount,
@@ -194,23 +197,76 @@ const equalStringLists = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length &&
   left.every((value, index) => value === right[index])
 
-const createBuildRenderModelJobKey = (
-  request: ReturnType<typeof serializeBuildGraphRenderModelInput>,
+const createSortedCollectionSignature = (values?: ReadonlySet<string>) =>
+  values ? Array.from(values).sort().join(',') : ''
+
+const createPathfindingSignature = (
+  pathfinding?: Pick<AppStore['pathfinding'], 'status' | 'path'>,
+) => `${pathfinding?.status ?? 'idle'}:${pathfinding?.path?.join('>') ?? ''}`
+
+const createRenderConfigSignature = (renderConfig: AppStore['renderConfig']) =>
+  [
+    renderConfig.edgeThickness,
+    renderConfig.arrowType,
+    renderConfig.nodeSpacingFactor,
+    renderConfig.nodeSizeFactor,
+    renderConfig.autoSizeNodes ? 'auto-size' : 'fixed-size',
+    renderConfig.showSharedEmphasis ? 'shared-emphasis' : 'no-shared-emphasis',
+    renderConfig.imageQualityMode,
+  ].join(':')
+
+const createGraphAnalysisSignature = (
+  graphAnalysis?: AppStore['graphAnalysis'],
 ) =>
+  [
+    graphAnalysis?.analysisKey ?? '',
+    graphAnalysis?.status ?? 'idle',
+    graphAnalysis?.isStale ? 'stale' : 'fresh',
+  ].join(':')
+
+const createBuildRenderModelJobKey = ({
+  graphRevision,
+  inboundGraphRevision,
+  zapLayerRevision,
+  zapLayerStatus,
+  activeLayer,
+  connectionsSourceLayer,
+  rootNodePubkey,
+  selectedNodePubkey,
+  expandedNodePubkeys,
+  comparedNodePubkeys,
+  pathfinding,
+  graphAnalysis,
+  renderConfig,
+}: {
+  graphRevision: number
+  inboundGraphRevision: number
+  zapLayerRevision: number
+  zapLayerStatus: AppStore['zapLayer']['status']
+  activeLayer: AppStore['activeLayer']
+  connectionsSourceLayer: AppStore['connectionsSourceLayer']
+  rootNodePubkey: string | null
+  selectedNodePubkey: string | null
+  expandedNodePubkeys: ReadonlySet<string>
+  comparedNodePubkeys?: ReadonlySet<string>
+  pathfinding?: Pick<AppStore['pathfinding'], 'status' | 'path'>
+  graphAnalysis?: AppStore['graphAnalysis']
+  renderConfig: AppStore['renderConfig']
+}) =>
   JSON.stringify({
-    nodes: request.nodes,
-    links: request.links,
-    inboundLinks: request.inboundLinks,
-    zapEdges: request.zapEdges,
-    activeLayer: request.activeLayer,
-    connectionsSourceLayer: request.connectionsSourceLayer,
-    rootNodePubkey: request.rootNodePubkey,
-    selectedNodePubkey: request.selectedNodePubkey,
-    expandedNodePubkeys: request.expandedNodePubkeys,
-    comparedNodePubkeys: request.comparedNodePubkeys ?? [],
-    pathfinding: request.pathfinding,
-    graphAnalysisKey: request.graphAnalysis?.analysisKey ?? null,
-    renderConfig: request.renderConfig,
+    graphRevision,
+    inboundGraphRevision,
+    zapLayerRevision,
+    zapLayerStatus,
+    activeLayer,
+    connectionsSourceLayer,
+    rootNodePubkey,
+    selectedNodePubkey,
+    expandedNodePubkeys: createSortedCollectionSignature(expandedNodePubkeys),
+    comparedNodePubkeys: createSortedCollectionSignature(comparedNodePubkeys),
+    pathfinding: createPathfindingSignature(pathfinding),
+    graphAnalysis: createGraphAnalysisSignature(graphAnalysis),
+    renderConfig: createRenderConfigSignature(renderConfig),
   })
 
 const equalImageSourceHandleRecords = (
@@ -592,8 +648,11 @@ export function GraphCanvas({
     nodes,
     links,
     inboundLinks,
+    graphRevision,
+    inboundGraphRevision,
     zapEdges,
     zapLayerStatus,
+    zapLayerRevision,
     keywordLayerStatus,
     keywordLayerMessage,
     keywordExtractCount,
@@ -1074,8 +1133,22 @@ export function GraphCanvas({
         })
       }
 
+      const jobKey = createBuildRenderModelJobKey({
+        graphRevision,
+        inboundGraphRevision,
+        zapLayerRevision,
+        zapLayerStatus,
+        activeLayer: input.activeLayer,
+        connectionsSourceLayer: input.connectionsSourceLayer,
+        rootNodePubkey: input.rootNodePubkey,
+        selectedNodePubkey: input.selectedNodePubkey,
+        expandedNodePubkeys: input.expandedNodePubkeys,
+        comparedNodePubkeys: input.comparedNodePubkeys,
+        pathfinding: input.pathfinding,
+        graphAnalysis: input.graphAnalysis,
+        renderConfig: input.renderConfig,
+      })
       const request = serializeBuildGraphRenderModelInput(buildInput)
-      const jobKey = createBuildRenderModelJobKey(request)
 
       if (
         jobKey === lastBuildJobKeyRef.current ||
@@ -1116,8 +1189,10 @@ export function GraphCanvas({
     connectionsSourceLayer,
     comparedNodePubkeys,
     expandedNodePubkeys,
+    graphRevision,
     graphAnalysis,
     graphRenderWorker,
+    inboundGraphRevision,
     links,
     inboundLinks,
     nodes,
@@ -1126,6 +1201,8 @@ export function GraphCanvas({
     rootNodePubkey,
     selectedNodePubkey,
     zapEdges,
+    zapLayerRevision,
+    zapLayerStatus,
     renderConfig,
   ])
 

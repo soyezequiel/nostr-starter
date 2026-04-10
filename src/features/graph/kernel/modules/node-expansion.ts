@@ -6,20 +6,20 @@ import type {
   NodeExpansionPhase,
   NodeExpansionState,
 } from '@/features/graph/app/store'
-import type { RelayEventEnvelope } from '@/features/graph/nostr'
 import type { ExpandNodeResult } from '@/features/graph/kernel/runtime'
 import type { KernelContext } from '@/features/graph/kernel/modules/context'
 import {
   NODE_EXPAND_CONNECT_TIMEOUT_MS,
-  NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
   NODE_EXPAND_INBOUND_QUERY_LIMIT,
   NODE_EXPAND_PAGE_TIMEOUT_MS,
   NODE_EXPAND_RETRY_COUNT,
   NODE_EXPAND_STRAGGLER_GRACE_MS,
 } from '@/features/graph/kernel/modules/constants'
 import {
+  collectInboundFollowerEvidence,
   collectRelayEvents,
-  runWithConcurrencyLimit,
+  collectTargetedReciprocalFollowerEvidence,
+  mergeInboundFollowerEvidence,
   selectLatestReplaceableEvent,
   selectLatestReplaceableEventsByPubkey,
   serializeContactListEvent,
@@ -36,11 +36,6 @@ import {
   buildDiscoveredMessage,
   buildExpandedStructureMessage,
 } from '@/features/graph/kernel/modules/text-helpers'
-
-interface InboundFollowerEvidence {
-  followerPubkeys: string[]
-  partial: boolean
-}
 
 const NODE_EXPANSION_TOTAL_STEPS = 4
 
@@ -263,11 +258,27 @@ export function createNodeExpansionModule(
         'Correlacionando followers entrantes y validando evidencia...',
         startedAt,
       )
-      const inboundFollowerEvidence = await collectInboundFollowerEvidence(
+      let inboundFollowerEvidence = await collectInboundFollowerEvidence(
+        ctx.eventsWorker,
         selectLatestReplaceableEventsByPubkey(inboundFollowerResult.events),
         pubkey,
       )
       const latestContactListEvent = selectLatestReplaceableEvent(contactListResult.events)
+      const augmentReciprocalEvidence = async (followPubkeys: readonly string[]) => {
+        const targetedReciprocalFollowerEvidence =
+          await collectTargetedReciprocalFollowerEvidence({
+            adapter,
+            eventsWorker: ctx.eventsWorker,
+            followPubkeys,
+            targetPubkey: pubkey,
+          })
+
+        inboundFollowerEvidence = mergeInboundFollowerEvidence(
+          inboundFollowerEvidence,
+          targetedReciprocalFollowerEvidence,
+        )
+      }
+
       if (!latestContactListEvent) {
         let cachedContactList = await ctx.repositories.contactLists.get(pubkey)
         if (!cachedContactList) {
@@ -279,6 +290,7 @@ export function createNodeExpansionModule(
         }
 
         if (cachedContactList) {
+          await augmentReciprocalEvidence(cachedContactList.follows)
           const cachePreviewMessage =
             buildContactListPartialMessage({
               discoveredFollowCount: cachedContactList.follows.length,
@@ -353,6 +365,7 @@ export function createNodeExpansionModule(
         cachedContactListBeforePersist &&
         cachedContactListBeforePersist.follows.length > 0
       ) {
+        await augmentReciprocalEvidence(cachedContactListBeforePersist.follows)
         const cachePreviewMessage =
           buildContactListPartialMessage({
             discoveredFollowCount: cachedContactListBeforePersist.follows.length,
@@ -388,6 +401,7 @@ export function createNodeExpansionModule(
         )
       }
 
+      await augmentReciprocalEvidence(parsedContactList.followPubkeys)
       setLoadingState(
         pubkey,
         'merging',
@@ -571,50 +585,6 @@ export function createNodeExpansionModule(
       discoveredFollowCount: followPubkeys.length,
       rejectedPubkeys,
       message: expansionMessage,
-    }
-  }
-
-  async function collectInboundFollowerEvidence(
-    envelopes: RelayEventEnvelope[],
-    targetPubkey: string,
-  ): Promise<InboundFollowerEvidence> {
-    if (envelopes.length === 0) {
-      return {
-        followerPubkeys: [],
-        partial: false,
-      }
-    }
-
-    const followerPubkeys = new Set<string>()
-    let partial = false
-
-    await runWithConcurrencyLimit(
-      envelopes,
-      NODE_EXPAND_INBOUND_PARSE_CONCURRENCY,
-      async (envelope) => {
-        try {
-          const parsedContactList = await ctx.eventsWorker.invoke(
-            'PARSE_CONTACT_LIST',
-            {
-              event: serializeContactListEvent(envelope.event),
-            },
-          )
-
-          if (
-            parsedContactList.followPubkeys.includes(targetPubkey) &&
-            envelope.event.pubkey !== targetPubkey
-          ) {
-            followerPubkeys.add(envelope.event.pubkey)
-          }
-        } catch {
-          partial = true
-        }
-      },
-    )
-
-    return {
-      followerPubkeys: Array.from(followerPubkeys).sort(),
-      partial,
     }
   }
 

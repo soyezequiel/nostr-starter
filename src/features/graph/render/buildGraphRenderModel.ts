@@ -123,6 +123,8 @@ const EMPTY_GRAPH_ANALYSIS: DiscoveredGraphAnalysisState = {
   message: null,
   result: null,
 }
+const AUTO_SIZE_DISTANCE_CLAMP_RATIO = 1.5
+const AUTO_SIZE_MIN_CELL_SIZE = 32
 
 const blendChannel = (left: number, right: number, ratio: number) =>
   Math.round(left * (1 - ratio) + right * ratio)
@@ -143,6 +145,108 @@ const createLinkId = (
   target: string,
   relation: GraphLink['relation'] | ZapLayerEdge['relation'],
 ) => `${source}->${target}:${relation}`
+
+const createWorldCellKey = (cellX: number, cellY: number) =>
+  `${cellX}:${cellY}`
+
+const applyAutoSizeNearestNeighborDistances = (
+  renderNodes: GraphRenderNode[],
+) => {
+  if (renderNodes.length <= 1) {
+    return
+  }
+
+  const averageRadius =
+    renderNodes.reduce((total, node) => total + node.radius, 0) /
+    renderNodes.length
+  const cellSize = Math.max(AUTO_SIZE_MIN_CELL_SIZE, averageRadius * 4)
+  const cells = new Map<string, number[]>()
+  let minCellX = Number.POSITIVE_INFINITY
+  let maxCellX = Number.NEGATIVE_INFINITY
+  let minCellY = Number.POSITIVE_INFINITY
+  let maxCellY = Number.NEGATIVE_INFINITY
+
+  for (let index = 0; index < renderNodes.length; index++) {
+    const [x, y] = renderNodes[index].position
+    const cellX = Math.floor(x / cellSize)
+    const cellY = Math.floor(y / cellSize)
+    const cellKey = createWorldCellKey(cellX, cellY)
+    const bucket = cells.get(cellKey)
+
+    if (bucket) {
+      bucket.push(index)
+    } else {
+      cells.set(cellKey, [index])
+    }
+
+    minCellX = Math.min(minCellX, cellX)
+    maxCellX = Math.max(maxCellX, cellX)
+    minCellY = Math.min(minCellY, cellY)
+    maxCellY = Math.max(maxCellY, cellY)
+  }
+
+  let globalMinWorldDist = Number.POSITIVE_INFINITY
+  const maxRing = Math.max(maxCellX - minCellX, maxCellY - minCellY)
+
+  for (let index = 0; index < renderNodes.length; index++) {
+    const [x, y] = renderNodes[index].position
+    const originCellX = Math.floor(x / cellSize)
+    const originCellY = Math.floor(y / cellSize)
+    let minDist = Number.POSITIVE_INFINITY
+
+    for (let ring = 0; ring <= maxRing; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dy = -ring; dy <= ring; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) {
+            continue
+          }
+
+          const bucket = cells.get(
+            createWorldCellKey(originCellX + dx, originCellY + dy),
+          )
+
+          if (!bucket) {
+            continue
+          }
+
+          for (const candidateIndex of bucket) {
+            if (candidateIndex === index) {
+              continue
+            }
+
+            const [candidateX, candidateY] =
+              renderNodes[candidateIndex].position
+            const distance = Math.hypot(x - candidateX, y - candidateY)
+
+            if (distance < minDist) {
+              minDist = distance
+            }
+          }
+        }
+      }
+
+      if (Number.isFinite(minDist) && Math.max(0, ring - 1) * cellSize > minDist) {
+        break
+      }
+    }
+
+    renderNodes[index].nearestNeighborWorldDist = minDist
+    globalMinWorldDist = Math.min(globalMinWorldDist, minDist)
+  }
+
+  const maxAllowedDist = Number.isFinite(globalMinWorldDist)
+    ? globalMinWorldDist * AUTO_SIZE_DISTANCE_CLAMP_RATIO
+    : Number.POSITIVE_INFINITY
+
+  for (const node of renderNodes) {
+    if (node.nearestNeighborWorldDist !== undefined) {
+      node.nearestNeighborWorldDist = Math.min(
+        node.nearestNeighborWorldDist,
+        maxAllowedDist,
+      )
+    }
+  }
+}
 
 const createPathPairKey = (source: string, target: string) =>
   [source, target].sort().join('<->')
@@ -1507,36 +1611,7 @@ export const buildGraphRenderModel = ({
   })
 
   if (renderConfig.autoSizeNodes) {
-    let globalMinWorldDist = Number.POSITIVE_INFINITY
-    
-    for (let i = 0; i < renderNodes.length; i++) {
-      let minDist = Number.POSITIVE_INFINITY
-      const posA = renderNodes[i].position
-      
-      for (let j = 0; j < renderNodes.length; j++) {
-        if (i === j) continue
-        const posB = renderNodes[j].position
-        const dist = Math.hypot(posA[0] - posB[0], posA[1] - posB[1])
-        if (dist < minDist) {
-          minDist = dist
-        }
-      }
-      
-      renderNodes[i].nearestNeighborWorldDist = minDist
-      if (minDist < globalMinWorldDist) {
-        globalMinWorldDist = minDist
-      }
-    }
-
-    // "diferencia entre uno y otro no sea mayor al 50%"
-    // Clamp the allowed distance up to 50% larger than the absolute tightest gap globally
-    const maxAllowedDist = Number.isFinite(globalMinWorldDist) ? globalMinWorldDist * 1.5 : Number.POSITIVE_INFINITY
-    
-    for (const node of renderNodes) {
-      if (node.nearestNeighborWorldDist !== undefined) {
-        node.nearestNeighborWorldDist = Math.min(node.nearestNeighborWorldDist, maxAllowedDist)
-      }
-    }
+    applyAutoSizeNearestNeighborDistances(renderNodes)
   }
 
   const nodeByPubkey = new Map(renderNodes.map((node) => [node.pubkey, node]))

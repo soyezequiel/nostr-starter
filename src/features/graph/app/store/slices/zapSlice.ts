@@ -8,6 +8,7 @@ import type {
 export const createInitialZapLayerState = (): ZapLayerState => ({
   status: 'disabled',
   edges: [],
+  revision: 0,
   skippedReceipts: 0,
   loadedFrom: 'none',
   targetPubkeys: [],
@@ -35,6 +36,7 @@ export const createZapSlice: AppStateCreator<ZapSlice> = (set) => ({
       zapLayer: {
         ...state.zapLayer,
         ...zapLayerPatch,
+        revision: state.zapLayer.revision + 1,
         targetPubkeys: zapLayerPatch.targetPubkeys
           ? [...zapLayerPatch.targetPubkeys].sort()
           : state.zapLayer.targetPubkeys,
@@ -46,12 +48,16 @@ export const createZapSlice: AppStateCreator<ZapSlice> = (set) => ({
       zapLayer: {
         ...state.zapLayer,
         edges: sortZapEdges(edges),
+        revision: state.zapLayer.revision + 1,
       },
     }))
   },
   resetZapLayer: () => {
-    set({
-      zapLayer: createInitialZapLayerState(),
-    })
+    set((state) => ({
+      zapLayer: {
+        ...createInitialZapLayerState(),
+        revision: state.zapLayer.revision + 1,
+      },
+    }))
   },
 })
