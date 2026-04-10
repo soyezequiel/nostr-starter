@@ -8,6 +8,9 @@ const POPULAR_RELAYS = [
   'wss://relay.nostr.band',
   'wss://nos.lol',
   'wss://relay.primal.net',
+  'wss://cache2.primal.net/v1',
+  'wss://nostr.bitcoiner.social',
+  'wss://nostr.mom',
   'wss://purplepag.es',
 ];
 
