@@ -12,6 +12,8 @@ export const createInitialKeywordLayerState = (): KeywordLayerState => ({
   message: null,
   corpusNodeCount: 0,
   extractCount: 0,
+  matchCount: 0,
+  matchNodeCount: 0,
   matchesByPubkey: {},
   lastUpdatedAt: null,
 })
@@ -27,32 +29,56 @@ const sortKeywordMatches = (matches: KeywordMatch[]): KeywordMatch[] =>
 
 const normalizeMatchesByPubkey = (
   matchesByPubkey: Record<string, KeywordMatch[]>,
-): Record<string, KeywordMatch[]> =>
-  Object.fromEntries(
-    Object.entries(matchesByPubkey)
-      .map(([pubkey, matches]) => [pubkey, sortKeywordMatches(matches)] as const)
-      .sort(([leftPubkey], [rightPubkey]) => leftPubkey.localeCompare(rightPubkey)),
-  )
+): {
+  matchCount: number
+  matchNodeCount: number
+  matchesByPubkey: Record<string, KeywordMatch[]>
+} => {
+  let matchCount = 0
+  const normalizedEntries = Object.entries(matchesByPubkey)
+    .map(([pubkey, matches]) => {
+      const sortedMatches = sortKeywordMatches(matches)
+      matchCount += sortedMatches.length
+      return [pubkey, sortedMatches] as const
+    })
+    .sort(([leftPubkey], [rightPubkey]) => leftPubkey.localeCompare(rightPubkey))
+
+  return {
+    matchCount,
+    matchNodeCount: normalizedEntries.length,
+    matchesByPubkey: Object.fromEntries(normalizedEntries),
+  }
+}
 
 export const createKeywordSlice: AppStateCreator<KeywordSlice> = (set) => ({
   keywordLayer: createInitialKeywordLayerState(),
   setKeywordLayerState: (keywordLayerPatch) => {
+    const normalizedMatches =
+      keywordLayerPatch.matchesByPubkey !== undefined
+        ? normalizeMatchesByPubkey(keywordLayerPatch.matchesByPubkey)
+        : null
+
     set((state) => ({
       keywordLayer: {
         ...state.keywordLayer,
         ...keywordLayerPatch,
         matchesByPubkey:
-          keywordLayerPatch.matchesByPubkey !== undefined
-            ? normalizeMatchesByPubkey(keywordLayerPatch.matchesByPubkey)
-            : state.keywordLayer.matchesByPubkey,
+          normalizedMatches?.matchesByPubkey ?? state.keywordLayer.matchesByPubkey,
+        matchCount: normalizedMatches?.matchCount ?? state.keywordLayer.matchCount,
+        matchNodeCount:
+          normalizedMatches?.matchNodeCount ?? state.keywordLayer.matchNodeCount,
       },
     }))
   },
   setKeywordMatches: (matchesByPubkey) => {
+    const normalizedMatches = normalizeMatchesByPubkey(matchesByPubkey)
+
     set((state) => ({
       keywordLayer: {
         ...state.keywordLayer,
-        matchesByPubkey: normalizeMatchesByPubkey(matchesByPubkey),
+        matchesByPubkey: normalizedMatches.matchesByPubkey,
+        matchCount: normalizedMatches.matchCount,
+        matchNodeCount: normalizedMatches.matchNodeCount,
       },
     }))
   },

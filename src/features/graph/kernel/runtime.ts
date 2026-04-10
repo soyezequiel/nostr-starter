@@ -1,4 +1,5 @@
 import type { Event, Filter } from 'nostr-tools'
+import { unstable_batchedUpdates } from 'react-dom'
 
 import { createDiscoveredGraphAnalysisKey } from '@/features/graph/analysis/analysisKey'
 import type {
@@ -1034,18 +1035,25 @@ export class AppKernel {
 
     if (trimmed.length === 0) {
       const state = this.store.getState()
-      state.setCurrentKeyword('')
-      this.removeKeywordSourceNodes()
-      this.applyKeywordHits({})
-      state.setKeywordMatches({})
-
-      if (state.keywordLayer.status === 'enabled') {
-        state.setKeywordLayerState({
-          message: state.keywordLayer.extractCount > 0
+      const resetMessage =
+        state.keywordLayer.status === 'enabled'
+          ? state.keywordLayer.extractCount > 0
             ? `${state.keywordLayer.extractCount} extractos listos para explorar.`
-            : KEYWORD_LAYER_EMPTY_MESSAGE,
-        })
-      }
+            : KEYWORD_LAYER_EMPTY_MESSAGE
+          : null
+
+      unstable_batchedUpdates(() => {
+        state.setCurrentKeyword('')
+        this.removeKeywordSourceNodes()
+        this.applyKeywordHits({})
+        state.setKeywordMatches({})
+
+        if (resetMessage !== null) {
+          state.setKeywordLayerState({
+            message: resetMessage,
+          })
+        }
+      })
 
       return {
         keyword: '',
@@ -1071,9 +1079,11 @@ export class AppKernel {
 
     if (extracts.length === 0) {
       const state = this.store.getState()
-      state.setCurrentKeyword(trimmed)
-      this.applyKeywordHits({})
-      state.setKeywordMatches({})
+      unstable_batchedUpdates(() => {
+        state.setCurrentKeyword(trimmed)
+        this.applyKeywordHits({})
+        state.setKeywordMatches({})
+      })
 
       return {
         keyword: trimmed,
@@ -1122,16 +1132,26 @@ export class AppKernel {
     }
 
     const state = this.store.getState()
-    state.setCurrentKeyword(trimmed)
-    this.applyKeywordHits(nodeHits)
-    state.setKeywordMatches(matchesByPubkey)
-    state.setKeywordLayerState({
-      message:
-        result.excerptMatches.length > 0
-          ? `${result.excerptMatches.length} coincidencias en ${Object.keys(matchesByPubkey).length} nodos para "${trimmed}".`
-          : `Sin coincidencias para "${trimmed}".`,
+    const matchNodeCount = Object.keys(matchesByPubkey).length
+    const resultMessage =
+      result.excerptMatches.length > 0
+        ? `${result.excerptMatches.length} coincidencias en ${matchNodeCount} nodos para "${trimmed}".`
+        : `Sin coincidencias para "${trimmed}".`
+
+    unstable_batchedUpdates(() => {
+      state.setCurrentKeyword(trimmed)
+      this.applyKeywordHits(nodeHits)
+      state.setKeywordMatches(matchesByPubkey)
+      state.setKeywordLayerState({
+        message: resultMessage,
+      })
     })
-    logKeywordMatchesToConsole(trimmed, nodeHits, matchesByPubkey, state.nodes)
+    logKeywordMatchesToConsole(
+      trimmed,
+      nodeHits,
+      matchesByPubkey,
+      this.store.getState().nodes,
+    )
 
     return {
       keyword: trimmed,

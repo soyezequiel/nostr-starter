@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-assign-module-variable */
+/* eslint-disable @next/next/no-assign-module-variable, react-hooks/refs */
 
 import {
   memo,
@@ -7,6 +7,7 @@ import {
   lazy,
   startTransition,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -58,7 +59,14 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
   inboundLinks: state.inboundLinks,
   zapEdges: state.zapLayer.edges,
   zapLayerStatus: state.zapLayer.status,
-  keywordLayer: state.keywordLayer,
+  keywordLayerStatus: state.keywordLayer.status,
+  keywordLayerMessage: state.keywordLayer.message,
+  keywordExtractCount: state.keywordLayer.extractCount,
+  keywordCorpusNodeCount: state.keywordLayer.corpusNodeCount,
+  keywordLoadedFrom: state.keywordLayer.loadedFrom,
+  keywordIsPartial: state.keywordLayer.isPartial,
+  keywordMatchCount: state.keywordLayer.matchCount,
+  keywordMatchNodeCount: state.keywordLayer.matchNodeCount,
   rootNodePubkey: state.rootNodePubkey,
   selectedNodePubkey: state.selectedNodePubkey,
   comparedNodePubkeys: state.comparedNodePubkeys,
@@ -68,7 +76,6 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
   rootLoadStatus: state.rootLoad.status,
   rootLoadMessage: state.rootLoad.message,
   activeLayer: state.activeLayer,
-  currentKeyword: state.currentKeyword,
   capReached: state.graphCaps.capReached,
   maxNodes: state.graphCaps.maxNodes,
   renderConfig: state.renderConfig,
@@ -76,6 +83,14 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
 
 const selectGraphCanvasPanelState = (state: AppStore) => ({
   openPanel: state.openPanel,
+})
+
+const selectGraphCanvasKeywordSearchState = (state: AppStore) => ({
+  activeLayer: state.activeLayer,
+  currentKeyword: state.currentKeyword,
+  keywordLayerStatus: state.keywordLayer.status,
+  keywordExtractCount: state.keywordLayer.extractCount,
+  keywordMatchCount: state.keywordLayer.matchCount,
 })
 
 const NodeDetailPanel = lazy(async () => {
@@ -395,6 +410,82 @@ const GraphCanvasPanels = memo(function GraphCanvasPanels({
   )
 })
 
+interface GraphCanvasKeywordSearchProps {
+  runtime: RootLoader
+}
+
+const GraphCanvasKeywordSearch = memo(function GraphCanvasKeywordSearch({
+  runtime,
+}: GraphCanvasKeywordSearchProps) {
+  const {
+    activeLayer,
+    currentKeyword,
+    keywordLayerStatus,
+    keywordExtractCount,
+    keywordMatchCount,
+  } = useAppStore(useShallow(selectGraphCanvasKeywordSearchState))
+  const [draft, setDraft] = useState(currentKeyword)
+  const [isSearching, setIsSearching] = useState(false)
+  const deferredDraft = useDeferredValue(draft)
+  const requestSequenceRef = useRef(0)
+
+  useEffect(() => {
+    if (activeLayer !== 'keywords' || keywordLayerStatus !== 'enabled') {
+      return
+    }
+
+    const requestId = requestSequenceRef.current + 1
+    requestSequenceRef.current = requestId
+    const timer = window.setTimeout(() => {
+      setIsSearching(true)
+      void runtime
+        .searchKeyword(deferredDraft)
+        .catch((error) => {
+          console.warn('[graph] Keyword search failed.', error)
+        })
+        .finally(() => {
+          if (requestSequenceRef.current === requestId) {
+            setIsSearching(false)
+          }
+        })
+    }, 180)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [activeLayer, deferredDraft, keywordLayerStatus, runtime])
+
+  const isKeywordSearchUsable = keywordLayerStatus === 'enabled'
+  const keywordInputPlaceholder =
+    keywordLayerStatus === 'enabled'
+      ? 'Buscar keyword o interes'
+      : 'Esperando corpus de notas'
+  const keywordMeta = isKeywordSearchUsable && isSearching
+    ? 'Buscando...'
+    : keywordMatchCount > 0
+      ? `${keywordMatchCount} hits`
+      : keywordExtractCount > 0
+        ? `${keywordExtractCount} extractos`
+        : 'Sin corpus'
+
+  return (
+    <div className="graph-panel__keyword-search">
+      <input
+        aria-label="Buscar keyword o interes"
+        className="graph-panel__keyword-input"
+        disabled={!isKeywordSearchUsable}
+        onChange={(event) => {
+          setDraft(event.target.value)
+        }}
+        placeholder={keywordInputPlaceholder}
+        type="search"
+        value={draft}
+      />
+      <span className="graph-panel__keyword-meta">{keywordMeta}</span>
+    </div>
+  )
+})
+
 export function GraphCanvas({
   runtime,
   onTrySampleRoot,
@@ -406,7 +497,14 @@ export function GraphCanvas({
     inboundLinks,
     zapEdges,
     zapLayerStatus,
-    keywordLayer,
+    keywordLayerStatus,
+    keywordLayerMessage,
+    keywordExtractCount,
+    keywordCorpusNodeCount,
+    keywordLoadedFrom,
+    keywordIsPartial,
+    keywordMatchCount,
+    keywordMatchNodeCount,
     rootNodePubkey,
     selectedNodePubkey,
     comparedNodePubkeys,
@@ -416,7 +514,6 @@ export function GraphCanvas({
     rootLoadStatus,
     rootLoadMessage,
     activeLayer,
-    currentKeyword,
     capReached,
     maxNodes,
     renderConfig,
@@ -430,8 +527,6 @@ export function GraphCanvas({
   } | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [isShiftPressed, setIsShiftPressed] = useState(false)
-  const [keywordDraft, setKeywordDraft] = useState(currentKeyword)
-  const [isKeywordSearching, setIsKeywordSearching] = useState(false)
   const previousRenderSnapshotRef = useRef({
     nodes,
     links,
@@ -475,7 +570,6 @@ export function GraphCanvas({
   const [imageDiagnosticsSnapshot, setImageDiagnosticsSnapshot] =
     useState<ImageResidencySnapshot>(EMPTY_IMAGE_DIAGNOSTICS)
   const stableViewStateRef = useRef<GraphViewState | null>(null)
-  const keywordSearchSequenceRef = useRef(0)
   const stableVisibleLabelsRef = useRef<readonly GraphRenderLabel[]>([])
   const stableNodeScreenRadiiRef = useRef<ReadonlyMap<string, number>>(
     EMPTY_NODE_SCREEN_RADII,
@@ -638,10 +732,6 @@ export function GraphCanvas({
 
     diagnosticsCommitTimerRef.current = window.setTimeout(() => {
       diagnosticsCommitTimerRef.current = null
-      if (!isMountedRef.current) {
-        return
-      }
-
       startTransition(() => {
         setImageDiagnosticsSnapshot(imageDiagnosticsSnapshotRef.current)
       })
@@ -657,12 +747,9 @@ export function GraphCanvas({
   })
   const triggerFlushRef = useRef<() => void>(undefined)
   const workerFlushTimerRef = useRef<number | null>(null)
-  const isMountedRef = useRef(true)
 
   useEffect(() => {
-    isMountedRef.current = true
     return () => {
-      isMountedRef.current = false
       if (workerFlushTimerRef.current !== null) {
         window.clearTimeout(workerFlushTimerRef.current)
         workerFlushTimerRef.current = null
@@ -682,6 +769,8 @@ export function GraphCanvas({
     if (!graphRenderWorker) {
       return
     }
+
+    let effectDisposed = false
 
     const scheduleWorkerFlush = () => {
       if (workerFlushTimerRef.current !== null) {
@@ -735,7 +824,7 @@ export function GraphCanvas({
       }
 
       const isCurrentRequest = () =>
-        isMountedRef.current && renderRequestSequenceRef.current === requestId
+        !effectDisposed && renderRequestSequenceRef.current === requestId
 
       const onWorkerSettled = () => {
         workerQueueRefs.current.isBusy = false
@@ -803,6 +892,10 @@ export function GraphCanvas({
 
     triggerFlushRef.current = flushWorkerQueue
     scheduleWorkerFlush()
+
+    return () => {
+      effectDisposed = true
+    }
   }, [
     activeLayer,
     comparedNodePubkeys,
@@ -1276,58 +1369,6 @@ export function GraphCanvas({
     [runtime],
   )
 
-  const handleKeywordDraftChange = useCallback(
-    (nextValue: string) => {
-      startTransition(() => {
-        setKeywordDraft(nextValue)
-      })
-    },
-    [],
-  )
-
-  useEffect(() => {
-    if (activeLayer !== 'keywords') {
-      setKeywordDraft(currentKeyword)
-    }
-  }, [activeLayer, currentKeyword])
-
-  useEffect(() => {
-    if (activeLayer !== 'keywords' || keywordLayer.status !== 'enabled') {
-      setIsKeywordSearching(false)
-      return
-    }
-
-    const requestId = keywordSearchSequenceRef.current + 1
-    keywordSearchSequenceRef.current = requestId
-
-    const timer = window.setTimeout(() => {
-      setIsKeywordSearching(true)
-      void runtime
-        .searchKeyword(keywordDraft)
-        .catch((error) => {
-          console.warn('[graph] Keyword search failed.', error)
-        })
-        .finally(() => {
-          if (keywordSearchSequenceRef.current === requestId) {
-            setIsKeywordSearching(false)
-          }
-        })
-    }, 250)
-
-    return () => {
-      window.clearTimeout(timer)
-
-      if (keywordSearchSequenceRef.current === requestId) {
-        setIsKeywordSearching(false)
-      }
-    }
-  }, [
-    activeLayer,
-    keywordDraft,
-    keywordLayer.status,
-    runtime,
-  ])
-
   useEffect(() => {
     lastViewSampleRef.current = null
     lastViewportInteractionAtRef.current = null
@@ -1345,11 +1386,6 @@ export function GraphCanvas({
     !shouldMountRenderer &&
     rootNodePubkey !== null &&
     rootLoadStatus !== 'loading'
-  const keywordMatchNodeCount = Object.keys(keywordLayer.matchesByPubkey).length
-  const keywordMatchCount = Object.values(keywordLayer.matchesByPubkey).reduce(
-    (total, matches) => total + matches.length,
-    0,
-  )
   const statusCopy = capReached
     ? `Cap ${maxNodes} alcanzado`
     : activeLayer === 'mutuals'
@@ -1363,9 +1399,9 @@ export function GraphCanvas({
       : activeLayer === 'keywords'
         ? keywordMatchCount > 0
           ? `${keywordMatchCount} hits en ${keywordMatchNodeCount} nodos`
-          : keywordLayer.extractCount > 0
-            ? `${keywordLayer.extractCount} extractos listos`
-            : keywordLayer.message ?? 'Keywords sin corpus'
+          : keywordExtractCount > 0
+            ? `${keywordExtractCount} extractos listos`
+            : keywordLayerMessage ?? 'Keywords sin corpus'
       : `${model.edges.length} links visibles`
   const layerStatusNote =
     activeLayer === 'followers'
@@ -1377,25 +1413,20 @@ export function GraphCanvas({
         ? 'Mutuals derivados de evidencia saliente e inbound deduplicada.'
         : 'No hay relaciones reciprocas visibles todavia.'
     : activeLayer === 'keywords'
-      ? keywordLayer.message
+      ? keywordLayerMessage
       : activeLayer === 'zaps'
         ? zapLayerStatus === 'enabled'
           ? `${zapEdges.length} relaciones de zap visibles.`
           : 'La capa de zaps depende de recibos disponibles.'
         : graphAnalysis.message
   const keywordLayerDisabledReason =
-    keywordLayer.status === 'unavailable'
-      ? keywordLayer.message ?? 'La capa de keywords no esta disponible.'
-      : keywordLayer.status === 'loading'
-        ? keywordLayer.message ?? 'Preparando corpus de notas...'
-        : keywordLayer.status === 'disabled'
-          ? keywordLayer.message ?? 'La capa de keywords todavia no esta lista.'
+    keywordLayerStatus === 'unavailable'
+      ? keywordLayerMessage ?? 'La capa de keywords no esta disponible.'
+      : keywordLayerStatus === 'loading'
+        ? keywordLayerMessage ?? 'Preparando corpus de notas...'
+        : keywordLayerStatus === 'disabled'
+          ? keywordLayerMessage ?? 'La capa de keywords todavia no esta lista.'
           : ''
-  const isKeywordSearchUsable = keywordLayer.status === 'enabled'
-  const keywordInputPlaceholder =
-    keywordLayer.status === 'enabled'
-      ? 'Buscar keyword o interes'
-      : 'Esperando corpus de notas'
   const streamLabel =
     pathfinding.status === 'computing'
       ? 'Calculando camino'
@@ -1434,7 +1465,7 @@ export function GraphCanvas({
         meta: statusCopy,
         activeLayer,
         zapLayerStatus,
-        keywordLayerStatus: keywordLayer.status,
+        keywordLayerStatus,
       },
     }),
     [
@@ -1450,7 +1481,7 @@ export function GraphCanvas({
       statusCopy,
       streamLabel,
       visibleLabels.length,
-      keywordLayer.status,
+      keywordLayerStatus,
       zapLayerStatus,
     ],
   )
@@ -1611,26 +1642,7 @@ export function GraphCanvas({
             </div>
 
             {activeLayer === 'keywords' ? (
-              <div className="graph-panel__keyword-search">
-                <input
-                  aria-label="Buscar keyword o interes"
-                  className="graph-panel__keyword-input"
-                  disabled={!isKeywordSearchUsable}
-                  onChange={(event) => handleKeywordDraftChange(event.target.value)}
-                  placeholder={keywordInputPlaceholder}
-                  type="search"
-                  value={keywordDraft}
-                />
-                <span className="graph-panel__keyword-meta">
-                  {isKeywordSearching
-                    ? 'Buscando...'
-                    : keywordMatchCount > 0
-                      ? `${keywordMatchCount} hits`
-                      : keywordLayer.extractCount > 0
-                        ? `${keywordLayer.extractCount} extractos`
-                        : 'Sin corpus'}
-                </span>
-              </div>
+              <GraphCanvasKeywordSearch runtime={runtime} />
             ) : null}
           </div>
 
@@ -1639,9 +1651,9 @@ export function GraphCanvas({
               <p>{layerStatusNote}</p>
               {activeLayer === 'keywords' ? (
                 <p>
-                  Corpus {keywordLayer.extractCount} extractos /{' '}
-                  {keywordLayer.corpusNodeCount} nodos / origen {keywordLayer.loadedFrom}
-                  {keywordLayer.isPartial ? ' / parcial' : ''}
+                  Corpus {keywordExtractCount} extractos / {keywordCorpusNodeCount}{' '}
+                  nodos / origen {keywordLoadedFrom}
+                  {keywordIsPartial ? ' / parcial' : ''}
                 </p>
               ) : null}
             </div>

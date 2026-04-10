@@ -65,6 +65,8 @@ export const selectKeywordLayerSummary = (state: AppStore) => ({
   message: state.keywordLayer.message,
   corpusNodeCount: state.keywordLayer.corpusNodeCount,
   extractCount: state.keywordLayer.extractCount,
+  matchCount: state.keywordLayer.matchCount,
+  matchNodeCount: state.keywordLayer.matchNodeCount,
   matchesByPubkey: state.keywordLayer.matchesByPubkey,
 })
 

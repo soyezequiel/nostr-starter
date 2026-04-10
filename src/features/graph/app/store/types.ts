@@ -134,6 +134,8 @@ export interface KeywordLayerState {
   message: string | null
   corpusNodeCount: number
   extractCount: number
+  matchCount: number
+  matchNodeCount: number
   matchesByPubkey: Record<string, KeywordMatch[]>
   lastUpdatedAt: number | null
 }
