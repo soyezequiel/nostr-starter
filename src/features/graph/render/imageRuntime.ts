@@ -316,10 +316,10 @@ const IMAGE_VARIANT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_STORAGE_BUDGET_BYTES = 256 * 1024 * 1024
 const MAX_STORAGE_BUDGET_BYTES = 512 * 1024 * 1024
 const PREFETCH_RING_FACTOR = 0.25
-const MAX_UPLOADS_PER_FRAME = 4
-const MAX_UPLOAD_BYTES_PER_FRAME = 2 * 1024 * 1024
-const BASE_FETCH_CONCURRENCY = 6
-const BOOSTED_FETCH_CONCURRENCY = 8
+const MAX_UPLOADS_PER_FRAME = 8
+const MAX_UPLOAD_BYTES_PER_FRAME = 4 * 1024 * 1024
+const BASE_FETCH_CONCURRENCY = 12
+const BOOSTED_FETCH_CONCURRENCY = 16
 const IMAGE_FETCH_TIMEOUT_MS = 5_000
 const FETCH_FAILURE_BASE_COOLDOWN_MS = 30_000
 const FETCH_FAILURE_TIMEOUT_COOLDOWN_MS = 5_000
@@ -2245,6 +2245,12 @@ export class ImageRuntime {
   }) {
     const key = buildVariantKey(sourceUrl, bucket)
     if (this.decodedCache.has(key) || this.isSourceCoolingDown(sourceUrl)) {
+      return
+    }
+
+    // Si hay un lookup de IndexedDB en vuelo para esta key, no encolar un fetch
+    // de red: cuando el batch resuelva va a poblar compressedCache y notificar.
+    if (this.pendingPersistentLookups.has(key)) {
       return
     }
 
