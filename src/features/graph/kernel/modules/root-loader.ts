@@ -180,6 +180,22 @@ export function createRootLoaderModule(
           loadedFrom: 'cache',
         })
       }
+      // Iniciar hidratación de perfiles en paralelo con los relay fetches.
+      // Esto permite que los perfiles cacheados en IDB se sincronicen al store
+      // inmediatamente, sin esperar a que la carga de contact-list/inbound termine.
+      const earlyProfileRelayUrls = mergeBoundedRelayUrlSets(
+        MAX_PROFILE_HYDRATION_RELAY_URLS,
+        relayUrls,
+        cachedSnapshot.relayHints,
+      )
+      void collaborators.profileHydration.hydrateNodeProfiles(
+        [rootPubkey, ...cachedSnapshot.followPubkeys],
+        earlyProfileRelayUrls,
+        () => isStaleLoad(loadId),
+        {
+          persistProfileEvent: collaborators.persistence.persistProfileEvent,
+        },
+      )
     }
     const adapter = ctx.createRelayAdapter({ relayUrls })
     const detachRelayHealth = adapter.subscribeToRelayHealth((relayHealth) => {
