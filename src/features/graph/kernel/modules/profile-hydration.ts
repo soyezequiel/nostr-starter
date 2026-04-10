@@ -11,6 +11,7 @@ import {
   collectRelayEvents,
   mapProfileRecordToNodeProfile,
   runWithConcurrencyLimit,
+  safeParseProfile,
   selectLatestReplaceableEventsByPubkey,
 } from '@/features/graph/kernel/modules/helpers'
 
@@ -93,28 +94,57 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             return
           }
 
+          const envelopes = selectLatestReplaceableEventsByPubkey(
+            profileResult.events,
+          )
+
+          // Sincronizar perfiles frescos al store INMEDIATAMENTE, sin esperar
+          // los writes a IDB. Esto permite que el pipeline de imágenes arranque
+          // mientras la persistencia ocurre en background.
+          const syncedPubkeys = new Set<string>()
+          for (const envelope of envelopes) {
+            const parsed = safeParseProfile(envelope.event.content)
+            if (!parsed) {
+              continue
+            }
+            syncNodeProfile(envelope.event.pubkey, {
+              eventId: envelope.event.id,
+              fetchedAt: envelope.receivedAtMs,
+              name: parsed.name,
+              about: parsed.about,
+              picture: parsed.picture,
+              nip05: parsed.nip05,
+              lud16: parsed.lud16,
+            })
+            syncedPubkeys.add(envelope.event.pubkey)
+          }
+
+          if (isStale()) {
+            return
+          }
+
+          // Persistir a IDB en background (no bloquea la UI)
           if (collaborators?.persistProfileEvent) {
-            const envelopes = selectLatestReplaceableEventsByPubkey(
-              profileResult.events,
-            )
-            await runWithConcurrencyLimit(
+            void runWithConcurrencyLimit(
               envelopes,
               NODE_PROFILE_PERSIST_CONCURRENCY,
               async (envelope) => {
                 await collaborators.persistProfileEvent?.(envelope)
               },
-            )
+            ).catch(console.warn)
           }
 
-          if (isStale()) {
-            return
+          // Marcar como missing solo los pubkeys que no recibieron perfil
+          for (const pubkey of batch) {
+            if (syncedPubkeys.has(pubkey)) {
+              continue
+            }
+            const existingNode = ctx.store.getState().nodes[pubkey]
+            if (!existingNode || existingNode.profileState === 'ready') {
+              continue
+            }
+            markNodeProfileMissing(pubkey)
           }
-
-          if (isStale()) {
-            return
-          }
-
-          markBatchProfilesMissing(batch)
         } catch {
           if (isStale()) {
             return
