@@ -11,6 +11,12 @@
 
 [Ver demo](https://nostr-en-el-espacio.vercel.app/) - [Hackathon La Crypta](https://github.com/lacrypta/hackathons-2026) - [Arquitectura actual](./docs/current-codebase.md)
 
+<br />
+
+<img src="./public/graph-explorer-preview.png" alt="Vista del explorador de grafo de identidad Nostr" width="760" />
+
+<sub>Vista graph-first de las identidades que seguis y que tambien te siguen, con senales y conexiones relay-aware.</sub>
+
 </div>
 
 > Proyecto participante de **IDENTITY**, el desafio de **abril 2026** dentro de **Lightning Hackathons 2026** de **La Crypta**.

@@ -2,17 +2,17 @@ import type { Filter } from 'nostr-tools'
 
 import type { NodeDetailProfile } from '@/features/graph/kernel/runtime'
 import type { KernelContext } from '@/features/graph/kernel/modules/context'
+import type { ProfileRecord } from '@/features/graph/db/entities'
+import type { RelayEventEnvelope } from '@/features/graph/nostr'
 import {
   NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY,
   NODE_PROFILE_HYDRATION_BATCH_SIZE,
   NODE_PROFILE_PERSIST_CONCURRENCY,
 } from '@/features/graph/kernel/modules/constants'
 import {
-  collectRelayEvents,
   mapProfileRecordToNodeProfile,
   runWithConcurrencyLimit,
   safeParseProfile,
-  selectLatestReplaceableEventsByPubkey,
 } from '@/features/graph/kernel/modules/helpers'
 
 export function createProfileHydrationModule(ctx: KernelContext) {
@@ -32,9 +32,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     relayUrls: string[],
     isStale: () => boolean,
     collaborators?: {
-      persistProfileEvent?: (pubkeyEnvelope: Parameters<
-        typeof selectLatestReplaceableEventsByPubkey
-      >[0][number]) => Promise<void>
+      persistProfileEvent?: (pubkeyEnvelope: RelayEventEnvelope) => Promise<void>
     },
   ): Promise<void> {
     const uniquePubkeys = Array.from(new Set(pubkeys.filter(Boolean)))
@@ -70,11 +68,13 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             return
           }
 
+          const cachedProfilesByPubkey = new Map<string, ProfileRecord>()
           for (const cachedProfile of cachedProfiles) {
             if (!cachedProfile) {
               continue
             }
 
+            cachedProfilesByPubkey.set(cachedProfile.pubkey, cachedProfile)
             syncNodeProfile(
               cachedProfile.pubkey,
               mapProfileRecordToNodeProfile(cachedProfile),
@@ -85,28 +85,35 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             return
           }
 
-          const profileResult = await collectRelayEvents(
-            adapter,
-            [{ authors: batch, kinds: [0] } satisfies Filter],
-          )
-
-          if (isStale()) {
-            return
-          }
-
-          const envelopes = selectLatestReplaceableEventsByPubkey(
-            profileResult.events,
-          )
-
-          // Sincronizar perfiles frescos al store INMEDIATAMENTE, sin esperar
-          // los writes a IDB. Esto permite que el pipeline de imágenes arranque
-          // mientras la persistencia ocurre en background.
           const syncedPubkeys = new Set<string>()
-          for (const envelope of envelopes) {
+          const latestEnvelopesByPubkey = new Map<string, RelayEventEnvelope>()
+
+          const syncProfileEnvelope = (envelope: RelayEventEnvelope) => {
+            if (isStale()) {
+              return
+            }
+
+            const current = latestEnvelopesByPubkey.get(envelope.event.pubkey)
+            if (current && !isNewerReplaceableEnvelope(envelope, current)) {
+              return
+            }
+
+            const cachedProfile = cachedProfilesByPubkey.get(
+              envelope.event.pubkey,
+            )
+            if (
+              cachedProfile &&
+              !isEnvelopeNewerThanProfile(envelope, cachedProfile)
+            ) {
+              return
+            }
+
+            latestEnvelopesByPubkey.set(envelope.event.pubkey, envelope)
             const parsed = safeParseProfile(envelope.event.content)
             if (!parsed) {
-              continue
+              return
             }
+
             syncNodeProfile(envelope.event.pubkey, {
               eventId: envelope.event.id,
               fetchedAt: envelope.receivedAtMs,
@@ -119,11 +126,42 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             syncedPubkeys.add(envelope.event.pubkey)
           }
 
+          await new Promise<void>((resolve) => {
+            let settled = false
+            let cancel = () => {}
+
+            const finalize = () => {
+              if (settled) {
+                return
+              }
+
+              settled = true
+              cancel()
+              resolve()
+            }
+
+            cancel = adapter
+              .subscribe([{ authors: batch, kinds: [0] } satisfies Filter])
+              .subscribe({
+                next: syncProfileEnvelope,
+                nextBatch: (envelopes) => {
+                  for (const envelope of envelopes) {
+                    syncProfileEnvelope(envelope)
+                  }
+                },
+                error: finalize,
+                complete: finalize,
+              })
+          })
+
           if (isStale()) {
             return
           }
 
-          // Persistir a IDB en background (no bloquea la UI)
+          const envelopes = Array.from(latestEnvelopesByPubkey.values()).sort(
+            (left, right) => left.event.pubkey.localeCompare(right.event.pubkey),
+          )
+
           if (collaborators?.persistProfileEvent) {
             void runWithConcurrencyLimit(
               envelopes,
@@ -134,7 +172,6 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             ).catch(console.warn)
           }
 
-          // Marcar como missing solo los pubkeys que no recibieron perfil
           for (const pubkey of batch) {
             if (syncedPubkeys.has(pubkey)) {
               continue
@@ -150,8 +187,6 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             return
           }
 
-          // Background hydration should degrade gracefully instead of leaving
-          // nodes stuck in loading forever.
           markBatchProfilesMissing(batch)
         }
       }
@@ -164,6 +199,28 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     } finally {
       adapter.close()
     }
+  }
+
+  function isNewerReplaceableEnvelope(
+    next: RelayEventEnvelope,
+    current: RelayEventEnvelope,
+  ): boolean {
+    if (next.event.created_at !== current.event.created_at) {
+      return next.event.created_at > current.event.created_at
+    }
+
+    return next.event.id.localeCompare(current.event.id) < 0
+  }
+
+  function isEnvelopeNewerThanProfile(
+    envelope: RelayEventEnvelope,
+    profile: ProfileRecord,
+  ): boolean {
+    if (envelope.event.created_at !== profile.createdAt) {
+      return envelope.event.created_at > profile.createdAt
+    }
+
+    return envelope.event.id.localeCompare(profile.eventId) < 0
   }
 
   function syncNodeProfile(pubkey: string, profile: NodeDetailProfile): void {
@@ -208,6 +265,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
       },
     ])
   }
+
   return { hydrateNodeProfiles, syncNodeProfile, markNodeProfileMissing }
 }
 

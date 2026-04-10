@@ -443,6 +443,7 @@ export function createRootLoaderModule(
     rootProfile: NodeDetailProfile | null = null,
   ): RootGraphReplacementResult {
     const state = ctx.store.getState()
+    const previousNodes = state.nodes
     state.resetGraphAnalysis()
     state.resetGraph()
     state.resetZapLayer()
@@ -456,35 +457,81 @@ export function createRootLoaderModule(
     state.setRootNodePubkey(rootPubkey)
     const discoveredAt = ctx.now()
     const outboundFollowSet = new Set(followPubkeys)
+    const resolveProfilePatch = (
+      pubkey: string,
+      fallbackProfile: NodeDetailProfile | null = null,
+      fallbackLabel: string | null = null,
+    ) => {
+      const previousNode = previousNodes[pubkey]
+      if (
+        previousNode?.profileState === 'ready' &&
+        (fallbackProfile === null ||
+          (previousNode.profileFetchedAt ?? 0) >= fallbackProfile.fetchedAt)
+      ) {
+        return {
+          label: previousNode.label,
+          picture: previousNode.picture ?? null,
+          about: previousNode.about ?? null,
+          nip05: previousNode.nip05 ?? null,
+          lud16: previousNode.lud16 ?? null,
+          profileFetchedAt: previousNode.profileFetchedAt ?? null,
+          profileEventId: previousNode.profileEventId ?? null,
+          profileState: 'ready' as const,
+        }
+      }
+
+      if (fallbackProfile) {
+        return {
+          label: fallbackProfile.name ?? fallbackLabel ?? undefined,
+          picture: fallbackProfile.picture,
+          about: fallbackProfile.about,
+          nip05: fallbackProfile.nip05,
+          lud16: fallbackProfile.lud16,
+          profileFetchedAt: fallbackProfile.fetchedAt,
+          profileEventId: fallbackProfile.eventId,
+          profileState: 'ready' as const,
+        }
+      }
+
+      if (previousNode?.profileState === 'missing') {
+        return {
+          picture: null,
+          about: null,
+          nip05: null,
+          lud16: null,
+          profileFetchedAt: null,
+          profileEventId: null,
+          profileState: 'missing' as const,
+        }
+      }
+
+      return {
+        label: fallbackLabel ?? undefined,
+        profileState: 'loading' as const,
+      }
+    }
     const nodes: GraphNode[] = [
       {
         pubkey: rootPubkey,
-        label: rootLabel ?? undefined,
-        picture: rootProfile?.picture ?? null,
-        about: rootProfile?.about ?? null,
-        nip05: rootProfile?.nip05 ?? null,
-        lud16: rootProfile?.lud16 ?? null,
+        ...resolveProfilePatch(rootPubkey, rootProfile, rootLabel),
         keywordHits: 0,
         discoveredAt,
-        profileFetchedAt: rootProfile?.fetchedAt ?? null,
-        profileEventId: rootProfile?.eventId ?? null,
-        profileState: rootProfile ? 'ready' : 'loading',
         source: 'root',
       },
       ...followPubkeys.map((pubkey) => ({
         pubkey,
+        ...resolveProfilePatch(pubkey),
         keywordHits: 0,
         discoveredAt,
-        profileState: 'loading' as const,
         source: 'follow' as const,
       })),
       ...inboundFollowerPubkeys
         .filter((pubkey) => !outboundFollowSet.has(pubkey))
         .map((pubkey) => ({
           pubkey,
+          ...resolveProfilePatch(pubkey),
           keywordHits: 0,
           discoveredAt,
-          profileState: 'loading' as const,
           source: 'inbound' as const,
         })),
     ]
