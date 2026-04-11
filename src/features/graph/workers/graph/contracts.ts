@@ -1,6 +1,9 @@
 import type { DiscoveredGraphAnalysisResult } from '@/features/graph/analysis/types'
 import type { GraphRenderModel } from '@/features/graph/render/types'
-import type { BuildRenderModelRequest } from '@/features/graph/render/renderModelPayload'
+import type {
+  BuildRenderModelRequest,
+  GraphRenderModelTransferPayload,
+} from '@/features/graph/render/renderModelPayload'
 import type { WorkerActionMap } from '@/features/graph/workers/shared/protocol'
 import type { GraphNodeSource, RelayHealthStatus } from '@/features/graph/app/store/types'
 
@@ -78,6 +81,6 @@ export interface GraphWorkerActionMap extends WorkerActionMap {
   }
   BUILD_RENDER_MODEL: {
     request: BuildRenderModelRequest
-    response: GraphRenderModel
+    response: GraphRenderModel | GraphRenderModelTransferPayload
   }
 }

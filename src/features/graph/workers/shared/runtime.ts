@@ -14,7 +14,9 @@ export const WORKER_PROBE_ACTION = '__worker_probe__'
 
 export interface WorkerActionHandler<TRequest, TResponse> {
   validate(payload: unknown): TRequest
-  handle(payload: TRequest): TResponse | Promise<TResponse>
+  handle(
+    payload: TRequest,
+  ): TResponse | WorkerTransferableResult<TResponse> | Promise<TResponse | WorkerTransferableResult<TResponse>>
 }
 
 export type WorkerHandlerRegistry<TMap extends WorkerActionMap> = {
@@ -39,6 +41,34 @@ export interface WorkerClient<TMap extends WorkerActionMap> {
   dispose(): void
 }
 
+export interface WorkerTransferableResult<TPayload> {
+  readonly __workerTransferableResult: true
+  readonly payload: TPayload
+  readonly transferList: Transferable[]
+}
+
+export const createWorkerTransferableResult = <TPayload>(
+  payload: TPayload,
+  transferList: Transferable[],
+): WorkerTransferableResult<TPayload> => ({
+  __workerTransferableResult: true,
+  payload,
+  transferList,
+})
+
+const isWorkerTransferableResult = <TPayload>(
+  value: unknown,
+): value is WorkerTransferableResult<TPayload> =>
+  isRecord(value) &&
+  value.__workerTransferableResult === true &&
+  'payload' in value &&
+  Array.isArray(value.transferList)
+
+interface DispatchedWorkerResponse {
+  message: WorkerResponseEnvelope<string, unknown>
+  transferList?: Transferable[]
+}
+
 function buildFailureEnvelope(
   requestId: string,
   action: string,
@@ -55,7 +85,7 @@ function buildFailureEnvelope(
 export async function dispatchWorkerRequest<TMap extends WorkerActionMap>(
   registry: WorkerHandlerRegistry<TMap>,
   request: unknown,
-): Promise<WorkerResponseEnvelope<string, unknown>> {
+): Promise<DispatchedWorkerResponse> {
   const requestEnvelope = isRecord(request) ? request : {}
   const requestId =
     typeof requestEnvelope.requestId === 'string' && requestEnvelope.requestId.length > 0
@@ -67,11 +97,13 @@ export async function dispatchWorkerRequest<TMap extends WorkerActionMap>(
       : 'UNKNOWN_ACTION'
 
   if (!isRecord(request)) {
-    return buildFailureEnvelope(
-      requestId,
-      action,
-      new WorkerProtocolError('INVALID_MESSAGE', 'Worker request must be an object.'),
-    )
+    return {
+      message: buildFailureEnvelope(
+        requestId,
+        action,
+        new WorkerProtocolError('INVALID_MESSAGE', 'Worker request must be an object.'),
+      ),
+    }
   }
 
   if (action === WORKER_PROBE_ACTION) {
@@ -82,34 +114,41 @@ export async function dispatchWorkerRequest<TMap extends WorkerActionMap>(
       payload: { ready: true },
     }
 
-    return response
+    return { message: response }
   }
 
   if (typeof request.payload === 'undefined') {
-    return buildFailureEnvelope(
-      requestId,
-      action,
-      new WorkerProtocolError('INVALID_MESSAGE', 'Worker request is missing payload.', {
+    return {
+      message: buildFailureEnvelope(
+        requestId,
         action,
-      }),
-    )
+        new WorkerProtocolError('INVALID_MESSAGE', 'Worker request is missing payload.', {
+          action,
+        }),
+      ),
+    }
   }
 
   const handler = registry[action as WorkerActionName<TMap>]
 
   if (!handler) {
-    return buildFailureEnvelope(
-      requestId,
-      action,
-      new WorkerProtocolError('INVALID_ACTION', `Unknown worker action "${action}".`, {
+    return {
+      message: buildFailureEnvelope(
+        requestId,
         action,
-      }),
-    )
+        new WorkerProtocolError('INVALID_ACTION', `Unknown worker action "${action}".`, {
+          action,
+        }),
+      ),
+    }
   }
 
   try {
     const normalizedPayload = handler.validate(request.payload)
-    const payload = await handler.handle(normalizedPayload)
+    const handledPayload = await handler.handle(normalizedPayload)
+    const payload = isWorkerTransferableResult(handledPayload)
+      ? handledPayload.payload
+      : handledPayload
     const response: WorkerSuccessEnvelope<string, unknown> = {
       requestId,
       action,
@@ -117,9 +156,14 @@ export async function dispatchWorkerRequest<TMap extends WorkerActionMap>(
       payload,
     }
 
-    return response
+    return {
+      message: response,
+      transferList: isWorkerTransferableResult(handledPayload)
+        ? handledPayload.transferList
+        : undefined,
+    }
   } catch (error) {
-    return buildFailureEnvelope(requestId, action, error)
+    return { message: buildFailureEnvelope(requestId, action, error) }
   }
 }
 
@@ -129,13 +173,13 @@ export function bindWorkerScope<TMap extends WorkerActionMap>(
 ): void {
   scope.addEventListener('message', (event: MessageEvent<unknown>) => {
     void dispatchWorkerRequest(registry, event.data).then((response) => {
-      scope.postMessage(response)
+      scope.postMessage(response.message, response.transferList)
     })
   })
 }
 
 export function createInlineWorkerLike(
-  handleMessage: (request: unknown) => Promise<WorkerResponseEnvelope<string, unknown>>,
+  handleMessage: (request: unknown) => Promise<DispatchedWorkerResponse>,
 ): WorkerLike {
   const listeners = new Set<(event: MessageEvent<unknown>) => void>()
 
@@ -143,7 +187,7 @@ export function createInlineWorkerLike(
     postMessage(message: unknown) {
       queueMicrotask(() => {
         void handleMessage(message).then((response) => {
-          const event = new MessageEvent<unknown>('message', { data: response })
+          const event = new MessageEvent<unknown>('message', { data: response.message })
           listeners.forEach((listener) => listener(event))
         })
       })

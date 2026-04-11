@@ -71,6 +71,7 @@ interface DeckGraphRendererProps {
   onViewStateChange: (viewState: GraphViewState) => void
   renderConfig: RenderConfig
   forceLowDevicePixels?: boolean
+  lowDetailMode?: boolean
   hoverInteractionEnabled?: boolean
   comparedNodePubkeys?: ReadonlySet<string>
 }
@@ -150,6 +151,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
   onViewStateChange,
   renderConfig,
   forceLowDevicePixels = false,
+  lowDetailMode = false,
   hoverInteractionEnabled = true,
 }: DeckGraphRendererProps) {
   const hoverFrameRef = useRef<number | null>(null)
@@ -325,6 +327,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
         imageFrame,
       onAvatarRendererDelivery,
       hoverPickingEnabled: hoverInteractionEnabled && hoverPickingEnabled,
+      lowDetailMode,
       renderConfig,
     }),
     ],
@@ -340,6 +343,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
       onAvatarRendererDelivery,
       hoverInteractionEnabled,
       hoverPickingEnabled,
+      lowDetailMode,
       renderConfig,
     ],
   )

@@ -1189,7 +1189,32 @@ export const buildGraphRenderModel = ({
   renderConfig,
   previousPositions,
   previousLayoutKey,
+  renderPass = 'final',
 }: BuildGraphRenderModelInput): GraphRenderModel => {
+  const isPreviewRenderPass = renderPass === 'preview'
+  const graphAnalysisForRender = isPreviewRenderPass
+    ? EMPTY_GRAPH_ANALYSIS
+    : graphAnalysis
+  const renderConfigForRender = isPreviewRenderPass
+    ? {
+        ...renderConfig,
+        autoSizeNodes: false,
+        showSharedEmphasis: false,
+      }
+    : renderConfig
+  const effectiveGraphCapsForRender = isPreviewRenderPass
+    ? {
+        ...effectiveGraphCaps,
+        coldStartLayoutTicks: Math.min(
+          effectiveGraphCaps.coldStartLayoutTicks,
+          8,
+        ),
+        warmStartLayoutTicks: Math.min(
+          effectiveGraphCaps.warmStartLayoutTicks,
+          4,
+        ),
+      }
+    : effectiveGraphCaps
   const evidence = deriveDirectedEvidence({
     links,
     inboundLinks,
@@ -1365,9 +1390,9 @@ export const buildGraphRenderModel = ({
   const orderedNodes = Object.values(nodes)
     .filter((node) => visiblePubkeys.has(node.pubkey))
     .sort((left, right) => compareNodes(left, right, rootNodePubkey))
-  const communityColorMap = buildCommunityColorMap(graphAnalysis)
+  const communityColorMap = buildCommunityColorMap(graphAnalysisForRender)
   const analysisOverlay = createAnalysisOverlay({
-    graphAnalysis,
+    graphAnalysis: graphAnalysisForRender,
     communityColorMap,
   })
   const visibleDegreeByPubkey = buildVisibleDegreeByPubkey({
@@ -1422,7 +1447,7 @@ export const buildGraphRenderModel = ({
     activeLayer,
     sharedByExpandedCount,
     comparedNodePubkeys,
-    renderConfig.nodeSpacingFactor,
+    renderConfigForRender.nodeSpacingFactor,
   )
   const topologyUnchanged =
     previousLayoutKey === layoutKey &&
@@ -1435,7 +1460,7 @@ export const buildGraphRenderModel = ({
   const communitySeedPositions = buildCommunitySeedPositions({
     orderedNodes,
     rootNodePubkey,
-    graphAnalysis,
+    graphAnalysis: graphAnalysisForRender,
   })
 
   for (const node of orderedNodes) {
@@ -1447,7 +1472,7 @@ export const buildGraphRenderModel = ({
       sharedByExpandedCount.get(node.pubkey) ?? 0,
       nodeRadiusContext,
     )
-    const analysisNode = graphAnalysis.result?.nodeAnalysis[node.pubkey]
+    const analysisNode = graphAnalysisForRender.result?.nodeAnalysis[node.pubkey]
     const analysisRadiusMultiplier = isRoot
       ? 1
       : 1 +
@@ -1514,10 +1539,10 @@ export const buildGraphRenderModel = ({
       links: layoutLinks,
       rootNodePubkey,
       sharedByExpandedCount,
-      renderConfig,
+      renderConfig: renderConfigForRender,
       ticks: isWarmStart
-        ? effectiveGraphCaps.warmStartLayoutTicks
-        : effectiveGraphCaps.coldStartLayoutTicks,
+        ? effectiveGraphCapsForRender.warmStartLayoutTicks
+        : effectiveGraphCapsForRender.coldStartLayoutTicks,
     })
   }
 
@@ -1569,7 +1594,7 @@ export const buildGraphRenderModel = ({
     const nodeVisuals = resolveNodeVisuals({
       node,
       rootNodePubkey,
-      graphAnalysis,
+      graphAnalysis: graphAnalysisForRender,
       communityColorMap,
     })
     const pathOrder = pathOrderByPubkey.get(node.pubkey) ?? null
@@ -1617,7 +1642,7 @@ export const buildGraphRenderModel = ({
     }
   })
 
-  if (renderConfig.autoSizeNodes) {
+  if (renderConfigForRender.autoSizeNodes) {
     applyAutoSizeNearestNeighborDistances(renderNodes)
   }
 
@@ -1660,7 +1685,12 @@ export const buildGraphRenderModel = ({
     rootNodePubkey,
     selectedNodePubkey,
   })
-  const labelsSuppressedByBudget = renderNodes.length > GRAPH_LABEL_NODE_BUDGET
+  const labelNodeBudget = Math.min(
+    GRAPH_LABEL_NODE_BUDGET,
+    Math.max(24, Math.floor(effectiveGraphCapsForRender.maxNodes * 0.4)),
+  )
+  const labelsSuppressedByBudget =
+    isPreviewRenderPass || renderNodes.length > labelNodeBudget
   const degradedReasons = [
     ...(edgesThinned ? (['edge-thinning'] as const) : []),
     ...(labelsSuppressedByBudget ? (['labels-suppressed'] as const) : []),
@@ -1704,6 +1734,6 @@ export const buildGraphRenderModel = ({
     },
     analysisOverlay,
     activeLayer,
-    renderConfig,
+    renderConfig: renderConfigForRender,
   }
 }

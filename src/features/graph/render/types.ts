@@ -144,6 +144,7 @@ export interface GraphRenderModel {
 
 export interface BuildGraphRenderModelInput {
   jobKey?: string
+  renderPass?: 'preview' | 'final'
   nodes: Record<string, GraphNode>
   links: readonly GraphLink[]
   inboundLinks: readonly GraphLink[]

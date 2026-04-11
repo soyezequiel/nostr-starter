@@ -52,6 +52,7 @@ type GraphSceneLayerProps = {
   nodeScreenRadii: ReadonlyMap<string, number>
   imageFrame: ImageRenderPayload
   hoverPickingEnabled: boolean
+  lowDetailMode: boolean
   renderConfig: RenderConfig
   onAvatarRendererDelivery?: (snapshot: ImageRendererDeliverySnapshot) => void
 }
@@ -67,6 +68,7 @@ const defaultProps: DefaultProps<GraphSceneLayerProps> = {
   nodeScreenRadii: new Map<string, number>(),
   imageFrame: createEmptyImageRenderPayload(),
   hoverPickingEnabled: true,
+  lowDetailMode: false,
   onAvatarRendererDelivery: undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any
@@ -412,10 +414,8 @@ const imageHandleRecordSignatureCache = new WeakMap<
 >()
 const HD_ATLAS_MAX_TEXTURE_SIZE = 4096
 const HD_ATLAS_BUCKETS = [256, 512, 1024] as const
-// Favor the first visible paint with a bounded burst, then fall back to the
-// steady 2-pages-per-frame atlas cadence from the manager.
-const AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS = 4
-const AVATAR_ATLAS_INITIAL_BURST_PIXEL_BUDGET = 1024 * 1024 * 4
+const AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS = 1
+const AVATAR_ATLAS_INITIAL_BURST_PIXEL_BUDGET = 1024 * 1024
 
 const resolveGraphSceneTopologySignature = (model: GraphRenderModel) =>
   `${model.topologySignature}|${model.layoutKey}|${model.nodes.length}n:${model.edges.length}e`
@@ -815,6 +815,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       renderConfig,
       imageFrame,
       hoverPickingEnabled,
+      lowDetailMode,
       onAvatarRendererDelivery,
     } = this.props
     const topologyData = getGraphSceneTopologyData(this.props.id, model)
@@ -826,11 +827,13 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
     })
     const {
       maxZapWeight,
-      sharedEmphasisNodes,
-      commonFollowNodes,
+      sharedEmphasisNodes: topologySharedEmphasisNodes,
+      commonFollowNodes: topologyCommonFollowNodes,
       arrowData,
     } =
       topologyData
+    const sharedEmphasisNodes = lowDetailMode ? [] : topologySharedEmphasisNodes
+    const commonFollowNodes = lowDetailMode ? [] : topologyCommonFollowNodes
     const { segments } = topologyData.geometry
     const nodeSizeFactor = renderConfig.nodeSizeFactor ?? 1
     const getScreenRadius = (pubkey: string, fallbackRadius: number) =>
@@ -848,20 +851,27 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       baseReadyImageSignature,
       hdReadyImageSignature,
       baseAvatarNodes,
-      hdAvatarNodes,
+      hdAvatarNodes: imageHdAvatarNodes,
       avatarNodesByIconId,
-      hdAvatarNodesByIconId,
+      hdAvatarNodesByIconId: imageHdAvatarNodesByIconId,
     } = getGraphSceneImageData({
       layerId: this.props.id,
       model,
       imageFrame,
     })
+    const hdAvatarNodes = lowDetailMode ? [] : imageHdAvatarNodes
+    const hdAvatarNodesByIconId = lowDetailMode
+      ? new Map<string, readonly GraphRenderNode[]>()
+      : imageHdAvatarNodesByIconId
 
     const visibleArrowData =
-      arrowType !== 'none' && model.activeLayer !== 'mutuals' ? arrowData : []
+      !lowDetailMode && arrowType !== 'none' && model.activeLayer !== 'mutuals'
+        ? arrowData
+        : []
 
     const baseAvatarLayerId = `${this.props.id}-avatars-base`
     const avatarAtlas = getRendererAvatarAtlas(baseAvatarLayerId, {
+      maxPageCommitsPerFrame: AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS,
       maxBurstPageCommitsPerFrame: AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS,
       burstCommitPixelBudget: AVATAR_ATLAS_INITIAL_BURST_PIXEL_BUDGET,
     })
@@ -918,6 +928,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               ...layerProps,
               deliveryLane: 'base',
               explicitFailedPubkeys: [],
+              emitDeliveryDebugOnDraw: true,
               onDeliveryDebug: (snapshot) => {
                 avatarDeliveryAggregator.reportPage(pageLayerId, snapshot)
               },
@@ -929,6 +940,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       maxWidth: HD_ATLAS_MAX_TEXTURE_SIZE,
       maxHeight: HD_ATLAS_MAX_TEXTURE_SIZE,
       supportedBuckets: HD_ATLAS_BUCKETS,
+      maxPageCommitsPerFrame: AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS,
       maxBurstPageCommitsPerFrame: AVATAR_ATLAS_INITIAL_BURST_PAGE_COMMITS,
       burstCommitPixelBudget: AVATAR_ATLAS_INITIAL_BURST_PIXEL_BUDGET,
     })
@@ -974,6 +986,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 getIcon: [hdReadyImageSignature, page.revision, page.key],
               },
               explicitFailedPubkeys: [],
+              emitDeliveryDebugOnDraw: true,
               onDeliveryDebug: (snapshot) => {
                 avatarDeliveryAggregator.reportPage(pageLayerId, snapshot)
               },
@@ -1177,49 +1190,55 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             }),
           ]
         : []),
-      new ScatterplotLayer<GraphRenderNode>({
-        id: `${this.props.id}-common-follow-emphasis`,
-        data: commonFollowNodes,
-        pickable: false,
-        stroked: true,
-        filled: true,
-        radiusUnits: 'pixels',
-        lineWidthUnits: 'pixels',
-        getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 1.2,
-        getFillColor: () => [167, 243, 208, 100],
-        getLineColor: () => [167, 243, 208, 220],
-        getLineWidth: 3,
-        updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes],
-        },
-      }),
-      new ScatterplotLayer<GraphRenderNode>({
-        id: `${this.props.id}-node-glass-halo`,
-        data: model.nodes,
-        pickable: false,
-        stroked: false,
-        filled: true,
-        radiusUnits: 'pixels',
-        getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 1.14,
-        getFillColor: (node) =>
-          getNodeGlassHaloColor(
-            node,
-            paintedAvatarPubkeySet,
-            model,
-            model.activeLayer,
-            hasPathHighlight,
-          ),
-        updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor],
-          getFillColor: [
-            imageFrame.paintedPubkeys.join(','),
-            model.activeLayer,
-            hasPathHighlight,
-          ],
-        },
-      }),
+      ...(lowDetailMode
+        ? []
+        : [
+            new ScatterplotLayer<GraphRenderNode>({
+              id: `${this.props.id}-common-follow-emphasis`,
+              data: commonFollowNodes,
+              pickable: false,
+              stroked: true,
+              filled: true,
+              radiusUnits: 'pixels',
+              lineWidthUnits: 'pixels',
+              getPosition: (node) => node.position,
+              getRadius: (node) =>
+                getScreenRadius(node.pubkey, node.radius) * 1.2,
+              getFillColor: () => [167, 243, 208, 100],
+              getLineColor: () => [167, 243, 208, 220],
+              getLineWidth: 3,
+              updateTriggers: {
+                getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes],
+              },
+            }),
+            new ScatterplotLayer<GraphRenderNode>({
+              id: `${this.props.id}-node-glass-halo`,
+              data: model.nodes,
+              pickable: false,
+              stroked: false,
+              filled: true,
+              radiusUnits: 'pixels',
+              getPosition: (node) => node.position,
+              getRadius: (node) =>
+                getScreenRadius(node.pubkey, node.radius) * 1.14,
+              getFillColor: (node) =>
+                getNodeGlassHaloColor(
+                  node,
+                  paintedAvatarPubkeySet,
+                  model,
+                  model.activeLayer,
+                  hasPathHighlight,
+                ),
+              updateTriggers: {
+                getRadius: [nodeScreenRadii, nodeSizeFactor],
+                getFillColor: [
+                  imageFrame.paintedPubkeys.join(','),
+                  model.activeLayer,
+                  hasPathHighlight,
+                ],
+              },
+            }),
+          ]),
       new ScatterplotLayer<GraphRenderNode>({
         id: `${this.props.id}-nodes`,
         data: model.nodes,
@@ -1257,32 +1276,37 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           getLineWidth: [imageFrame.paintedPubkeys.join(',')],
         },
       }),
-      new ScatterplotLayer<GraphRenderNode>({
-        id: `${this.props.id}-node-glass-highlight`,
-        data: model.nodes,
-        pickable: false,
-        stroked: false,
-        filled: true,
-        radiusUnits: 'pixels',
-        getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 0.72,
-        getFillColor: (node) =>
-          getNodeGlassHighlightColor(
-            node,
-            paintedAvatarPubkeySet,
-            model,
-            model.activeLayer,
-            hasPathHighlight,
-          ),
-        updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor],
-          getFillColor: [
-            imageFrame.paintedPubkeys.join(','),
-            model.activeLayer,
-            hasPathHighlight,
-          ],
-        },
-      }),
+      ...(lowDetailMode
+        ? []
+        : [
+            new ScatterplotLayer<GraphRenderNode>({
+              id: `${this.props.id}-node-glass-highlight`,
+              data: model.nodes,
+              pickable: false,
+              stroked: false,
+              filled: true,
+              radiusUnits: 'pixels',
+              getPosition: (node) => node.position,
+              getRadius: (node) =>
+                getScreenRadius(node.pubkey, node.radius) * 0.72,
+              getFillColor: (node) =>
+                getNodeGlassHighlightColor(
+                  node,
+                  paintedAvatarPubkeySet,
+                  model,
+                  model.activeLayer,
+                  hasPathHighlight,
+                ),
+              updateTriggers: {
+                getRadius: [nodeScreenRadii, nodeSizeFactor],
+                getFillColor: [
+                  imageFrame.paintedPubkeys.join(','),
+                  model.activeLayer,
+                  hasPathHighlight,
+                ],
+              },
+            }),
+          ]),
       new IconLayer<GraphRenderNode>({
         id: `${this.props.id}-fallback-avatars`,
         data: fallbackAvatarNodes,
@@ -1303,7 +1327,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       }),
       ...avatarLayers,
       ...hdAvatarLayers,
-      ...(keywordMutedNodes.length > 0
+      ...(!lowDetailMode && keywordMutedNodes.length > 0
         ? [
             new ScatterplotLayer<GraphRenderNode>({
               id: `${this.props.id}-keyword-muted-overlay`,

@@ -57,7 +57,11 @@ import type {
   ImageRendererDeliverySnapshot,
   ImageSourceHandle,
 } from '@/features/graph/render/imageRuntime'
-import { serializeBuildGraphRenderModelInput } from '@/features/graph/render/renderModelPayload'
+import {
+  deserializeGraphRenderModelTransferPayload,
+  isGraphRenderModelTransferPayload,
+  serializeBuildGraphRenderModelInput,
+} from '@/features/graph/render/renderModelPayload'
 import {
   createGraphRenderModelWorkerGateway,
   type GraphRenderModelWorkerGateway,
@@ -166,6 +170,7 @@ const COALESCED_FRAME_DELAY_MS = 16
 const DIAGNOSTICS_COMMIT_DELAY_MS = 250
 const RESIZE_SETTLE_DELAY_MS = 80
 const VIEWPORT_SETTLE_DELAY_MS = 400
+const AVATAR_VISIBLE_WARMUP_RETRY_DELAY_MS = 96
 const BOOTSTRAP_IMAGE_QUALITY_MODE = 'performance'
 
 interface HoverGraphState {
@@ -239,6 +244,16 @@ const applyImageFrameDiagnostics = ({
         : snapshot.diagnostics.secondarySummary,
   },
 })
+
+const shouldContinueAvatarWarmup = (snapshot: ImageResidencySnapshot) =>
+  snapshot.visibility.visibleNodes > 0 &&
+  (snapshot.pendingWork.queuedVisibleBaseRequests > 0 ||
+    snapshot.pendingWork.inFlightVisibleBaseRequests > 0 ||
+    snapshot.pendingWork.queuedCriticalVisibleBaseRequests > 0 ||
+    snapshot.pendingWork.inFlightCriticalVisibleBaseRequests > 0 ||
+    snapshot.presentation.iconLayerPendingVisibleNodes > 0 ||
+    snapshot.presentation.runtimeReadyVisibleNodes >
+      snapshot.presentation.paintedVisibleNodes)
 
 const createSortedCollectionSignature = (values?: ReadonlySet<string>) =>
   values ? Array.from(values).sort().join(',') : ''
@@ -1182,6 +1197,10 @@ export function GraphCanvas({
       const requestId = renderRequestSequenceRef.current + 1
       renderRequestSequenceRef.current = requestId
       const hasRenderableModel = modelRef.current.nodes.length > 0
+      const shouldRunPreviewPass =
+        !hasRenderableModel &&
+        Object.keys(input.nodes).length > 0 &&
+        input.activeLayer === 'graph'
 
       const buildInput = {
         ...input,
@@ -1197,15 +1216,16 @@ export function GraphCanvas({
         scheduleWorkerFlush()
       }
 
-      const commitModel = (nextModel: GraphRenderModel) => {
+      const commitModel = (
+        nextModel: GraphRenderModel,
+        committedJobKey: string,
+      ) => {
         if (!isCurrentRequest()) {
           onWorkerSettled()
           return
         }
 
-        if (request.jobKey) {
-          lastBuildJobKeyRef.current = request.jobKey
-        }
+        lastBuildJobKeyRef.current = committedJobKey
 
         previousPositionsRef.current = new Map(
           nextModel.nodes.map((node) => [node.pubkey, node.position]),
@@ -1267,7 +1287,6 @@ export function GraphCanvas({
         effectiveGraphCaps: input.effectiveGraphCaps,
         renderConfig: input.renderConfig,
       })
-      const request = serializeBuildGraphRenderModelInput(buildInput)
 
       if (
         jobKey === lastBuildJobKeyRef.current ||
@@ -1277,24 +1296,59 @@ export function GraphCanvas({
         return
       }
 
-      request.jobKind = 'BUILD_RENDER_MODEL'
-      request.jobKey = jobKey
       lastQueuedBuildJobKeyRef.current = jobKey
 
-      void graphRenderWorker
-        .invoke('BUILD_RENDER_MODEL', request)
-        .then((nextModel) => {
-          if (lastQueuedBuildJobKeyRef.current === request.jobKey) {
-            lastQueuedBuildJobKeyRef.current = null
-          }
-          commitModel(nextModel)
+      const buildAndCommit = (renderPass: 'preview' | 'final') => {
+        const request = serializeBuildGraphRenderModelInput({
+          ...buildInput,
+          renderPass,
         })
-        .catch((workerError) => {
-          if (lastQueuedBuildJobKeyRef.current === request.jobKey) {
-            lastQueuedBuildJobKeyRef.current = null
-          }
-          failModelBuild(workerError)
-        })
+        request.jobKind = 'BUILD_RENDER_MODEL'
+        request.jobKey =
+          renderPass === 'preview' ? `${jobKey}:preview` : jobKey
+
+        return graphRenderWorker
+          .invoke('BUILD_RENDER_MODEL', request)
+          .then((payload) => {
+            const nextModel = isGraphRenderModelTransferPayload(payload)
+              ? deserializeGraphRenderModelTransferPayload(payload)
+              : payload
+            commitModel(nextModel, request.jobKey ?? jobKey)
+          })
+      }
+
+      const runFinalPass = () =>
+        buildAndCommit('final')
+          .then(() => {
+            if (lastQueuedBuildJobKeyRef.current === jobKey) {
+              lastQueuedBuildJobKeyRef.current = null
+            }
+          })
+          .catch((workerError) => {
+            if (lastQueuedBuildJobKeyRef.current === jobKey) {
+              lastQueuedBuildJobKeyRef.current = null
+            }
+            failModelBuild(workerError)
+          })
+
+      if (shouldRunPreviewPass) {
+        void buildAndCommit('preview')
+          .then(() => {
+            if (isCurrentRequest()) {
+              previousLayoutKeyRef.current = undefined
+              workerQueueRefs.current.isBusy = true
+              void runFinalPass()
+            }
+          })
+          .catch((workerError) => {
+            if (lastQueuedBuildJobKeyRef.current === jobKey) {
+              lastQueuedBuildJobKeyRef.current = null
+            }
+            failModelBuild(workerError)
+          })
+      } else {
+        void runFinalPass()
+      }
     }
 
     triggerFlushRef.current = flushWorkerQueue
@@ -1556,9 +1610,15 @@ export function GraphCanvas({
         labels: model.labels,
         hoveredNodePubkey,
         zoomLevel: viewState?.zoom ?? 1,
-        labelPolicy: model.lod.labelPolicy,
+        labelPolicy: isMobileProfile ? 'hover-selected-only' : model.lod.labelPolicy,
       }),
-    [hoveredNodePubkey, model.labels, model.lod.labelPolicy, viewState?.zoom],
+    [
+      hoveredNodePubkey,
+      isMobileProfile,
+      model.labels,
+      model.lod.labelPolicy,
+      viewState?.zoom,
+    ],
   )
 
   const stableVisibleLabels = useMemo(() => {
@@ -1633,6 +1693,30 @@ export function GraphCanvas({
         heavyWorkSize.height !== size.height ||
         !equalGraphViewState(heavyWorkViewState, resolvedViewState)
       )
+
+    if (
+      runtimeInstance &&
+      viewportActiveRef.current &&
+      !shouldUseBootstrapFrame
+    ) {
+      const nextImageDiagnostics = applyImageFrameDiagnostics({
+        snapshot: runtimeInstance.debugSnapshot(),
+        frameComputationMode: 'idle',
+        frameSkipReason: 'viewport-active',
+        primarySummary:
+          'Viewport activo; se preserva el frame de avatars actual hasta el settle.',
+      })
+
+      imageDiagnosticsSnapshotRef.current = nextImageDiagnostics
+      publishAvatarPipelineProbe({
+        activeLayer,
+        readyImageCount: Object.keys(imageFrame.readyImagesByPubkey).length,
+        rootLoadStatus,
+        snapshot: nextImageDiagnostics,
+      })
+      scheduleImageDiagnosticsCommit()
+      return
+    }
 
     if (!runtimeInstance || (!hasSettledFrame && !shouldUseBootstrapFrame)) {
       const frameSkipReason: ImageFrameSkipReason =
@@ -1726,6 +1810,12 @@ export function GraphCanvas({
         ? current
         : nextImageFrame,
     )
+    if (
+      !viewportActiveRef.current &&
+      shouldContinueAvatarWarmup(nextImageDiagnostics)
+    ) {
+      scheduleImageFrameRefresh(AVATAR_VISIBLE_WARMUP_RETRY_DELAY_MS)
+    }
     scheduleImageDiagnosticsCommit()
   }
 
@@ -2334,6 +2424,7 @@ export function GraphCanvas({
               width={size.width}
               renderConfig={renderConfig}
               forceLowDevicePixels={isMobileProfile}
+              lowDetailMode={isMobileProfile}
               hoverInteractionEnabled={hoverInteractionEnabled}
             />
           ) : null}

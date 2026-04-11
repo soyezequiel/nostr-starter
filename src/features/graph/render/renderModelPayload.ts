@@ -11,7 +11,13 @@ import type {
   RenderConfig,
   EffectiveGraphCaps,
 } from '@/features/graph/app/store/types'
-import type { BuildGraphRenderModelInput } from '@/features/graph/render/types'
+import type {
+  BuildGraphRenderModelInput,
+  GraphRenderEdge,
+  GraphRenderLabel,
+  GraphRenderModel,
+  GraphRenderNode,
+} from '@/features/graph/render/types'
 
 export interface BuildRenderModelNodeInput {
   pubkey: string
@@ -25,6 +31,7 @@ export interface BuildRenderModelNodeInput {
 export interface BuildRenderModelRequest {
   jobKind?: 'BUILD_RENDER_MODEL'
   jobKey?: string
+  renderPass?: 'preview' | 'final'
   nodes: Record<string, BuildRenderModelNodeInput>
   links: GraphLink[]
   inboundLinks: GraphLink[]
@@ -45,6 +52,99 @@ export interface BuildRenderModelRequest {
   previousPositions?: Record<string, [number, number]>
   previousLayoutKey?: string
 }
+
+interface TransferNodeMeta {
+  id: string
+  pubkey: string
+  displayLabel: string
+  pictureUrl: string | null
+  keywordHits: number
+  source: GraphRenderNode['source']
+  discoveredAt: number | null
+  sharedByExpandedCount: number
+  analysisCommunityId: string | null
+  pathOrder: number | null
+}
+
+interface TransferEdgeMeta {
+  id: string
+  source: string
+  target: string
+  relation: GraphRenderEdge['relation']
+  targetSharedByExpandedCount: number
+}
+
+interface TransferLabelMeta {
+  id: string
+  pubkey: string
+  text: string
+}
+
+export interface GraphRenderModelTransferPayload
+  extends Omit<GraphRenderModel, 'nodes' | 'edges' | 'labels' | 'accessibleNodes'> {
+  transferKind: 'GRAPH_RENDER_MODEL_TRANSFER'
+  nodeMeta: TransferNodeMeta[]
+  nodePositions: Float32Array
+  nodeRadii: Float32Array
+  nodeFlags: Uint16Array
+  nodeFillColors: Uint8ClampedArray
+  nodeLineColors: Uint8ClampedArray
+  nodeBridgeHaloColors: Uint8ClampedArray
+  edgeMeta: TransferEdgeMeta[]
+  edgePositions: Float32Array
+  edgeRadii: Float32Array
+  edgeWeights: Float32Array
+  edgeFlags: Uint8Array
+  labelMeta: TransferLabelMeta[]
+  labelPositions: Float32Array
+  labelRadii: Float32Array
+  labelFlags: Uint8Array
+}
+
+const NODE_FLAG_ROOT = 1 << 0
+const NODE_FLAG_EXPANDED = 1 << 1
+const NODE_FLAG_SELECTED = 1 << 2
+const NODE_FLAG_COMMON_FOLLOW = 1 << 3
+const NODE_FLAG_HAS_BRIDGE_HALO = 1 << 4
+const NODE_FLAG_PATH_NODE = 1 << 5
+const NODE_FLAG_PATH_ENDPOINT = 1 << 6
+
+const EDGE_FLAG_PRIORITY = 1 << 0
+const EDGE_FLAG_PATH = 1 << 1
+
+const LABEL_FLAG_ROOT = 1 << 0
+const LABEL_FLAG_SELECTED = 1 << 1
+
+const DEFAULT_COLOR = [0, 0, 0, 0] as const
+
+const writeColor = (
+  target: Uint8ClampedArray,
+  index: number,
+  color: readonly [number, number, number, number] | null | undefined,
+) => {
+  const offset = index * 4
+  const resolvedColor = color ?? DEFAULT_COLOR
+  target[offset] = resolvedColor[0]
+  target[offset + 1] = resolvedColor[1]
+  target[offset + 2] = resolvedColor[2]
+  target[offset + 3] = resolvedColor[3]
+}
+
+const readColor = (
+  source: Uint8ClampedArray,
+  index: number,
+): [number, number, number, number] => {
+  const offset = index * 4
+  return [
+    source[offset] ?? 0,
+    source[offset + 1] ?? 0,
+    source[offset + 2] ?? 0,
+    source[offset + 3] ?? 0,
+  ]
+}
+
+const asTransferableBuffer = (array: ArrayBufferView): Transferable =>
+  array.buffer as ArrayBuffer
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0
@@ -354,6 +454,7 @@ const sanitizeEffectiveGraphCaps = (
 
 export const serializeBuildGraphRenderModelInput = ({
   jobKey,
+  renderPass,
   nodes,
   links,
   inboundLinks,
@@ -378,6 +479,7 @@ export const serializeBuildGraphRenderModelInput = ({
       }
     : {}),
   nodes: sanitizeNodes(nodes),
+  renderPass: renderPass === 'preview' ? 'preview' : 'final',
   links: sanitizeLinks(links),
   inboundLinks: sanitizeLinks(inboundLinks),
   zapEdges: sanitizeZapEdges(zapEdges),
@@ -409,6 +511,7 @@ export const serializeBuildGraphRenderModelInput = ({
 
 export const deserializeBuildGraphRenderModelInput = ({
   jobKey,
+  renderPass,
   nodes,
   links,
   inboundLinks,
@@ -426,6 +529,7 @@ export const deserializeBuildGraphRenderModelInput = ({
   previousPositions,
   previousLayoutKey,
 }: BuildRenderModelRequest): BuildGraphRenderModelInput => ({
+  renderPass: renderPass === 'preview' ? 'preview' : 'final',
   nodes: Object.fromEntries(
     Object.entries(nodes).map(([pubkey, node]) => [
       pubkey,
@@ -465,3 +569,248 @@ export const deserializeBuildGraphRenderModelInput = ({
   previousLayoutKey,
   ...(typeof jobKey === 'string' ? { jobKey } : {}),
 })
+
+export const serializeGraphRenderModelTransferPayload = (
+  model: GraphRenderModel,
+): GraphRenderModelTransferPayload => {
+  const nodeMeta: TransferNodeMeta[] = []
+  const nodePositions = new Float32Array(model.nodes.length * 2)
+  const nodeRadii = new Float32Array(model.nodes.length)
+  const nodeFlags = new Uint16Array(model.nodes.length)
+  const nodeFillColors = new Uint8ClampedArray(model.nodes.length * 4)
+  const nodeLineColors = new Uint8ClampedArray(model.nodes.length * 4)
+  const nodeBridgeHaloColors = new Uint8ClampedArray(model.nodes.length * 4)
+
+  model.nodes.forEach((node, index) => {
+    const positionOffset = index * 2
+    nodePositions[positionOffset] = node.position[0]
+    nodePositions[positionOffset + 1] = node.position[1]
+    nodeRadii[index] = node.radius
+    nodeFlags[index] =
+      (node.isRoot ? NODE_FLAG_ROOT : 0) |
+      (node.isExpanded ? NODE_FLAG_EXPANDED : 0) |
+      (node.isSelected ? NODE_FLAG_SELECTED : 0) |
+      (node.isCommonFollow ? NODE_FLAG_COMMON_FOLLOW : 0) |
+      (node.bridgeHaloColor ? NODE_FLAG_HAS_BRIDGE_HALO : 0) |
+      (node.isPathNode ? NODE_FLAG_PATH_NODE : 0) |
+      (node.isPathEndpoint ? NODE_FLAG_PATH_ENDPOINT : 0)
+    writeColor(nodeFillColors, index, node.fillColor)
+    writeColor(nodeLineColors, index, node.lineColor)
+    writeColor(nodeBridgeHaloColors, index, node.bridgeHaloColor)
+    nodeMeta.push({
+      id: node.id,
+      pubkey: node.pubkey,
+      displayLabel: node.displayLabel,
+      pictureUrl: node.pictureUrl,
+      keywordHits: node.keywordHits,
+      source: node.source,
+      discoveredAt: node.discoveredAt,
+      sharedByExpandedCount: node.sharedByExpandedCount,
+      analysisCommunityId: node.analysisCommunityId ?? null,
+      pathOrder: node.pathOrder ?? null,
+    })
+  })
+
+  const edgeMeta: TransferEdgeMeta[] = []
+  const edgePositions = new Float32Array(model.edges.length * 4)
+  const edgeRadii = new Float32Array(model.edges.length * 2)
+  const edgeWeights = new Float32Array(model.edges.length)
+  const edgeFlags = new Uint8Array(model.edges.length)
+
+  model.edges.forEach((edge, index) => {
+    const positionOffset = index * 4
+    const radiusOffset = index * 2
+    edgePositions[positionOffset] = edge.sourcePosition[0]
+    edgePositions[positionOffset + 1] = edge.sourcePosition[1]
+    edgePositions[positionOffset + 2] = edge.targetPosition[0]
+    edgePositions[positionOffset + 3] = edge.targetPosition[1]
+    edgeRadii[radiusOffset] = edge.sourceRadius
+    edgeRadii[radiusOffset + 1] = edge.targetRadius
+    edgeWeights[index] = edge.weight
+    edgeFlags[index] =
+      (edge.isPriority ? EDGE_FLAG_PRIORITY : 0) |
+      (edge.isPathEdge ? EDGE_FLAG_PATH : 0)
+    edgeMeta.push({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      relation: edge.relation,
+      targetSharedByExpandedCount: edge.targetSharedByExpandedCount,
+    })
+  })
+
+  const labelMeta: TransferLabelMeta[] = []
+  const labelPositions = new Float32Array(model.labels.length * 2)
+  const labelRadii = new Float32Array(model.labels.length)
+  const labelFlags = new Uint8Array(model.labels.length)
+
+  model.labels.forEach((label, index) => {
+    const positionOffset = index * 2
+    labelPositions[positionOffset] = label.position[0]
+    labelPositions[positionOffset + 1] = label.position[1]
+    labelRadii[index] = label.radius
+    labelFlags[index] =
+      (label.isRoot ? LABEL_FLAG_ROOT : 0) |
+      (label.isSelected ? LABEL_FLAG_SELECTED : 0)
+    labelMeta.push({
+      id: label.id,
+      pubkey: label.pubkey,
+      text: label.text,
+    })
+  })
+
+  return {
+    transferKind: 'GRAPH_RENDER_MODEL_TRANSFER',
+    nodeMeta,
+    nodePositions,
+    nodeRadii,
+    nodeFlags,
+    nodeFillColors,
+    nodeLineColors,
+    nodeBridgeHaloColors,
+    edgeMeta,
+    edgePositions,
+    edgeRadii,
+    edgeWeights,
+    edgeFlags,
+    labelMeta,
+    labelPositions,
+    labelRadii,
+    labelFlags,
+    bounds: model.bounds,
+    topologySignature: model.topologySignature,
+    layoutKey: model.layoutKey,
+    lod: model.lod,
+    analysisOverlay: model.analysisOverlay,
+    activeLayer: model.activeLayer,
+    renderConfig: model.renderConfig,
+  }
+}
+
+export const getGraphRenderModelTransferables = (
+  payload: GraphRenderModelTransferPayload,
+): Transferable[] => [
+  asTransferableBuffer(payload.nodePositions),
+  asTransferableBuffer(payload.nodeRadii),
+  asTransferableBuffer(payload.nodeFlags),
+  asTransferableBuffer(payload.nodeFillColors),
+  asTransferableBuffer(payload.nodeLineColors),
+  asTransferableBuffer(payload.nodeBridgeHaloColors),
+  asTransferableBuffer(payload.edgePositions),
+  asTransferableBuffer(payload.edgeRadii),
+  asTransferableBuffer(payload.edgeWeights),
+  asTransferableBuffer(payload.edgeFlags),
+  asTransferableBuffer(payload.labelPositions),
+  asTransferableBuffer(payload.labelRadii),
+  asTransferableBuffer(payload.labelFlags),
+]
+
+export const isGraphRenderModelTransferPayload = (
+  value: unknown,
+): value is GraphRenderModelTransferPayload =>
+  typeof value === 'object' &&
+  value !== null &&
+  'transferKind' in value &&
+  value.transferKind === 'GRAPH_RENDER_MODEL_TRANSFER'
+
+export const deserializeGraphRenderModelTransferPayload = (
+  payload: GraphRenderModelTransferPayload,
+): GraphRenderModel => {
+  const nodes: GraphRenderNode[] = payload.nodeMeta.map((meta, index) => {
+    const positionOffset = index * 2
+    const flags = payload.nodeFlags[index] ?? 0
+
+    return {
+      id: meta.id,
+      pubkey: meta.pubkey,
+      displayLabel: meta.displayLabel,
+      pictureUrl: meta.pictureUrl,
+      position: [
+        payload.nodePositions[positionOffset] ?? 0,
+        payload.nodePositions[positionOffset + 1] ?? 0,
+      ],
+      radius: payload.nodeRadii[index] ?? 0,
+      keywordHits: meta.keywordHits,
+      isRoot: (flags & NODE_FLAG_ROOT) !== 0,
+      isExpanded: (flags & NODE_FLAG_EXPANDED) !== 0,
+      isSelected: (flags & NODE_FLAG_SELECTED) !== 0,
+      isCommonFollow: (flags & NODE_FLAG_COMMON_FOLLOW) !== 0,
+      source: meta.source,
+      discoveredAt: meta.discoveredAt,
+      sharedByExpandedCount: meta.sharedByExpandedCount,
+      fillColor: readColor(payload.nodeFillColors, index),
+      lineColor: readColor(payload.nodeLineColors, index),
+      bridgeHaloColor:
+        (flags & NODE_FLAG_HAS_BRIDGE_HALO) !== 0
+          ? readColor(payload.nodeBridgeHaloColors, index)
+          : null,
+      analysisCommunityId: meta.analysisCommunityId,
+      isPathNode: (flags & NODE_FLAG_PATH_NODE) !== 0,
+      isPathEndpoint: (flags & NODE_FLAG_PATH_ENDPOINT) !== 0,
+      pathOrder: meta.pathOrder,
+    }
+  })
+  const edges: GraphRenderEdge[] = payload.edgeMeta.map((meta, index) => {
+    const positionOffset = index * 4
+    const radiusOffset = index * 2
+    const flags = payload.edgeFlags[index] ?? 0
+
+    return {
+      id: meta.id,
+      source: meta.source,
+      target: meta.target,
+      relation: meta.relation,
+      weight: payload.edgeWeights[index] ?? 0,
+      sourcePosition: [
+        payload.edgePositions[positionOffset] ?? 0,
+        payload.edgePositions[positionOffset + 1] ?? 0,
+      ],
+      targetPosition: [
+        payload.edgePositions[positionOffset + 2] ?? 0,
+        payload.edgePositions[positionOffset + 3] ?? 0,
+      ],
+      sourceRadius: payload.edgeRadii[radiusOffset] ?? 0,
+      targetRadius: payload.edgeRadii[radiusOffset + 1] ?? 0,
+      isPriority: (flags & EDGE_FLAG_PRIORITY) !== 0,
+      targetSharedByExpandedCount: meta.targetSharedByExpandedCount,
+      isPathEdge: (flags & EDGE_FLAG_PATH) !== 0,
+    }
+  })
+  const labels: GraphRenderLabel[] = payload.labelMeta.map((meta, index) => {
+    const positionOffset = index * 2
+    const flags = payload.labelFlags[index] ?? 0
+
+    return {
+      id: meta.id,
+      pubkey: meta.pubkey,
+      text: meta.text,
+      position: [
+        payload.labelPositions[positionOffset] ?? 0,
+        payload.labelPositions[positionOffset + 1] ?? 0,
+      ],
+      radius: payload.labelRadii[index] ?? 0,
+      isRoot: (flags & LABEL_FLAG_ROOT) !== 0,
+      isSelected: (flags & LABEL_FLAG_SELECTED) !== 0,
+    }
+  })
+
+  return {
+    nodes,
+    edges,
+    labels,
+    accessibleNodes: nodes.map((node) => ({
+      id: node.id,
+      pubkey: node.pubkey,
+      displayLabel: node.displayLabel,
+      isRoot: node.isRoot,
+      source: node.source,
+    })),
+    bounds: payload.bounds,
+    topologySignature: payload.topologySignature,
+    layoutKey: payload.layoutKey,
+    lod: payload.lod,
+    analysisOverlay: payload.analysisOverlay,
+    activeLayer: payload.activeLayer,
+    renderConfig: payload.renderConfig,
+  }
+}

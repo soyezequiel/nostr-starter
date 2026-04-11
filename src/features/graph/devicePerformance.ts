@@ -26,15 +26,15 @@ const DESKTOP_GRAPH_CAPS: EffectiveGraphCaps = {
 }
 
 const MOBILE_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 600,
-  coldStartLayoutTicks: 45,
-  warmStartLayoutTicks: 22,
+  maxNodes: 400,
+  coldStartLayoutTicks: 30,
+  warmStartLayoutTicks: 12,
 }
 
 const LOW_END_MOBILE_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 250,
-  coldStartLayoutTicks: 32,
-  warmStartLayoutTicks: 14,
+  maxNodes: 150,
+  coldStartLayoutTicks: 18,
+  warmStartLayoutTicks: 6,
 }
 
 const DESKTOP_IMAGE_BUDGET: EffectiveImageBudget = {
@@ -48,21 +48,21 @@ const DESKTOP_IMAGE_BUDGET: EffectiveImageBudget = {
 }
 
 const MOBILE_IMAGE_BUDGET: EffectiveImageBudget = {
-  vramBytes: 32 * 1024 * 1024,
-  decodedBytes: 56 * 1024 * 1024,
-  compressedBytes: 18 * 1024 * 1024,
-  baseFetchConcurrency: 4,
-  boostedFetchConcurrency: 5,
+  vramBytes: 24 * 1024 * 1024,
+  decodedBytes: 40 * 1024 * 1024,
+  compressedBytes: 14 * 1024 * 1024,
+  baseFetchConcurrency: 3,
+  boostedFetchConcurrency: 4,
   allowHdTiers: false,
   allowParallelDirectFallback: false,
 }
 
 const LOW_END_MOBILE_IMAGE_BUDGET: EffectiveImageBudget = {
-  vramBytes: 16 * 1024 * 1024,
-  decodedBytes: 32 * 1024 * 1024,
-  compressedBytes: 10 * 1024 * 1024,
+  vramBytes: 10 * 1024 * 1024,
+  decodedBytes: 20 * 1024 * 1024,
+  compressedBytes: 7 * 1024 * 1024,
   baseFetchConcurrency: 2,
-  boostedFetchConcurrency: 3,
+  boostedFetchConcurrency: 2,
   allowHdTiers: false,
   allowParallelDirectFallback: false,
 }

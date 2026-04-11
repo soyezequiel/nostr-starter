@@ -8,6 +8,8 @@ import type {
 import { buildGraphRenderModel } from '@/features/graph/render/buildGraphRenderModel'
 import {
   deserializeBuildGraphRenderModelInput,
+  getGraphRenderModelTransferables,
+  serializeGraphRenderModelTransferPayload,
   type BuildRenderModelNodeInput,
   type BuildRenderModelRequest,
 } from '@/features/graph/render/renderModelPayload'
@@ -27,7 +29,10 @@ import type {
   GraphWorkerActionMap,
 } from '@/features/graph/workers/graph/contracts'
 import { WorkerProtocolError } from '@/features/graph/workers/shared/protocol'
-import type { WorkerHandlerRegistry } from '@/features/graph/workers/shared/runtime'
+import {
+  createWorkerTransferableResult,
+  type WorkerHandlerRegistry,
+} from '@/features/graph/workers/shared/runtime'
 import {
   expectArray,
   expectFiniteNumber,
@@ -626,6 +631,7 @@ function validateBuildRenderModelRequest(
       typeof request.jobKey === 'undefined'
         ? undefined
         : expectString(request.jobKey, 'payload.jobKey'),
+    renderPass: request.renderPass === 'preview' ? 'preview' : 'final',
     nodes: Object.fromEntries(
       Object.entries(nodesRecord).map(([pubkey, node]) => [
         pubkey,
@@ -901,7 +907,14 @@ export function calculateDegrees(request: CalcDegreesRequest): CalcDegreesResult
 }
 
 export function buildRenderModel(request: BuildRenderModelRequest) {
-  return buildGraphRenderModel(deserializeBuildGraphRenderModelInput(request))
+  const transferPayload = serializeGraphRenderModelTransferPayload(
+    buildGraphRenderModel(deserializeBuildGraphRenderModelInput(request)),
+  )
+
+  return createWorkerTransferableResult(
+    transferPayload,
+    getGraphRenderModelTransferables(transferPayload),
+  )
 }
 
 export function createGraphWorkerRegistry(): WorkerHandlerRegistry<GraphWorkerActionMap> {
