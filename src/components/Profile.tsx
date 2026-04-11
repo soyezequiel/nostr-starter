@@ -18,9 +18,9 @@ function ProfileSkeleton({ status }: { status: string }) {
   return (
     <div className="min-h-screen pt-16">
       {/* Banner skeleton */}
-      <div className="h-52 lc-skeleton" style={{ borderRadius: 0 }} />
+      <div className="h-36 sm:h-52 lc-skeleton" style={{ borderRadius: 0 }} />
 
-      <div className="max-w-2xl mx-auto px-6">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6">
         {/* Avatar skeleton */}
         <div className="relative -mt-16 mb-6">
           <div className="w-32 h-32 lc-skeleton-rounded border-4 border-lc-black" />
@@ -180,10 +180,10 @@ export default function Profile() {
               <path d="M2 12l10 5 10-5"/>
             </svg>
           </div>
-          <h1 className="text-4xl font-extrabold text-lc-white mb-3 tracking-tight">
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-lc-white mb-3 tracking-tight">
             Nostr Starter Kit
           </h1>
-          <p className="text-lg text-lc-muted mb-8">
+          <p className="text-base sm:text-lg text-lc-muted mb-8">
             Connect your identity to explore the decentralized social network
           </p>
           <div className="flex items-center justify-center gap-3 text-sm text-lc-muted/70">
@@ -219,7 +219,7 @@ export default function Profile() {
   return (
     <div className="min-h-screen pt-16">
       {/* Banner */}
-      <div className="h-52 lc-banner-gradient relative overflow-hidden">
+      <div className="h-36 sm:h-52 lc-banner-gradient relative overflow-hidden">
         {profile.banner ? (
           <SkeletonImage
             src={profile.banner}
@@ -236,10 +236,10 @@ export default function Profile() {
       </div>
 
       {/* Profile Header */}
-      <div className="max-w-2xl mx-auto px-6">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6">
         <div className="relative -mt-16 mb-6">
           {/* Avatar */}
-          <div className="w-32 h-32 rounded-2xl border-4 border-lc-black bg-lc-dark overflow-hidden shadow-2xl">
+          <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl border-4 border-lc-black bg-lc-dark overflow-hidden shadow-2xl">
             {profile.picture ? (
               <SkeletonImage
                 src={profile.picture}
@@ -264,7 +264,7 @@ export default function Profile() {
 
         {/* Name & Bio */}
         <div className="mb-4">
-          <h1 className="text-3xl font-extrabold text-lc-white tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-lc-white tracking-tight">
             {profile.displayName || profile.name || 'Anonymous'}
           </h1>
           {profile.name && profile.displayName && profile.name !== profile.displayName && (
@@ -330,7 +330,7 @@ export default function Profile() {
         {/* Pubkey */}
         <div className="p-4 bg-lc-dark rounded-xl mb-6 border border-lc-border/50">
           <div className="text-xs text-lc-muted mb-1.5 uppercase tracking-wider font-medium">Public Key</div>
-          <div className="text-sm text-lc-white/70 font-mono break-all leading-relaxed">
+          <div className="text-xs sm:text-sm text-lc-white/70 font-mono break-all leading-relaxed">
             {profile.npub}
           </div>
         </div>

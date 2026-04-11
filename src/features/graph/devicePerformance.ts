@@ -20,21 +20,21 @@ export interface DevicePerformanceDetectionResult {
 const MOBILE_VIEWPORT_MAX_WIDTH = 900
 
 const DESKTOP_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 3000,
+  maxNodes: 2200,
   coldStartLayoutTicks: 90,
   warmStartLayoutTicks: 50,
 }
 
 const MOBILE_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 1200,
-  coldStartLayoutTicks: 60,
-  warmStartLayoutTicks: 35,
+  maxNodes: 600,
+  coldStartLayoutTicks: 45,
+  warmStartLayoutTicks: 22,
 }
 
 const LOW_END_MOBILE_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 800,
-  coldStartLayoutTicks: 60,
-  warmStartLayoutTicks: 35,
+  maxNodes: 250,
+  coldStartLayoutTicks: 32,
+  warmStartLayoutTicks: 14,
 }
 
 const DESKTOP_IMAGE_BUDGET: EffectiveImageBudget = {
@@ -48,21 +48,21 @@ const DESKTOP_IMAGE_BUDGET: EffectiveImageBudget = {
 }
 
 const MOBILE_IMAGE_BUDGET: EffectiveImageBudget = {
-  vramBytes: 40 * 1024 * 1024,
-  decodedBytes: 80 * 1024 * 1024,
-  compressedBytes: 24 * 1024 * 1024,
-  baseFetchConcurrency: 6,
-  boostedFetchConcurrency: 8,
+  vramBytes: 32 * 1024 * 1024,
+  decodedBytes: 56 * 1024 * 1024,
+  compressedBytes: 18 * 1024 * 1024,
+  baseFetchConcurrency: 4,
+  boostedFetchConcurrency: 5,
   allowHdTiers: false,
   allowParallelDirectFallback: false,
 }
 
 const LOW_END_MOBILE_IMAGE_BUDGET: EffectiveImageBudget = {
-  vramBytes: 24 * 1024 * 1024,
-  decodedBytes: 48 * 1024 * 1024,
-  compressedBytes: 16 * 1024 * 1024,
-  baseFetchConcurrency: 4,
-  boostedFetchConcurrency: 6,
+  vramBytes: 16 * 1024 * 1024,
+  decodedBytes: 32 * 1024 * 1024,
+  compressedBytes: 10 * 1024 * 1024,
+  baseFetchConcurrency: 2,
+  boostedFetchConcurrency: 3,
   allowHdTiers: false,
   allowParallelDirectFallback: false,
 }

@@ -25,7 +25,9 @@ const DEFAULT_RETRY_COUNT = 1
 const DEFAULT_STRAGGLER_GRACE_MS = 250
 const DEFAULT_MAX_AUTHORS_PER_FILTER = 50
 const INTERACTIVE_FLUSH_DELAY_MS = 32
-const BACKGROUND_FLUSH_DELAY_MS = 32
+// PERF: background subs do not need tight flush; this reduces microtask churn.
+const BACKGROUND_FLUSH_DELAY_MS = 120
+const HEALTH_PUBLISH_DELAY_MS = 100
 
 type TerminalKind = 'eose' | 'timeout' | 'closed' | 'cancelled'
 
@@ -60,6 +62,7 @@ export class RelayPoolAdapter {
   private readonly healthListeners = new Set<
     (snapshot: Record<string, RelayHealthSnapshot>) => void
   >()
+  private healthPublishHandle: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: RelayAdapterOptions) {
     this.transport = options.transport ?? new NostrToolsRelayTransport()
@@ -120,6 +123,13 @@ export class RelayPoolAdapter {
 
     return () => {
       this.healthListeners.delete(listener)
+      if (
+        this.healthListeners.size === 0 &&
+        this.healthPublishHandle !== null
+      ) {
+        this.clock.clearTimeout(this.healthPublishHandle)
+        this.healthPublishHandle = null
+      }
     }
   }
 
@@ -402,7 +412,9 @@ export class RelayPoolAdapter {
 
       try {
         activeAttempt.subscription = connection.subscribe(filters, {
-          onEvent: async (event) => {
+          // PERF: non-async for trusted-relay (the common path) to avoid allocating
+          // a Promise object per event. Noisy relays emit thousands of events/session.
+          onEvent: (event) => {
             if (cancelled || activeAttempt.finished) {
               return
             }
@@ -417,31 +429,38 @@ export class RelayPoolAdapter {
             addSeenRelayEvent(relayEventKey)
 
             if (verificationMode === 'verify-worker') {
-              const isValid = await isVerifiedEventAsync(event)
+              // Async path only allocated when verification is required
+              void isVerifiedEventAsync(event).then((isValid) => {
+                if (cancelled || activeAttempt.finished) {
+                  return
+                }
 
-              // After await, we must re-check if the subscription was closed
-              if (cancelled || activeAttempt.finished) {
-                return
-              }
+                if (!isValid) {
+                  stats.rejectedEvents += 1
+                  this.updateRelayHealth(url, (current) => ({
+                    ...current,
+                    lastErrorCode: 'RELAY_EVENT_INVALID',
+                  }))
+                  return
+                }
 
-              if (!isValid) {
-                stats.rejectedEvents += 1
-                this.updateRelayHealth(url, (current) => ({
-                  ...current,
-                  lastErrorCode: 'RELAY_EVENT_INVALID',
-                }))
-                return
-              }
+                stats.acceptedEvents += 1
+                this.acceptRelayEvent(url)
+                pendingEvents.push({
+                  event,
+                  relayUrl: url,
+                  receivedAtMs: this.clock.now(),
+                  attempt: attemptNumber,
+                })
+                scheduleFlush()
+              })
+              return
             }
 
             stats.acceptedEvents += 1
-            this.updateRelayHealth(url, (current) => ({
-              ...current,
-              status: 'healthy',
-              consecutiveFailures: 0,
-              lastErrorCode: undefined,
-              lastEventMs: this.clock.now(),
-            }))
+            // PERF: skip snapshot allocation when already healthy to avoid a
+            // new object per relay event on the hot path.
+            this.acceptRelayEvent(url)
             pendingEvents.push({
               event,
               relayUrl: url,
@@ -667,10 +686,37 @@ export class RelayPoolAdapter {
     }))
   }
 
+  // PERF: fast path for accepted events. This skips snapshot allocation when
+  // the relay is already healthy because it runs on every accepted event.
+  private acceptRelayEvent(url: string): void {
+    const current = this.relayHealth.get(url)
+    if (
+      current &&
+      current.status === 'healthy' &&
+      current.consecutiveFailures === 0 &&
+      current.lastErrorCode === undefined
+    ) {
+      // Mutate lastEventMs in place. snapshotRelayHealth() copies before
+      // handing data to listeners. This timestamp is used by timeout handling;
+      // UI subscribers do not need a publish when the visible health did not
+      // change.
+      current.lastEventMs = this.clock.now()
+      return
+    }
+    this.updateRelayHealth(url, (c) => ({
+      ...c,
+      status: 'healthy',
+      consecutiveFailures: 0,
+      lastErrorCode: undefined,
+      lastEventMs: this.clock.now(),
+    }))
+  }
+
   private updateRelayHealth(
     url: string,
     updater: (current: RelayHealthSnapshot) => RelayHealthSnapshot,
   ): void {
+    const now = this.clock.now()
     const current =
       this.relayHealth.get(url) ??
       ({
@@ -679,12 +725,12 @@ export class RelayPoolAdapter {
         attempt: 0,
         activeSubscriptions: 0,
         consecutiveFailures: 0,
-        lastChangeMs: this.clock.now(),
+        lastChangeMs: now,
       } satisfies RelayHealthSnapshot)
 
     const next = {
       ...updater(current),
-      lastChangeMs: this.clock.now(),
+      lastChangeMs: now,
     }
 
     this.relayHealth.set(url, next)
@@ -701,11 +747,24 @@ export class RelayPoolAdapter {
   }
 
   private publishHealth(): void {
-    const snapshot = this.snapshotRelayHealth()
-
-    for (const listener of this.healthListeners) {
-      listener(snapshot)
+    if (
+      this.healthListeners.size === 0 ||
+      this.healthPublishHandle !== null
+    ) {
+      return
     }
+
+    // PERF: relay events arrive as separate WebSocket tasks, so microtask
+    // coalescing would still allow near per-event UI updates. A short timer
+    // keeps relay health fresh without forcing React to re-render on every
+    // accepted event.
+    this.healthPublishHandle = this.clock.setTimeout(() => {
+      this.healthPublishHandle = null
+      const snapshot = this.snapshotRelayHealth()
+      for (const listener of this.healthListeners) {
+        listener(snapshot)
+      }
+    }, HEALTH_PUBLISH_DELAY_MS)
   }
 }
 

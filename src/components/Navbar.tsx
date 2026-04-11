@@ -55,7 +55,7 @@ export default function Navbar() {
   return (
     <>
       <nav className="fixed top-0 left-0 right-0 z-40 bg-lc-black/90 backdrop-blur-xl border-b border-lc-border/50">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <div className="w-8 h-8 bg-lc-green rounded-lg flex items-center justify-center">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -69,7 +69,7 @@ export default function Navbar() {
             </span>
           </Link>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5 sm:gap-1">
             {navItems.map(({ href, label, icon }) => {
               const isActive =
                 href === '/'
@@ -80,14 +80,14 @@ export default function Navbar() {
                 <Link
                   key={href}
                   href={href}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-lg text-sm font-medium transition-all min-h-[44px] sm:min-h-0 ${
                     isActive
                       ? 'bg-lc-border/60 text-lc-green'
                       : 'text-lc-muted hover:text-lc-white hover:bg-lc-border/30'
                   }`}
                 >
                   {icon}
-                  {label}
+                  <span className="hidden sm:inline">{label}</span>
                 </Link>
               );
             })}
@@ -98,9 +98,9 @@ export default function Navbar() {
               <div className="relative">
                 <button
                   onClick={() => setShowMenu(!showMenu)}
-                  className="flex items-center gap-2.5 py-1.5 pl-1.5 pr-4 bg-lc-dark hover:bg-lc-border rounded-full transition-all duration-200 border border-lc-border/50"
+                  className="flex items-center gap-2 sm:gap-2.5 py-1.5 pl-1.5 pr-2 sm:pr-4 bg-lc-dark hover:bg-lc-border rounded-full transition-all duration-200 border border-lc-border/50 min-h-[44px] sm:min-h-0"
                 >
-                  <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border">
+                  <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border flex-shrink-0">
                     {profile.picture ? (
                       <SkeletonImage
                         src={profile.picture}
@@ -121,7 +121,7 @@ export default function Navbar() {
                       />
                     )}
                   </div>
-                  <span className="text-sm text-lc-white font-medium max-w-[120px] truncate">
+                  <span className="hidden sm:block text-sm text-lc-white font-medium max-w-[120px] truncate">
                     {profile.displayName || profile.name || 'Anon'}
                   </span>
                 </button>
@@ -159,14 +159,14 @@ export default function Navbar() {
             ) : (
               <button
                 onClick={() => setShowLogin(true)}
-                className="lc-pill lc-pill-primary text-sm flex items-center gap-2"
+                className="lc-pill lc-pill-primary text-sm flex items-center gap-2 !px-3 sm:!px-6 min-h-[44px] sm:min-h-0"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" />
                   <polyline points="10 17 15 12 10 7" />
                   <line x1="15" y1="12" x2="3" y2="12" />
                 </svg>
-                Connect
+                <span className="hidden sm:inline">Connect</span>
               </button>
             )}
           </div>

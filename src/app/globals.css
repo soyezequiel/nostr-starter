@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/* Mobile baseline */
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Prevent double-tap zoom on interactive elements on iOS */
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
 @theme {
   --color-lc-black: #0a0a0a;
   --color-lc-dark: #171717;

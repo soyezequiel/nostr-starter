@@ -779,8 +779,12 @@ const runLayoutSimulation = ({
     )
     .stop()
 
+  // PERF: stop early when simulation has converged. This saves iterations on
+  // warm restarts where previous positions are close to equilibrium.
+  const ALPHA_CONVERGENCE_THRESHOLD = 0.002
   for (let tick = 0; tick < ticks; tick += 1) {
     simulation.tick()
+    if (simulation.alpha() < ALPHA_CONVERGENCE_THRESHOLD) break
   }
 
   simulation.stop()

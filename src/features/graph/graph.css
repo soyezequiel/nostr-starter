@@ -635,6 +635,8 @@ main {
   min-height: clamp(42rem, calc(100svh - 2.5rem), 56rem);
   border-radius: 2rem;
   overflow: hidden;
+  /* PERF: prevent browser scroll from competing with deck.gl touch handling on mobile */
+  touch-action: none;
   background:
     radial-gradient(ellipse at 25% 20%, rgba(9, 20, 38, 0.95), transparent 60%),
     radial-gradient(
@@ -3984,6 +3986,18 @@ main {
   .graph-panel__image-debug-verdict {
     min-width: auto;
     width: fit-content;
+  }
+
+  /* PERF: on small screens the canvas fills the full viewport height so there
+     is no page scroll that would compete with deck.gl pan/zoom gestures */
+  .graph-panel__canvas-frame {
+    min-height: 100dvh;
+    border-radius: 0;
+  }
+
+  /* Hide the fullscreen toggle on mobile; the canvas already fills the screen */
+  .graph-panel__fullscreen-btn {
+    display: none;
   }
 }
 

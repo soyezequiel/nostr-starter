@@ -18,8 +18,8 @@ interface Badge {
 
 function BadgesSkeleton({ status }: { status: string }) {
   return (
-    <div className="min-h-screen pt-24">
-      <div className="max-w-2xl mx-auto px-6">
+    <div className="min-h-screen pt-20 sm:pt-24">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6">
         <div className="mb-8 space-y-2">
           <div className="lc-skeleton h-8 w-32" />
           <div className="lc-skeleton h-4 w-64" />
@@ -32,7 +32,7 @@ function BadgesSkeleton({ status }: { status: string }) {
           <div className="font-semibold text-lc-green">Cargando badges NIP-58</div>
           <div className="mt-1 text-lc-muted">{status}</div>
         </div>
-        <div className="grid grid-cols-2 gap-3 pb-12">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-12">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="lc-card p-4 flex flex-col items-center">
               <div className="w-20 h-20 lc-skeleton-rounded mb-3" />
@@ -142,10 +142,10 @@ export default function Badges() {
   }
 
   return (
-    <div className="min-h-screen pt-24">
-      <div className="max-w-2xl mx-auto px-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-extrabold text-lc-white tracking-tight">Badges</h1>
+    <div className="min-h-screen pt-20 sm:pt-24">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6">
+        <div className="mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-lc-white tracking-tight">Badges</h1>
           <p className="text-lc-muted mt-1">Nostr badges awarded to your profile (NIP-58)</p>
         </div>
 
@@ -160,7 +160,7 @@ export default function Badges() {
             <p className="text-lc-muted/60 text-xs">Badges you receive from the Nostr network will appear here</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 pb-12">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-12">
             {badges.map((badge) => {
               const badgeImage = normalizeMediaUrl(badge.thumb ?? badge.image);
 

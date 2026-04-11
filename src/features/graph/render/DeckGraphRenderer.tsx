@@ -35,6 +35,8 @@ const DECK_STYLE = {
   left: '0',
   width: '100%',
   height: '100%',
+  // PERF: prevent browser scroll/zoom handling from competing with deck.gl.
+  touchAction: 'none',
 } as const
 const HOVER_RESUME_DELAY_MS = 96
 const DRAG_HOVER_RESUME_DELAY_MS = 144
