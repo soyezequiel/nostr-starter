@@ -194,10 +194,10 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-lc-dark rounded-2xl max-w-md w-full p-8 border border-lc-border shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-4">
+      <div className="max-h-[min(90dvh,44rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-lc-border bg-lc-dark p-5 shadow-2xl sm:p-8">
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="mb-6 flex items-start justify-between gap-4 sm:mb-8">
           <div>
             <h2 className="text-xl font-bold text-lc-white">Connect to Nostr</h2>
             <p className="text-sm text-lc-muted mt-1">Choose your login method</p>
@@ -244,7 +244,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               <button
                 onClick={() => handleLogin('extension')}
                 disabled={isLoading}
-                className="w-full flex items-center gap-4 p-4 bg-lc-olive/40 hover:bg-lc-olive/60 border border-lc-green/20 rounded-xl transition-all duration-200 disabled:opacity-50 group"
+                className="group flex min-h-[52px] w-full items-center gap-4 rounded-xl border border-lc-green/20 bg-lc-olive/40 p-4 transition-all duration-200 hover:bg-lc-olive/60 disabled:opacity-50"
               >
                 <div className="w-11 h-11 bg-lc-green/20 rounded-xl flex items-center justify-center group-hover:bg-lc-green/30 transition">
                   {loadingMethod === 'extension' ? (
@@ -274,7 +274,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
             <button
               onClick={() => setMethod('nsec')}
               disabled={isLoading}
-              className="w-full flex items-center gap-4 p-4 bg-lc-card hover:bg-lc-border/50 border border-lc-border rounded-xl transition-all duration-200 disabled:opacity-50 group"
+              className="group flex min-h-[52px] w-full items-center gap-4 rounded-xl border border-lc-border bg-lc-card p-4 transition-all duration-200 hover:bg-lc-border/50 disabled:opacity-50"
             >
               <div className="w-11 h-11 bg-lc-border rounded-xl flex items-center justify-center group-hover:bg-lc-border/80 transition">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -294,7 +294,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
             <button
               onClick={() => setMethod('bunker')}
               disabled={isLoading}
-              className="w-full flex items-center gap-4 p-4 bg-lc-card hover:bg-lc-border/50 border border-lc-border rounded-xl transition-all duration-200 disabled:opacity-50 group"
+              className="group flex min-h-[52px] w-full items-center gap-4 rounded-xl border border-lc-border bg-lc-card p-4 transition-all duration-200 hover:bg-lc-border/50 disabled:opacity-50"
             >
               <div className="w-11 h-11 bg-lc-border rounded-xl flex items-center justify-center group-hover:bg-lc-border/80 transition">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

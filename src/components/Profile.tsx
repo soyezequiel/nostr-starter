@@ -16,14 +16,14 @@ import SkeletonImage from '@/components/SkeletonImage';
 
 function ProfileSkeleton({ status }: { status: string }) {
   return (
-    <div className="min-h-screen pt-16">
+    <div className="min-h-[100dvh] px-4 pb-12 pt-28 sm:px-6 sm:pt-20">
       {/* Banner skeleton */}
-      <div className="h-36 sm:h-52 lc-skeleton" style={{ borderRadius: 0 }} />
+      <div className="h-32 sm:h-44 lg:h-52 lc-skeleton" style={{ borderRadius: 0 }} />
 
-      <div className="max-w-2xl mx-auto px-4 sm:px-6">
+      <div className="mx-auto max-w-3xl">
         {/* Avatar skeleton */}
-        <div className="relative -mt-16 mb-6">
-          <div className="w-32 h-32 lc-skeleton-rounded border-4 border-lc-black" />
+        <div className="relative -mt-12 mb-6 sm:-mt-16">
+          <div className="h-24 w-24 border-4 border-lc-black lc-skeleton-rounded sm:h-32 sm:w-32" />
         </div>
 
         <div
@@ -48,9 +48,9 @@ function ProfileSkeleton({ status }: { status: string }) {
         </div>
 
         {/* Stats skeleton */}
-        <div className="flex gap-1 mb-6">
+        <div className="mb-6 grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="flex-1 py-3 px-4 bg-lc-dark rounded-xl text-center border border-lc-border/50">
+            <div key={i} className="rounded-xl border border-lc-border/50 bg-lc-dark px-4 py-3 text-center">
               <div className="lc-skeleton h-6 w-10 mx-auto mb-1" />
               <div className="lc-skeleton h-3 w-16 mx-auto" />
             </div>
@@ -65,7 +65,7 @@ function ProfileSkeleton({ status }: { status: string }) {
 
         {/* Tabs skeleton */}
         <div className="border-b border-lc-border mb-6">
-          <div className="flex gap-4 pb-3">
+          <div className="flex gap-4 overflow-x-auto pb-3">
             <div className="lc-skeleton h-4 w-12" />
             <div className="lc-skeleton h-4 w-14" />
             <div className="lc-skeleton h-4 w-10" />
@@ -171,8 +171,8 @@ export default function Profile() {
 
   if (!isConnected || !profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center max-w-lg mx-auto px-6">
+      <div className="flex min-h-[100dvh] items-center justify-center px-4 pb-10 pt-28 sm:px-6 sm:pt-20">
+        <div className="mx-auto max-w-lg text-center">
           <div className="w-20 h-20 mx-auto mb-8 bg-lc-green/10 rounded-2xl flex items-center justify-center lc-glow">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -217,9 +217,9 @@ export default function Profile() {
   const profileInitial = getInitials(profile.displayName || profile.name);
 
   return (
-    <div className="min-h-screen pt-16">
+    <div className="min-h-[100dvh] pb-12 pt-28 sm:pt-20 lg:pt-24">
       {/* Banner */}
-      <div className="h-36 sm:h-52 lc-banner-gradient relative overflow-hidden">
+      <div className="relative h-32 overflow-hidden lc-banner-gradient sm:h-44 lg:h-52">
         {profile.banner ? (
           <SkeletonImage
             src={profile.banner}
@@ -236,10 +236,10 @@ export default function Profile() {
       </div>
 
       {/* Profile Header */}
-      <div className="max-w-2xl mx-auto px-4 sm:px-6">
-        <div className="relative -mt-16 mb-6">
+      <div className="mx-auto max-w-3xl px-4 sm:px-6">
+        <div className="relative -mt-12 mb-6 sm:-mt-16">
           {/* Avatar */}
-          <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl border-4 border-lc-black bg-lc-dark overflow-hidden shadow-2xl">
+          <div className="h-24 w-24 overflow-hidden rounded-2xl border-4 border-lc-black bg-lc-dark shadow-2xl sm:h-32 sm:w-32">
             {profile.picture ? (
               <SkeletonImage
                 src={profile.picture}
@@ -314,13 +314,13 @@ export default function Profile() {
         </div>
 
         {/* Stats */}
-        <div className="flex gap-1 mb-6">
+        <div className="mb-6 grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
           {[
             { label: 'Following', value: following.length },
             { label: 'Followers', value: followers.length },
             { label: 'Notes', value: notes.length },
           ].map((stat) => (
-            <div key={stat.label} className="flex-1 py-3 px-4 bg-lc-dark rounded-xl text-center border border-lc-border/50">
+            <div key={stat.label} className="rounded-xl border border-lc-border/50 bg-lc-dark px-4 py-3 text-center">
               <div className="text-xl font-bold text-lc-white">{stat.value}</div>
               <div className="text-xs text-lc-muted mt-0.5 uppercase tracking-wider">{stat.label}</div>
             </div>
@@ -337,12 +337,12 @@ export default function Profile() {
 
         {/* Tabs */}
         <div className="border-b border-lc-border mb-6">
-          <div className="flex gap-0">
+          <div className="flex gap-0 overflow-x-auto">
             {(['posts', 'replies'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`pb-3 px-5 text-sm font-medium transition-all border-b-2 -mb-px ${
+                className={`-mb-px shrink-0 border-b-2 px-5 pb-3 text-sm font-medium transition-all ${
                   activeTab === tab
                     ? 'text-lc-green border-lc-green'
                     : 'text-lc-muted border-transparent hover:text-lc-white hover:border-lc-border'
@@ -379,7 +379,7 @@ export default function Profile() {
             return filteredNotes.map((note) => (
               <div
                 key={note.id}
-                className="lc-card p-5"
+                className="lc-card p-4 sm:p-5"
               >
                 <div className="flex items-center gap-3 mb-3">
                   {profile.picture ? (

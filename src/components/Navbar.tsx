@@ -55,8 +55,8 @@ export default function Navbar() {
   return (
     <>
       <nav className="fixed top-0 left-0 right-0 z-40 bg-lc-black/90 backdrop-blur-xl border-b border-lc-border/50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:h-16 sm:flex-nowrap sm:justify-between sm:px-6 sm:py-0">
+          <Link href="/" className="flex min-w-0 flex-1 items-center gap-3 sm:flex-none">
             <div className="w-8 h-8 bg-lc-green rounded-lg flex items-center justify-center">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -64,12 +64,12 @@ export default function Navbar() {
                 <path d="M2 12l10 5 10-5" />
               </svg>
             </div>
-            <span className="font-bold text-lg text-lc-white tracking-tight">
+            <span className="truncate font-bold text-base tracking-tight text-lc-white sm:text-lg">
               nostr<span className="text-lc-green">.</span>starter
             </span>
           </Link>
 
-          <div className="flex items-center gap-0.5 sm:gap-1">
+          <div className="order-3 flex w-full items-center gap-0.5 overflow-x-auto pb-1 sm:order-none sm:w-auto sm:gap-1 sm:overflow-visible sm:pb-0">
             {navItems.map(({ href, label, icon }) => {
               const isActive =
                 href === '/'
@@ -80,7 +80,7 @@ export default function Navbar() {
                 <Link
                   key={href}
                   href={href}
-                  className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-lg text-sm font-medium transition-all min-h-[44px] sm:min-h-0 ${
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-all min-h-[44px] sm:min-h-0 sm:px-3 sm:py-1.5 ${
                     isActive
                       ? 'bg-lc-border/60 text-lc-green'
                       : 'text-lc-muted hover:text-lc-white hover:bg-lc-border/30'
@@ -93,12 +93,12 @@ export default function Navbar() {
             })}
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="ml-auto flex items-center gap-3 sm:ml-0 sm:gap-4">
             {isConnected && profile ? (
               <div className="relative">
                 <button
                   onClick={() => setShowMenu(!showMenu)}
-                  className="flex items-center gap-2 sm:gap-2.5 py-1.5 pl-1.5 pr-2 sm:pr-4 bg-lc-dark hover:bg-lc-border rounded-full transition-all duration-200 border border-lc-border/50 min-h-[44px] sm:min-h-0"
+                  className="flex min-h-[44px] items-center gap-2 rounded-full border border-lc-border/50 bg-lc-dark py-1.5 pl-1.5 pr-2 transition-all duration-200 hover:bg-lc-border sm:min-h-0 sm:gap-2.5 sm:pr-4"
                 >
                   <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-lc-border flex-shrink-0">
                     {profile.picture ? (
@@ -129,7 +129,7 @@ export default function Navbar() {
                 {showMenu && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-                    <div className="absolute right-0 mt-2 w-56 bg-lc-dark border border-lc-border rounded-xl shadow-2xl overflow-hidden z-50">
+                    <div className="absolute right-0 z-50 mt-2 w-[min(14rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-lc-border bg-lc-dark shadow-2xl">
                       <div className="p-4 border-b border-lc-border">
                         <div className="text-sm text-lc-white font-semibold truncate">
                           {profile.displayName || profile.name}
@@ -159,7 +159,7 @@ export default function Navbar() {
             ) : (
               <button
                 onClick={() => setShowLogin(true)}
-                className="lc-pill lc-pill-primary text-sm flex items-center gap-2 !px-3 sm:!px-6 min-h-[44px] sm:min-h-0"
+                className="lc-pill lc-pill-primary flex min-h-[44px] items-center gap-2 text-sm !px-3 sm:min-h-0 sm:!px-6"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" />

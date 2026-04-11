@@ -18,8 +18,8 @@ interface Badge {
 
 function BadgesSkeleton({ status }: { status: string }) {
   return (
-    <div className="min-h-screen pt-20 sm:pt-24">
-      <div className="max-w-2xl mx-auto px-4 sm:px-6">
+    <div className="min-h-[100dvh] px-4 pb-12 pt-28 sm:px-6 sm:pt-24">
+      <div className="mx-auto max-w-5xl">
         <div className="mb-8 space-y-2">
           <div className="lc-skeleton h-8 w-32" />
           <div className="lc-skeleton h-4 w-64" />
@@ -142,8 +142,8 @@ export default function Badges() {
   }
 
   return (
-    <div className="min-h-screen pt-20 sm:pt-24">
-      <div className="max-w-2xl mx-auto px-4 sm:px-6">
+    <div className="min-h-[100dvh] px-4 pb-12 pt-28 sm:px-6 sm:pt-24">
+      <div className="mx-auto max-w-5xl">
         <div className="mb-6 sm:mb-8">
           <h1 className="text-2xl sm:text-3xl font-extrabold text-lc-white tracking-tight">Badges</h1>
           <p className="text-lc-muted mt-1">Nostr badges awarded to your profile (NIP-58)</p>
@@ -160,12 +160,12 @@ export default function Badges() {
             <p className="text-lc-muted/60 text-xs">Badges you receive from the Nostr network will appear here</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-12">
+          <div className="grid grid-cols-2 gap-3 pb-12 md:grid-cols-3 xl:grid-cols-4">
             {badges.map((badge) => {
               const badgeImage = normalizeMediaUrl(badge.thumb ?? badge.image);
 
               return (
-                <div key={badge.id} className="lc-card p-4 flex flex-col items-center text-center">
+                <div key={badge.id} className="lc-card flex flex-col items-center p-4 text-center sm:p-5">
                   {badgeImage ? (
                   <div className="w-20 h-20 rounded-xl overflow-hidden mb-3">
                     <SkeletonImage

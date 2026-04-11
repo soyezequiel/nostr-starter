@@ -6628,3 +6628,405 @@ main {
     text-align: left;
   }
 }
+
+/* Responsive hardening: keep the viewport dominant while secondary chrome
+   progressively collapses from desktop overlays into tablet/mobile sheets. */
+.workspace-shell {
+  --graph-gutter: clamp(0.75rem, 1.8vw, 1.25rem);
+  --graph-top-offset: max(var(--graph-gutter), env(safe-area-inset-top));
+  --graph-bottom-offset: max(var(--graph-gutter), env(safe-area-inset-bottom));
+  --graph-control-bar-height: clamp(5rem, 10vw, 6rem);
+  --graph-stack-offset: calc(var(--graph-bottom-offset) + var(--graph-control-bar-height));
+}
+
+.app-shell--immersive,
+.workspace-shell,
+.graph-panel,
+.graph-panel__canvas-frame {
+  min-height: 100dvh;
+}
+
+.graph-panel__canvas-frame {
+  min-height: clamp(34rem, calc(100dvh - 1.5rem), 56rem);
+  border-radius: clamp(1.15rem, 2vw, 2rem);
+}
+
+.workspace-topbar {
+  top: var(--graph-top-offset);
+  right: var(--graph-gutter);
+  left: auto;
+  width: auto;
+  padding: 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.72);
+  box-shadow: 0 18px 44px rgba(2, 6, 23, 0.18);
+}
+
+.workspace-topbar__actions {
+  gap: 0.45rem;
+}
+
+.workspace-icon-btn {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.root-entry-sheet {
+  top: calc(var(--graph-top-offset) + 3.6rem);
+  right: var(--graph-gutter);
+  width: min(32rem, calc(100vw - (var(--graph-gutter) + var(--graph-gutter))));
+  max-height: min(38rem, calc(100dvh - 7rem));
+}
+
+.root-entry-sheet--chooser,
+.root-entry-sheet--inline.root-entry-sheet--chooser {
+  width: min(40rem, calc(100vw - (var(--graph-gutter) + var(--graph-gutter))));
+}
+
+.root-entry-sheet--inline {
+  top: clamp(5.5rem, 14vh, 8rem);
+  bottom: auto;
+  transform: translateX(-50%);
+  max-height: min(40rem, calc(100dvh - 8rem));
+}
+
+.root-entry-sheet__body,
+.saved-roots-panel,
+.saved-roots-grid {
+  min-width: 0;
+}
+
+.settings-drawer {
+  top: var(--graph-top-offset);
+  right: var(--graph-gutter);
+  bottom: var(--graph-bottom-offset);
+  left: auto;
+  width: min(48rem, calc(100vw - (var(--graph-gutter) + var(--graph-gutter))));
+}
+
+.settings-drawer__layout {
+  min-height: 0;
+}
+
+.settings-drawer__body {
+  min-width: 0;
+}
+
+.graph-panel__control-bar {
+  left: 50%;
+  right: auto;
+  bottom: var(--graph-bottom-offset);
+  width: min(calc(100% - (var(--graph-gutter) + var(--graph-gutter))), 72rem);
+  display: grid;
+  grid-template-columns: minmax(11.5rem, 16rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 0.8rem 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 1.35rem;
+  transform: translateX(-50%);
+}
+
+.graph-panel__control-summary {
+  max-width: none;
+}
+
+.graph-panel__control-actions {
+  min-width: 0;
+  justify-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem;
+}
+
+.graph-panel__control-group {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.graph-panel__control-search-slot {
+  grid-column: 2;
+}
+
+.graph-panel__keyword-search {
+  min-width: min(20rem, 100%);
+  flex: 1 1 18rem;
+}
+
+.graph-panel__control-btn,
+.settings-primary-btn,
+.settings-secondary-btn,
+.relay-config-panel__actions button,
+.saved-root-card__confirm-btn {
+  min-height: 2.75rem;
+}
+
+.graph-panel__stream-status {
+  left: var(--graph-gutter) !important;
+  right: auto !important;
+  bottom: calc(var(--graph-stack-offset) + 1rem) !important;
+  width: min(31rem, calc(100% - (var(--graph-gutter) + var(--graph-gutter)))) !important;
+}
+
+.graph-panel__status-note {
+  right: var(--graph-gutter);
+  bottom: calc(var(--graph-stack-offset) + 1rem);
+  max-width: min(22rem, calc(100% - (var(--graph-gutter) + var(--graph-gutter))));
+  justify-items: start;
+  text-align: left;
+}
+
+.graph-panel__overlay-stack {
+  left: var(--graph-gutter);
+  top: calc(var(--graph-top-offset) + 3.8rem);
+  width: min(24rem, calc(100% - (var(--graph-gutter) + var(--graph-gutter))));
+}
+
+.node-detail-panel {
+  top: calc(var(--graph-top-offset) + 3.8rem);
+  right: var(--graph-gutter);
+  width: min(24rem, calc(100vw - (var(--graph-gutter) + var(--graph-gutter))));
+  max-width: calc(100vw - (var(--graph-gutter) + var(--graph-gutter)));
+  max-height: min(calc(100dvh - 7rem), 38rem);
+}
+
+.node-detail-panel__header,
+.node-detail-panel__hero,
+.node-detail-panel__grid,
+.node-detail-panel__identity,
+.pathfinding-panel__metrics {
+  min-width: 0;
+}
+
+@media (max-width: 1024px) {
+  .workspace-shell {
+    --graph-control-bar-height: 9.75rem;
+  }
+
+  .graph-panel__canvas-frame {
+    min-height: 100dvh;
+  }
+
+  .root-entry-sheet,
+  .settings-drawer {
+    left: var(--graph-gutter);
+    right: var(--graph-gutter);
+    width: auto;
+    max-width: none;
+  }
+
+  .settings-drawer {
+    height: min(86dvh, 52rem);
+  }
+
+  .graph-panel__control-bar {
+    width: min(calc(100% - (var(--graph-gutter) + var(--graph-gutter))), 44rem);
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+  }
+
+  .graph-panel__control-summary {
+    padding-right: 0;
+    padding-bottom: 0.65rem;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .graph-panel__control-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .graph-panel__control-group {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+    scrollbar-width: none;
+  }
+
+  .graph-panel__control-group::-webkit-scrollbar {
+    display: none;
+  }
+
+  .graph-panel__control-group--aux {
+    padding-left: 0;
+  }
+
+  .graph-panel__control-group--aux::before {
+    display: none;
+  }
+
+  .graph-panel__control-search-slot {
+    grid-column: 1;
+  }
+
+  .graph-panel__keyword-search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .graph-panel__stream-status {
+    bottom: calc(var(--graph-stack-offset) + 1rem) !important;
+  }
+
+  .graph-panel__status-note {
+    left: var(--graph-gutter);
+    right: var(--graph-gutter);
+    bottom: calc(var(--graph-stack-offset) + 6.5rem);
+    max-width: none;
+  }
+
+  .node-detail-panel,
+  .pathfinding-panel {
+    top: auto;
+    left: var(--graph-gutter);
+    right: var(--graph-gutter);
+    bottom: calc(var(--graph-stack-offset) + 0.75rem);
+    width: auto;
+    max-width: none;
+    max-height: min(62dvh, 34rem);
+    border-radius: 1.3rem;
+  }
+
+  .root-entry-sheet--inline {
+    top: clamp(5.5rem, 12vh, 7.5rem);
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    width: min(40rem, calc(100vw - (var(--graph-gutter) + var(--graph-gutter))));
+    max-width: calc(100vw - (var(--graph-gutter) + var(--graph-gutter)));
+    max-height: min(38rem, calc(100dvh - 8rem));
+    transform: translateX(-50%);
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-shell {
+    --graph-gutter: 0.75rem;
+    --graph-control-bar-height: 11.5rem;
+  }
+
+  .graph-panel__canvas-frame {
+    border-radius: 1rem;
+  }
+
+  .workspace-topbar {
+    left: var(--graph-gutter);
+    right: var(--graph-gutter);
+    width: auto;
+    transform: none;
+  }
+
+  .workspace-topbar__actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .workspace-icon-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 2.85rem;
+    border-radius: 1rem;
+  }
+
+  .graph-panel__control-bar {
+    left: var(--graph-gutter);
+    right: var(--graph-gutter);
+    width: auto;
+    transform: none;
+    padding: 0.7rem;
+  }
+
+  .graph-panel__control-summary-copy {
+    font-size: 0.72rem;
+  }
+
+  .graph-panel__control-group {
+    gap: 0.5rem;
+  }
+
+  .graph-panel__control-btn {
+    min-height: 2.85rem;
+    padding-inline: 0.85rem;
+    flex: 0 0 auto;
+  }
+
+  .graph-panel__stream-status {
+    right: var(--graph-gutter) !important;
+    width: auto !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.35rem 0.6rem !important;
+  }
+
+  .graph-panel__stream-meta,
+  .graph-panel__progress-summary {
+    text-align: left !important;
+    white-space: normal;
+  }
+
+  .graph-panel__progress-row {
+    grid-template-columns: 1fr;
+  }
+
+  .graph-panel__status-note {
+    bottom: calc(var(--graph-stack-offset) + 7rem);
+    font-size: 0.62rem;
+  }
+
+  .node-detail-panel,
+  .pathfinding-panel {
+    max-height: min(60dvh, 32rem);
+    padding: 0.95rem;
+  }
+
+  .node-detail-panel__header,
+  .node-detail-panel__actions,
+  .pathfinding-panel__actions,
+  .pathfinding-panel__metrics {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-panel__selection-caption {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .root-entry-sheet,
+  .settings-drawer {
+    padding-inline: 0.82rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .workspace-shell {
+    --graph-control-bar-height: 12.4rem;
+  }
+
+  .graph-panel__canvas-frame {
+    border-radius: 0.9rem;
+  }
+
+  .graph-panel__control-btn {
+    min-height: 2.75rem;
+    font-size: 0.68rem;
+  }
+
+  .graph-panel__stream-status {
+    bottom: calc(var(--graph-stack-offset) + 0.75rem) !important;
+    padding: 0.68rem 0.78rem !important;
+  }
+
+  .graph-panel__status-note {
+    bottom: calc(var(--graph-stack-offset) + 7.35rem);
+  }
+
+  .pathfinding-panel__path-step {
+    grid-template-columns: 1fr;
+  }
+}
