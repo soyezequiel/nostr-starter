@@ -6435,3 +6435,73 @@ main {
     min-height: 2.6rem;
   }
 }
+
+/* Final override: keep user-facing progress visible across every viewport. */
+.graph-panel__stream-status {
+  position: absolute !important;
+  left: max(1rem, calc((100vw - 68rem) / 2)) !important;
+  right: auto !important;
+  bottom: 7.45rem !important;
+  z-index: 40 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  width: min(29rem, calc(100vw - 2rem)) !important;
+  max-width: none !important;
+  gap: 0.18rem 0.7rem !important;
+  padding: 0.72rem 0.85rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  background: rgba(7, 12, 24, 0.76) !important;
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.22) !important;
+  backdrop-filter: blur(18px) !important;
+  pointer-events: none !important;
+  transform: none !important;
+}
+
+.graph-panel__stream-eyebrow {
+  grid-column: 1 / -1;
+  color: rgba(180, 249, 83, 0.92);
+  font:
+    700 0.56rem/1 ui-monospace,
+    'SFMono-Regular',
+    monospace;
+  text-transform: uppercase;
+}
+
+.graph-panel__stream-label {
+  color: #f8fafc !important;
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+}
+
+.graph-panel__stream-meta {
+  display: block !important;
+  color: rgba(226, 232, 240, 0.7) !important;
+  font-size: 0.72rem !important;
+  line-height: 1.2 !important;
+  text-align: right !important;
+}
+
+.graph-panel__stream-detail {
+  grid-column: 1 / -1;
+  display: block !important;
+  color: rgba(226, 232, 240, 0.7) !important;
+  font-size: 0.74rem !important;
+  line-height: 1.35 !important;
+}
+
+@media (max-width: 720px) {
+  .graph-panel__stream-status {
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    bottom: 9rem !important;
+    width: auto !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .graph-panel__stream-meta {
+    text-align: left !important;
+  }
+}

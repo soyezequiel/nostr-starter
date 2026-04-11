@@ -14,11 +14,17 @@ export default function DevCacheButton() {
   const shouldShow = IS_DEVELOPMENT_BUILD || isLocalHost
 
   useEffect(() => {
-    setIsLocalHost(
-      window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1' ||
-        window.location.hostname === '0.0.0.0',
-    )
+    const timeoutId = window.setTimeout(() => {
+      setIsLocalHost(
+        window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1' ||
+          window.location.hostname === '0.0.0.0',
+      )
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
   }, [])
 
   const handleClearPageCache = useCallback(async () => {
@@ -70,26 +76,70 @@ export default function DevCacheButton() {
       }}
       style={{
         position: 'fixed',
-        top: '28px',
-        right: '128px',
+        top: '18px',
+        left: '18px',
         zIndex: 2147483647,
-        minHeight: '44px',
-        padding: '0 16px',
-        border: '1px solid rgba(248, 113, 113, 0.5)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '10px',
+        minHeight: '46px',
+        padding: '0 14px 0 12px',
+        border: '1px solid rgba(255, 255, 255, 0.08)',
         borderRadius: '8px',
-        background: 'rgba(127, 29, 29, 0.96)',
-        boxShadow: '0 18px 42px rgba(0, 0, 0, 0.42)',
-        color: '#fee2e2',
+        background: 'rgba(7, 12, 24, 0.72)',
+        boxShadow: '0 14px 34px rgba(2, 6, 23, 0.26)',
+        backdropFilter: 'blur(16px)',
+        color: '#f8fafc',
         cursor: isRunning ? 'not-allowed' : 'pointer',
-        fontSize: '13px',
-        fontWeight: 800,
-        letterSpacing: '0.02em',
         opacity: isRunning ? 0.62 : 1,
       }}
       title={message ?? 'Borrar cache local de desarrollo'}
       type="button"
     >
-      {isRunning ? 'DEV: borrando...' : 'DEV: borrar cache'}
+      <span
+        aria-hidden="true"
+        style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '999px',
+          background: isRunning ? '#e3b56c' : '#f06a67',
+          boxShadow: isRunning
+            ? '0 0 16px rgba(227, 181, 108, 0.5)'
+            : '0 0 16px rgba(240, 106, 103, 0.45)',
+          flex: '0 0 auto',
+        }}
+      />
+      <span
+        style={{
+          display: 'grid',
+          gap: '2px',
+          textAlign: 'left',
+        }}
+      >
+        <span
+          style={{
+            color: 'rgba(148, 163, 184, 0.88)',
+            fontSize: '10px',
+            fontWeight: 800,
+            letterSpacing: '0.12em',
+            lineHeight: 1,
+            textTransform: 'uppercase',
+          }}
+        >
+          Dev cache
+        </span>
+        <span
+          style={{
+            color: '#f8fafc',
+            fontSize: '13px',
+            fontWeight: 800,
+            letterSpacing: '0.01em',
+            lineHeight: 1.15,
+          }}
+        >
+          {isRunning ? 'Limpiando...' : 'Limpiar local'}
+        </span>
+      </span>
     </button>
   )
 }
