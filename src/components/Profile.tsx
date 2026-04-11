@@ -14,7 +14,7 @@ import { getInitials } from '@/lib/media';
 import AvatarFallback from '@/components/AvatarFallback';
 import SkeletonImage from '@/components/SkeletonImage';
 
-function ProfileSkeleton() {
+function ProfileSkeleton({ status }: { status: string }) {
   return (
     <div className="min-h-screen pt-16">
       {/* Banner skeleton */}
@@ -24,6 +24,15 @@ function ProfileSkeleton() {
         {/* Avatar skeleton */}
         <div className="relative -mt-16 mb-6">
           <div className="w-32 h-32 lc-skeleton-rounded border-4 border-lc-black" />
+        </div>
+
+        <div
+          aria-live="polite"
+          className="mb-5 rounded-lg border border-lc-green/20 bg-lc-green/10 px-4 py-3 text-sm text-lc-white"
+          role="status"
+        >
+          <div className="font-semibold text-lc-green">Cargando perfil conectado</div>
+          <div className="mt-1 text-lc-muted">{status}</div>
         </div>
 
         {/* Name skeleton */}
@@ -93,6 +102,7 @@ export default function Profile() {
   const [following, setFollowing] = useState<string[]>([]);
   const [notes, setNotes] = useState<NDKEvent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('Preparando perfil...');
   const [activeTab, setActiveTab] = useState<'posts' | 'replies'>('posts');
 
   useEffect(() => {
@@ -102,23 +112,48 @@ export default function Profile() {
 
     const loadProfileData = async () => {
       setLoading(true);
+      setLoadingStatus('Conectando NDK y preparando relays del perfil...');
       try {
         await connectNDK();
 
+        if (cancelled) return;
+
+        setLoadingStatus('Consultando followers, following y notas recientes en paralelo...');
+        const followersRequest = fetchFollowers(profile.pubkey).then((result) => {
+          if (!cancelled) {
+            setLoadingStatus(`Followers cargados (${result.length}). Esperando follows y notas...`);
+          }
+          return result;
+        });
+        const followingRequest = fetchFollowing(profile.pubkey).then((result) => {
+          if (!cancelled) {
+            setLoadingStatus(`Following cargado (${result.length}). Terminando timeline de notas...`);
+          }
+          return result;
+        });
+        const notesRequest = fetchUserNotes(profile.pubkey, 20).then((result) => {
+          if (!cancelled) {
+            setLoadingStatus(`Notas recientes cargadas (${result.length}). Normalizando la vista...`);
+          }
+          return result;
+        });
+
         const [followersData, followingData, notesData] = await Promise.all([
-          fetchFollowers(profile.pubkey),
-          fetchFollowing(profile.pubkey),
-          fetchUserNotes(profile.pubkey, 20),
+          followersRequest,
+          followingRequest,
+          notesRequest,
         ]);
 
         if (cancelled) return;
 
+        setLoadingStatus('Aplicando metadata, contadores y timeline al perfil...');
         setFollowers(followersData);
         setFollowing(followingData);
         setNotes(notesData);
       } catch (error) {
         if (!cancelled) {
           console.error('Error loading profile data:', error);
+          setLoadingStatus('La carga termino con cobertura parcial o error de relay.');
         }
       } finally {
         if (!cancelled) {
@@ -176,7 +211,7 @@ export default function Profile() {
   }
 
   if (loading) {
-    return <ProfileSkeleton />;
+    return <ProfileSkeleton status={loadingStatus} />;
   }
 
   const profileInitial = getInitials(profile.displayName || profile.name);

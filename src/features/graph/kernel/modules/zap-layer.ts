@@ -149,6 +149,15 @@ export function createZapLayerModule(
 
       const liveErrorMessage = liveResult.error?.message ?? null
       const mergedReceipts = mergeRelayEventsById(liveResult.events)
+      state.setZapLayerState({
+        status: mergedReceipts.length > 0 ? 'loading' : state.zapLayer.status,
+        loadedFrom: mergedReceipts.length > 0 ? 'live' : state.zapLayer.loadedFrom,
+        message:
+          mergedReceipts.length > 0
+            ? `Recibidos ${mergedReceipts.length} eventos de zap. Decodificando recibos en worker...`
+            : 'Consulta live terminada sin recibos nuevos. Revisando cache local...',
+        lastUpdatedAt: ctx.now(),
+      })
       if (mergedReceipts.length > 0) {
         await Promise.all(
           mergedReceipts.map((envelope) =>
@@ -167,6 +176,13 @@ export function createZapLayerModule(
         }
 
         skippedReceipts = decodeResult.skippedReceipts.length
+        state.setZapLayerState({
+          status: 'loading',
+          loadedFrom: 'live',
+          skippedReceipts,
+          message: `Decodificados ${decodeResult.zapEdges.length} edges de zap. Persistiendo evidencia util...`,
+          lastUpdatedAt: ctx.now(),
+        })
         await collaborators.persistence.persistDecodedZapEdges(
           mergedReceipts,
           decodeResult.zapEdges,

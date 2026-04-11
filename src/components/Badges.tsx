@@ -16,13 +16,21 @@ interface Badge {
   creator: string;
 }
 
-function BadgesSkeleton() {
+function BadgesSkeleton({ status }: { status: string }) {
   return (
     <div className="min-h-screen pt-24">
       <div className="max-w-2xl mx-auto px-6">
         <div className="mb-8 space-y-2">
           <div className="lc-skeleton h-8 w-32" />
           <div className="lc-skeleton h-4 w-64" />
+        </div>
+        <div
+          aria-live="polite"
+          className="mb-5 rounded-lg border border-lc-green/20 bg-lc-green/10 px-4 py-3 text-sm text-lc-white"
+          role="status"
+        >
+          <div className="font-semibold text-lc-green">Cargando badges NIP-58</div>
+          <div className="mt-1 text-lc-muted">{status}</div>
         </div>
         <div className="grid grid-cols-2 gap-3 pb-12">
           {[1, 2, 3, 4].map((i) => (
@@ -42,6 +50,7 @@ export default function Badges() {
   const { isConnected, profile } = useAuthStore();
   const [badges, setBadges] = useState<Badge[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('Preparando consulta de badges...');
 
   useEffect(() => {
     if (!isConnected || !profile) return;
@@ -50,27 +59,37 @@ export default function Badges() {
 
     const loadBadges = async () => {
       setLoading(true);
+      setLoadingStatus('Conectando NDK para leer awards kind:8...');
 
       try {
         await connectNDK();
         const ndk = getNDK();
 
+        if (cancelled) return;
+
+        setLoadingStatus('Buscando awards kind:8 recibidos por tu pubkey...');
         const awardEvents = await Promise.race([
           ndk.fetchEvents({ kinds: [8], '#p': [profile.pubkey], limit: 50 }),
           new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 10000)),
         ]);
+
+        if (cancelled) return;
 
         const badgeDefIds = new Set<string>();
         awardEvents.forEach((event: NDKEvent) => {
           const aTag = event.tags.find(t => t[0] === 'a' && t[1]?.startsWith('30009:'));
           if (aTag) badgeDefIds.add(aTag[1]);
         });
+        setLoadingStatus(`Awards encontrados: ${awardEvents.size}. Resolviendo ${badgeDefIds.size} definiciones kind:30009...`);
 
         const results = await Promise.allSettled(
-          Array.from(badgeDefIds).map(async (defId) => {
+          Array.from(badgeDefIds).map(async (defId, index) => {
             const [, pubkey, dTag] = defId.split(':');
             if (!pubkey || !dTag) return null;
 
+            if (!cancelled) {
+              setLoadingStatus(`Resolviendo definicion ${index + 1}/${badgeDefIds.size}: ${dTag}`);
+            }
             const defEvents = await Promise.race([
               ndk.fetchEvents({ kinds: [30009], authors: [pubkey], '#d': [dTag], limit: 1 }),
               new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 5000)),
@@ -94,11 +113,13 @@ export default function Badges() {
           .filter((b): b is Badge => b !== null);
 
         if (!cancelled) {
+          setLoadingStatus(`Normalizando media y preparando ${parsedBadges.length} badges visibles...`);
           setBadges(parsedBadges);
         }
       } catch (error) {
         if (!cancelled) {
           console.error('Error loading badges:', error);
+          setLoadingStatus('La carga de badges termino con error o cobertura parcial.');
         }
       } finally {
         if (!cancelled) {
@@ -117,7 +138,7 @@ export default function Badges() {
   if (!isConnected || !profile) return null;
 
   if (loading) {
-    return <BadgesSkeleton />;
+    return <BadgesSkeleton status={loadingStatus} />;
   }
 
   return (

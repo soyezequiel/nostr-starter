@@ -18,6 +18,7 @@ export function createExportModule(ctx: KernelContext) {
       | 'reset',
     patch: {
       percent?: number
+      currentPubkey?: string | null
       errorMessage?: string | null
     } = {},
   ): void {
@@ -47,14 +48,22 @@ export function createExportModule(ctx: KernelContext) {
     }
 
     if (Object.keys(state.nodes).length === 0) {
-      setExportPhase('start', { percent: 0, errorMessage: null })
+      setExportPhase('start', {
+        percent: 0,
+        currentPubkey: null,
+        errorMessage: null,
+      })
       setExportPhase('fail', {
         errorMessage: 'No hay nodos descubiertos para exportar.',
       })
       throw new Error('No hay nodos descubiertos para exportar.')
     }
 
-    setExportPhase('start', { percent: 0, errorMessage: null })
+    setExportPhase('start', {
+      percent: 0,
+      currentPubkey: state.rootNodePubkey,
+      errorMessage: null,
+    })
 
     try {
       const [{ freezeSnapshot }, { buildMultipartArchive }, { downloadBlob }] =
@@ -69,9 +78,18 @@ export function createExportModule(ctx: KernelContext) {
           now: ctx.now,
         })
 
-      setExportPhase('freeze-done', { percent: 2 })
-      setExportPhase('authored-done', { percent: 5 })
-      setExportPhase('inbound-done', { percent: 10 })
+      setExportPhase('freeze-done', {
+        percent: 2,
+        currentPubkey: state.rootNodePubkey,
+      })
+      setExportPhase('authored-done', {
+        percent: 5,
+        currentPubkey: state.rootNodePubkey,
+      })
+      setExportPhase('inbound-done', {
+        percent: 10,
+        currentPubkey: state.rootNodePubkey,
+      })
 
       const result = await buildMultipartArchive(snapshot, {
         onPartBuilt: (partNumber, totalParts) => {
@@ -84,7 +102,11 @@ export function createExportModule(ctx: KernelContext) {
         downloadBlob(part.blob, part.filename)
       }
 
-      setExportPhase('complete', { percent: 100, errorMessage: null })
+      setExportPhase('complete', {
+        percent: 100,
+        currentPubkey: null,
+        errorMessage: null,
+      })
       ctx.emitter.emit({
         type: 'export-completed',
         captureId: result.captureId,
@@ -96,7 +118,7 @@ export function createExportModule(ctx: KernelContext) {
         error instanceof Error
           ? error.message
           : 'Error desconocido durante el export.'
-      setExportPhase('fail', { errorMessage: message })
+      setExportPhase('fail', { currentPubkey: null, errorMessage: message })
       throw error
     }
   }

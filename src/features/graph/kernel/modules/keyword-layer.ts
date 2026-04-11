@@ -368,6 +368,12 @@ export function createKeywordLayerModule(
         batches,
         KEYWORD_BATCH_CONCURRENCY,
         async (batch) => {
+          const batchNumber = batches.indexOf(batch) + 1
+          state.setKeywordLayerState({
+            status: 'loading',
+            message: `Consultando notas recientes: batch ${batchNumber}/${batches.length} con ${batch.length} autores...`,
+            lastUpdatedAt: ctx.now(),
+          })
           const batchResult = await collectRelayEvents(adapter, [
             {
               authors: batch,
@@ -388,6 +394,12 @@ export function createKeywordLayerModule(
 
           if (batchResult.error) {
             failedBatchCount += 1
+            state.setKeywordLayerState({
+              status: cachedSummary.extractCount > 0 ? 'enabled' : 'loading',
+              isPartial: true,
+              message: `Batch ${batchNumber}/${batches.length} sin cobertura util. Manteniendo corpus parcial mientras siguen otros batches...`,
+              lastUpdatedAt: ctx.now(),
+            })
             return
           }
 
@@ -410,6 +422,18 @@ export function createKeywordLayerModule(
               liveExtractsByPubkey.set(pubkey, records)
             }),
           )
+          const liveSummary = summarizeKeywordCorpus(
+            flattenNoteExtractRecords(liveExtractsByPubkey),
+          )
+          state.setKeywordLayerState({
+            status: liveSummary.extractCount > 0 ? 'enabled' : 'loading',
+            loadedFrom: liveSummary.extractCount > 0 ? 'live' : state.keywordLayer.loadedFrom,
+            isPartial: failedBatchCount > 0,
+            message: `Batch ${batchNumber}/${batches.length} procesado. ${liveSummary.extractCount} extractos live listos hasta ahora.`,
+            corpusNodeCount: liveSummary.corpusNodeCount,
+            extractCount: liveSummary.extractCount,
+            lastUpdatedAt: ctx.now(),
+          })
         },
       )
 

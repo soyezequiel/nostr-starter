@@ -11,13 +11,13 @@ export const DEFAULT_SESSION_RELAY_URLS = [
 export const MAX_SESSION_RELAYS = 8
 
 export const ROOT_LOADING_MESSAGE =
-  'Cargando vecindario descubierto del root...'
+  'Preparando relays, cache local y contact list kind:3 del root...'
 export const COVERAGE_RECOVERY_MESSAGE =
   'Cambia relays o prueba una pubkey curada para recuperar cobertura.'
 export const ZAP_LAYER_LOADING_MESSAGE =
-  'Buscando recibos de zap para los nodos explorados...'
+  'Consultando recibos de zap para los nodos explorados y decodificando edges...'
 export const KEYWORD_LAYER_LOADING_MESSAGE =
-  'Buscando notas recientes para la capa de intereses...'
+  'Consultando notas recientes por batches para construir la capa de intereses...'
 export const KEYWORD_LAYER_EMPTY_MESSAGE =
   'Corpus vacÃ­o, no hay notas descubiertas'
 export const MAX_ZAP_RECEIPTS = 500
@@ -38,7 +38,7 @@ export const NODE_EXPAND_STRAGGLER_GRACE_MS = 150
 export const NODE_EXPAND_INBOUND_QUERY_LIMIT = 250
 export const NODE_EXPAND_INBOUND_PARSE_CONCURRENCY = 8
 export const DISCOVERED_GRAPH_ANALYSIS_LOADING_MESSAGE =
-  'Analizando grupos detectados en el vecindario descubierto...'
+  'Calculando comunidades, lideres y puentes sobre el vecindario descubierto...'
 export const NODE_PROFILE_HYDRATION_BATCH_SIZE = 150
 export const NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY = 3
 export const NODE_PROFILE_PERSIST_CONCURRENCY = 8

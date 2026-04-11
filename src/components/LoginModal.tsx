@@ -31,10 +31,12 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const [waitingForScan, setWaitingForScan] = useState(false);
   const [copied, setCopied] = useState(false);
   const [loadingMethod, setLoadingMethod] = useState<LoginMethod | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const sessionRef = useRef<NostrConnectSession | null>(null);
   const { setUser, setLoading, setError, isLoading, error } = useAuthStore();
 
   const handleBunkerConnected = useEffectEvent((user: NDKUser) => {
+    setStatusMessage('Signer conectado. Cargando perfil publico asociado...');
     setUser(user, 'bunker');
     onClose();
   });
@@ -63,6 +65,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
       try {
         setConnectUri('');
         setWaitingForScan(false);
+        setStatusMessage('Creando sesion NIP-46 y preparando URI nostrconnect...');
 
         const session = await createNostrConnectSession();
         if (cancelled) {
@@ -72,6 +75,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         sessionRef.current = session;
         setConnectUri(session.uri);
         setWaitingForScan(true);
+        setStatusMessage('QR listo. Esperando aprobacion del signer remoto...');
 
         // Wait for the remote signer to connect
         const user = await session.waitForConnection();
@@ -101,6 +105,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
       setConnectUri('');
       setWaitingForScan(false);
       setCopied(false);
+      setStatusMessage(null);
       sessionRef.current?.cancel();
       sessionRef.current = null;
     }
@@ -131,6 +136,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     setLoading(true);
     setLoadingMethod(loginMethod);
     setError(null);
+    setStatusMessage('Conectando NDK y verificando metodo de autenticacion...');
 
     try {
       await connectNDK();
@@ -142,23 +148,27 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
           if (!window.nostr) {
             throw new Error('Nostr extension not detected. Make sure Alby or nos2x is installed and tap the extension icon.');
           }
+          setStatusMessage('Solicitando pubkey a la extension NIP-07...');
           user = await loginWithExtension();
           break;
         case 'nsec':
           if (!nsecInput.trim()) {
             throw new Error('Please enter your nsec');
           }
+          setStatusMessage('Decodificando nsec local y derivando identidad publica...');
           user = await loginWithNsec(nsecInput);
           break;
         case 'bunker':
           if (!bunkerInput.trim()) {
             throw new Error('Please enter your bunker URL');
           }
+          setStatusMessage('Conectando con bunker NIP-46 y esperando autorizacion...');
           user = await loginWithBunker(bunkerInput);
           break;
       }
 
       if (user) {
+        setStatusMessage('Identidad conectada. Sincronizando estado de sesion...');
         setUser(user, loginMethod);
         onClose();
       }
@@ -168,6 +178,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     } finally {
       setLoading(false);
       setLoadingMethod(null);
+      setStatusMessage(null);
     }
   };
 
@@ -176,6 +187,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     setConnectUri('');
     setWaitingForScan(false);
     setCopied(false);
+    setStatusMessage(null);
     sessionRef.current?.cancel();
     sessionRef.current = null;
     setError(null);
@@ -210,6 +222,17 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
               <line x1="9" y1="9" x2="15" y2="15"/>
             </svg>
             {error}
+          </div>
+        )}
+
+        {statusMessage && (
+          <div
+            aria-live="polite"
+            className="mb-6 p-3 bg-lc-green/10 border border-lc-green/20 rounded-lg text-lc-white text-sm"
+            role="status"
+          >
+            <div className="font-semibold text-lc-green">Proceso en curso</div>
+            <div className="mt-1 text-lc-muted">{statusMessage}</div>
           </div>
         )}
 

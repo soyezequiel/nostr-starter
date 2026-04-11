@@ -210,6 +210,9 @@ export function createRootLoaderModule(
       detachRelayHealth,
     }
     try {
+      ctx.store.getState().setRootLoadState({
+        message: `Consultando contact list kind:3 y followers inbound en ${relayUrls.length} relays activos...`,
+      })
       const [contactListResult, inboundFollowerResult] = await Promise.all([
         collectRelayEvents(adapter, [
           {
@@ -228,6 +231,9 @@ export function createRootLoaderModule(
       if (isStaleLoad(loadId)) {
         return finalize(rootPubkey, createCancelledResult(relayUrls))
       }
+      ctx.store.getState().setRootLoadState({
+        message: 'Correlacionando followers inbound con evidencia recibida de relays...',
+      })
       let inboundFollowerEvidence = await collectInboundFollowerEvidence(
         ctx.eventsWorker,
         selectLatestReplaceableEventsByPubkey(inboundFollowerResult.events),
@@ -285,6 +291,9 @@ export function createRootLoaderModule(
         }
         return finalize(rootPubkey, fallbackResult)
       }
+      ctx.store.getState().setRootLoadState({
+        message: 'Parseando contact list kind:3 en worker antes de actualizar el grafo...',
+      })
       const parsedContactList = await ctx.eventsWorker.invoke(
         'PARSE_CONTACT_LIST',
         {
@@ -296,6 +305,10 @@ export function createRootLoaderModule(
       }
       let targetedReciprocalFollowerPartial = false
       try {
+        ctx.store.getState().setRootLoadState({
+          message:
+            'Buscando reciprocidad entre follows del root y followers inbound...',
+        })
         const targetedReciprocalFollowerEvidence =
           await collectTargetedReciprocalFollowerEvidence({
             adapter,
@@ -317,12 +330,19 @@ export function createRootLoaderModule(
       if (isStaleLoad(loadId)) {
         return finalize(rootPubkey, createCancelledResult(relayUrls))
       }
+      ctx.store.getState().setRootLoadState({
+        message: 'Persistiendo contact list y preparando merge del vecindario...',
+      })
       await collaborators.persistence.persistContactListEvent(
         latestContactListEvent,
         parsedContactList,
       )
       const preservedExpandedNeighborhood =
         captureExpandedNeighborhood(rootPubkey)
+      ctx.store.getState().setRootLoadState({
+        message:
+          'Integrando nodos, follows y followers inbound sin perder expansiones visibles...',
+      })
       const replacementResult = replaceRootGraph(
         rootPubkey,
         parsedContactList.followPubkeys,
@@ -339,6 +359,10 @@ export function createRootLoaderModule(
         parsedContactList.relayHints,
         cachedSnapshot.relayHints,
       )
+      ctx.store.getState().setRootLoadState({
+        message:
+          'Grafo base visible. Hidratando perfiles, zaps e intereses en paralelo...',
+      })
       void collaborators.profileHydration.hydrateNodeProfiles(
         Array.from(
           new Set([

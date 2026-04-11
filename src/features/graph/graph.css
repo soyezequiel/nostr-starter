@@ -2641,6 +2641,12 @@ main {
   color: #151515;
 }
 
+.settings-primary-btn:disabled,
+.settings-secondary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 .settings-pill--accent {
   background: rgba(227, 181, 108, 0.18);
   color: #f3d9ad;
@@ -4438,9 +4444,13 @@ main {
 
 .graph-panel__stream-status {
   left: 1.25rem;
-  bottom: 1.25rem;
-  padding: 0.72rem 0.9rem;
-  border-radius: 999px;
+  bottom: 8.75rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.22rem 0.65rem;
+  width: min(32rem, calc(100% - 2.5rem));
+  padding: 0.78rem 0.95rem;
+  border-radius: 8px;
   background: rgba(7, 12, 24, 0.74);
   border: 1px solid rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(18px);
@@ -4455,6 +4465,13 @@ main {
 .graph-panel__stream-meta {
   color: rgba(226, 232, 240, 0.62);
   font-size: 0.78rem;
+}
+
+.graph-panel__stream-detail {
+  grid-column: 1 / -1;
+  color: rgba(226, 232, 240, 0.74);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .graph-panel__control-bar {

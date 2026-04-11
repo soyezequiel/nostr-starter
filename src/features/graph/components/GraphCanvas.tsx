@@ -2058,6 +2058,31 @@ export function GraphCanvas({
     ? primaryActiveExpansion.state.message ??
       `Trabajando sobre ${primaryActiveExpansion.nodeLabel}`
     : statusCopy
+  const streamDetail = primaryActiveExpansion
+    ? `Paso ${primaryActiveExpansion.state.step ?? '-'} de ${
+        primaryActiveExpansion.state.totalSteps ?? '-'
+      }. El grafo visible se mantiene usable mientras se integra el nodo.`
+    : pathfinding.status === 'computing'
+      ? pathfinding.message ?? 'Recorriendo el grafo mutuo descubierto.'
+      : rootLoadStatus === 'loading'
+        ? rootLoadMessage ??
+          'Consultando relays, cache local y contact list kind:3 del root.'
+      : rootLoadStatus === 'partial' ||
+          rootLoadStatus === 'empty' ||
+          rootLoadStatus === 'error'
+        ? rootLoadMessage ??
+          'La cobertura quedo parcial; el grafo conserva la evidencia disponible.'
+      : activeLayer === 'keywords' && keywordLayerMessage
+        ? keywordLayerMessage
+      : activeLayer === 'zaps'
+        ? zapLayerStatus === 'enabled'
+          ? `${zapEdges.length} relaciones de zap visibles desde evidencia decodificada.`
+          : 'La capa de zaps espera recibos utilizables para los nodos explorados.'
+      : graphAnalysis.status === 'loading' && graphAnalysis.message
+        ? graphAnalysis.message
+      : rootLoadStatus === 'ready'
+        ? 'Exploracion completa del vecindario descubierto. Selecciona nodos, cambia capas o exporta evidencia.'
+      : 'Carga una npub o nprofile para iniciar descubrimiento relay-aware.'
 
   const diagnostics = useMemo<GraphCanvasDiagnostics>(
     () => ({
@@ -2194,8 +2219,10 @@ export function GraphCanvas({
           ) : null}
 
           <div className="graph-panel__stream-status" role="status">
+            <span className="graph-panel__stream-eyebrow">Progreso</span>
             <span className="graph-panel__stream-label">{streamLabel}</span>
             <span className="graph-panel__stream-meta">{streamMeta}</span>
+            <span className="graph-panel__stream-detail">{streamDetail}</span>
           </div>
 
           <GraphControlRail
