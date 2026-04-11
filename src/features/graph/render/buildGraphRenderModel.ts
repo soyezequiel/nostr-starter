@@ -1181,6 +1181,7 @@ export const buildGraphRenderModel = ({
   comparedNodePubkeys = new Set<string>(),
   pathfinding,
   graphAnalysis = EMPTY_GRAPH_ANALYSIS,
+  effectiveGraphCaps,
   renderConfig,
   previousPositions,
   previousLayoutKey,
@@ -1510,7 +1511,9 @@ export const buildGraphRenderModel = ({
       rootNodePubkey,
       sharedByExpandedCount,
       renderConfig,
-      ticks: isWarmStart ? 50 : GRAPH_FORCE_SETTINGS.ticks,
+      ticks: isWarmStart
+        ? effectiveGraphCaps.warmStartLayoutTicks
+        : effectiveGraphCaps.coldStartLayoutTicks,
     })
   }
 

@@ -349,10 +349,29 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       },
     })
   },
+  setGraphMaxNodes: (maxNodes) => {
+    const state = get()
+    const sanitizedMaxNodes = Math.max(1, Math.round(maxNodes))
+
+    if (state.graphCaps.maxNodes === sanitizedMaxNodes) {
+      return
+    }
+
+    set({
+      graphCaps: {
+        maxNodes: sanitizedMaxNodes,
+        capReached: getNodeCount(state.nodes) >= sanitizedMaxNodes,
+      },
+    })
+  },
   resetGraph: () => {
     const state = get()
     set({
       ...createInitialGraphSliceState(),
+      graphCaps: {
+        maxNodes: state.graphCaps.maxNodes,
+        capReached: false,
+      },
       graphRevision: state.graphRevision + 1,
       inboundGraphRevision: state.inboundGraphRevision + 1,
     })

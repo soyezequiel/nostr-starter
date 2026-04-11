@@ -58,6 +58,12 @@ export const selectUiSummary = (state: AppStore) => ({
   rootLoadSource: state.rootLoad.loadedFrom,
 })
 
+export const selectDevicePerformanceSummary = (state: AppStore) => ({
+  devicePerformanceProfile: state.devicePerformanceProfile,
+  effectiveGraphCaps: state.effectiveGraphCaps,
+  effectiveImageBudget: state.effectiveImageBudget,
+})
+
 export const selectZapLayerSummary = (state: AppStore) => ({
   status: state.zapLayer.status,
   edgeCount: state.zapLayer.edges.length,

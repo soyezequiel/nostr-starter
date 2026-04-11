@@ -3,14 +3,22 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { nip19 } from 'nostr-tools'
+import { useShallow } from 'zustand/react/shallow'
 
 import { useAppStore } from '@/features/graph/app/store'
 import type {
+  AppStore,
   GraphNode,
   SavedRootEntry,
   SavedRootProfileSnapshot,
   UiPanel,
 } from '@/features/graph/app/store/types'
+import {
+  detectDevicePerformance,
+  getDefaultImageQualityModeForProfile,
+  getEffectiveGraphCapsForProfile,
+  getEffectiveImageBudgetForProfile,
+} from '@/features/graph/devicePerformance'
 import {
   GraphCanvas,
   type GraphCanvasDiagnostics,
@@ -46,6 +54,50 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
 ]
 const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
 const MAX_SAVED_ROOT_REFRESHES = 6
+
+const selectGraphAppState = (state: AppStore) => ({
+  rootPubkey: state.rootNodePubkey,
+  currentRootNode: state.rootNodePubkey
+    ? state.nodes[state.rootNodePubkey] ?? null
+    : null,
+  nodeCount: Object.keys(state.nodes).length,
+  linkCount: state.links.length,
+  maxNodes: state.graphCaps.maxNodes,
+  capReached: state.graphCaps.capReached,
+  relayUrls: state.relayUrls,
+  relayOverrideStatus: state.relayOverrideStatus,
+  isGraphStale: state.isGraphStale,
+  openPanel: state.openPanel,
+  activeLayer: state.activeLayer,
+  currentKeyword: state.currentKeyword,
+  rootLoadStatus: state.rootLoad.status,
+  rootLoadMessage: state.rootLoad.message,
+  rootLoadSource: state.rootLoad.loadedFrom,
+  selectedDeepUserCount: state.selectedDeepUserPubkeys.length,
+  maxSelectedDeepUsers: state.maxSelectedDeepUsers,
+  exportJobPhase: state.exportJob.phase,
+  exportJobPercent: state.exportJob.percent,
+  comparedNodeCount: state.comparedNodePubkeys.size,
+  selectedNodePubkey: state.selectedNodePubkey,
+  savedRoots: state.savedRoots,
+  savedRootsHydrated: state.savedRootsHydrated,
+  pathfindingSelectionMode: state.pathfinding.selectionMode,
+  isNodeDetailOpen:
+    state.openPanel === 'node-detail' && state.selectedNodePubkey !== null,
+  isPathfindingOpen: state.openPanel === 'pathfinding',
+  devicePerformanceProfile: state.devicePerformanceProfile,
+  effectiveGraphCaps: state.effectiveGraphCaps,
+  effectiveImageBudget: state.effectiveImageBudget,
+})
+
+const selectGraphAppActions = (state: AppStore) => ({
+  setOpenPanel: state.setOpenPanel,
+  upsertSavedRoot: state.upsertSavedRoot,
+  removeSavedRoot: state.removeSavedRoot,
+  setSavedRootProfile: state.setSavedRootProfile,
+  setPathfindingSelectionMode: state.setPathfindingSelectionMode,
+  applyDevicePerformanceProfile: state.applyDevicePerformanceProfile,
+})
 
 function mapNostrProfileToSavedRootProfile(
   profile: NostrProfile,
@@ -189,54 +241,76 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
   const [isRootEntryOpen, setIsRootEntryOpen] = useState(false)
   const [graphDiagnostics, setGraphDiagnostics] =
     useState<GraphCanvasDiagnostics | null>(null)
-  const rootPubkey = useAppStore((state) => state.rootNodePubkey)
-  const currentRootNode = useAppStore((state) =>
-    state.rootNodePubkey ? state.nodes[state.rootNodePubkey] ?? null : null,
-  )
-  const nodeCount = useAppStore((state) => Object.keys(state.nodes).length)
-  const linkCount = useAppStore((state) => state.links.length)
-  const maxNodes = useAppStore((state) => state.graphCaps.maxNodes)
-  const capReached = useAppStore((state) => state.graphCaps.capReached)
-  const relayUrls = useAppStore((state) => state.relayUrls)
-  const relayOverrideStatus = useAppStore((state) => state.relayOverrideStatus)
-  const isGraphStale = useAppStore((state) => state.isGraphStale)
-  const openPanel = useAppStore((state) => state.openPanel)
-  const setOpenPanel = useAppStore((state) => state.setOpenPanel)
-  const activeLayer = useAppStore((state) => state.activeLayer)
-  const currentKeyword = useAppStore((state) => state.currentKeyword)
-  const rootLoadStatus = useAppStore((state) => state.rootLoad.status)
-  const rootLoadMessage = useAppStore((state) => state.rootLoad.message)
-  const rootLoadSource = useAppStore((state) => state.rootLoad.loadedFrom)
-  const selectedDeepUserCount = useAppStore(
-    (state) => state.selectedDeepUserPubkeys.length,
-  )
-  const maxSelectedDeepUsers = useAppStore(
-    (state) => state.maxSelectedDeepUsers,
-  )
-  const exportJobPhase = useAppStore((state) => state.exportJob.phase)
-  const exportJobPercent = useAppStore((state) => state.exportJob.percent)
-  const comparedNodeCount = useAppStore(
-    (state) => state.comparedNodePubkeys.size,
-  )
-  const selectedNodePubkey = useAppStore((state) => state.selectedNodePubkey)
-  const savedRoots = useAppStore((state) => state.savedRoots)
-  const savedRootsHydrated = useAppStore((state) => state.savedRootsHydrated)
-  const upsertSavedRoot = useAppStore((state) => state.upsertSavedRoot)
-  const removeSavedRoot = useAppStore((state) => state.removeSavedRoot)
-  const setSavedRootProfile = useAppStore((state) => state.setSavedRootProfile)
-  const pathfindingSelectionMode = useAppStore(
-    (state) => state.pathfinding.selectionMode,
-  )
-  const setPathfindingSelectionMode = useAppStore(
-    (state) => state.setPathfindingSelectionMode,
-  )
-  const isNodeDetailOpen = useAppStore(
-    (state) =>
-      state.openPanel === 'node-detail' && state.selectedNodePubkey !== null,
-  )
-  const isPathfindingOpen = useAppStore(
-    (state) => state.openPanel === 'pathfinding',
-  )
+  const {
+    rootPubkey,
+    currentRootNode,
+    nodeCount,
+    linkCount,
+    maxNodes,
+    capReached,
+    relayUrls,
+    relayOverrideStatus,
+    isGraphStale,
+    openPanel,
+    activeLayer,
+    currentKeyword,
+    rootLoadStatus,
+    rootLoadMessage,
+    rootLoadSource,
+    selectedDeepUserCount,
+    maxSelectedDeepUsers,
+    exportJobPhase,
+    exportJobPercent,
+    comparedNodeCount,
+    selectedNodePubkey,
+    savedRoots,
+    savedRootsHydrated,
+    pathfindingSelectionMode,
+    isNodeDetailOpen,
+    isPathfindingOpen,
+    devicePerformanceProfile,
+    effectiveGraphCaps,
+    effectiveImageBudget,
+  } = useAppStore(useShallow(selectGraphAppState))
+  const {
+    setOpenPanel,
+    upsertSavedRoot,
+    removeSavedRoot,
+    setSavedRootProfile,
+    setPathfindingSelectionMode,
+    applyDevicePerformanceProfile,
+  } = useAppStore(useShallow(selectGraphAppActions))
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const detection = detectDevicePerformance({
+      isPointerCoarse: window.matchMedia('(pointer: coarse)').matches,
+      viewportWidth: window.innerWidth,
+      deviceMemory:
+        typeof navigator !== 'undefined' &&
+        'deviceMemory' in navigator &&
+        typeof navigator.deviceMemory === 'number'
+          ? navigator.deviceMemory
+          : null,
+      hardwareConcurrency:
+        typeof navigator !== 'undefined' &&
+        typeof navigator.hardwareConcurrency === 'number'
+          ? navigator.hardwareConcurrency
+          : null,
+    })
+
+    applyDevicePerformanceProfile({
+      profile: detection.profile,
+      graphCaps: getEffectiveGraphCapsForProfile(detection.profile),
+      imageBudget: getEffectiveImageBudgetForProfile(detection.profile),
+      defaultImageQualityMode: getDefaultImageQualityModeForProfile(
+        detection.profile,
+      ),
+    })
+  }, [applyDevicePerformanceProfile])
 
   useEffect(() => {
     const mappedTab = mapPanelToSettingsTab(openPanel)
@@ -715,6 +789,15 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
                     </dd>
                   </div>
                   <div>
+                    <dt>Device</dt>
+                    <dd>
+                      {devicePerformanceProfile} / cap{' '}
+                      {effectiveGraphCaps.maxNodes} / layout{' '}
+                      {effectiveGraphCaps.coldStartLayoutTicks}/
+                      {effectiveGraphCaps.warmStartLayoutTicks}
+                    </dd>
+                  </div>
+                  <div>
                     <dt>Diagnostics</dt>
                     <dd>
                       {graphDiagnostics
@@ -768,11 +851,37 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
                       </dd>
                     </div>
                     <div>
+                      <dt>Budget</dt>
+                      <dd>
+                        {Math.round(effectiveImageBudget.vramBytes / (1024 * 1024))}MB
+                        VRAM /{' '}
+                        {Math.round(
+                          effectiveImageBudget.decodedBytes / (1024 * 1024),
+                        )}
+                        MB decode /{' '}
+                        {Math.round(
+                          effectiveImageBudget.compressedBytes / (1024 * 1024),
+                        )}
+                        MB comp.
+                      </dd>
+                    </div>
+                    <div>
                       <dt>Queue</dt>
                       <dd>
                         cola {imageSnapshot.pendingWork.queuedRequests} / en vuelo{' '}
                         {imageSnapshot.pendingWork.inFlightRequests} / URLs bloqueadas{' '}
                         {imageSnapshot.failures.blockedSourceUrls}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Fetch</dt>
+                      <dd>
+                        {effectiveImageBudget.baseFetchConcurrency}/
+                        {effectiveImageBudget.boostedFetchConcurrency} req / HD{' '}
+                        {effectiveImageBudget.allowHdTiers ? 'on' : 'off'} / race{' '}
+                        {effectiveImageBudget.allowParallelDirectFallback
+                          ? 'on'
+                          : 'off'}
                       </dd>
                     </div>
                     <div>

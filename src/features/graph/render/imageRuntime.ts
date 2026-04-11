@@ -30,6 +30,7 @@ import {
 } from '@/features/graph/render/avatarQualityGuide'
 import { resolveAvatarFetchUrl } from '@/features/graph/render/avatarProxyUrl'
 import type { GraphRenderNode } from '@/features/graph/render/types'
+import type { EffectiveImageBudget } from '@/features/graph/app/store/types'
 
 export interface ImageSourceHandle {
   key: string
@@ -223,6 +224,22 @@ export interface PrepareFrameInput {
 export interface RequestDetailInput {
   sourceUrl: string
   targetPx: number
+}
+
+export interface ImageRuntimeConfig {
+  budgetOverrides?: Partial<
+    Record<
+      PrepareFrameInput['mode'],
+      Pick<
+        EffectiveImageBudget,
+        'vramBytes' | 'decodedBytes' | 'compressedBytes'
+      >
+    >
+  >
+  baseFetchConcurrency?: number
+  boostedFetchConcurrency?: number
+  allowHdTiers?: boolean
+  allowParallelDirectFallback?: boolean
 }
 
 type TierEntry = {
@@ -570,7 +587,20 @@ const decodePreparedImage = async (blob: Blob, url: string) => {
   return loadDecodedImageElement(url)
 }
 
-const pickModeBudgets = (mode: PrepareFrameInput['mode']) => QUALITY_BUDGETS[mode]
+const pickModeBudgets = (
+  mode: PrepareFrameInput['mode'],
+  overrides?: ImageRuntimeConfig['budgetOverrides'],
+) => {
+  const defaultBudgets = QUALITY_BUDGETS[mode]
+  const override = overrides?.[mode]
+
+  return override
+    ? {
+        ...defaultBudgets,
+        ...override,
+      }
+    : defaultBudgets
+}
 
 const mergeSortedPubkeys = (...lists: ReadonlyArray<readonly string[]>) =>
   [...new Set(lists.flatMap((list) => [...list]))].sort()
@@ -1374,8 +1404,21 @@ export class ImageRuntime {
   >()
   private readonly hdDisplayHandlesByPubkey = new Map<string, ImageSourceHandle>()
   private readonly fullHdEligibilityStreakByPubkey = new Map<string, number>()
+  private readonly budgetOverrides?: ImageRuntimeConfig['budgetOverrides']
+  private readonly baseFetchConcurrency: number
+  private readonly boostedFetchConcurrency: number
+  private readonly allowHdTiers: boolean
+  private readonly allowParallelDirectFallback: boolean
 
-  public constructor() {
+  public constructor(config: ImageRuntimeConfig = {}) {
+    this.budgetOverrides = config.budgetOverrides
+    this.baseFetchConcurrency =
+      config.baseFetchConcurrency ?? BASE_FETCH_CONCURRENCY
+    this.boostedFetchConcurrency =
+      config.boostedFetchConcurrency ?? BOOSTED_FETCH_CONCURRENCY
+    this.allowHdTiers = config.allowHdTiers ?? true
+    this.allowParallelDirectFallback =
+      config.allowParallelDirectFallback ?? true
     this.persistentBudgetPromise = estimateStorageBudget().then((budget) => {
       this.persistentBudgetBytes = budget
     })
@@ -1438,7 +1481,8 @@ export class ImageRuntime {
   // Arma el estado de imagenes para este frame: que pubkeys estan listas en runtime,
   // cuales siguen efectivamente pintadas y donde se corta el pipeline.
   public prepareFrame(input: PrepareFrameInput): ImageRenderPayload {
-    const budgets = pickModeBudgets(input.mode)
+    const frameMode = this.allowHdTiers ? input.mode : 'performance'
+    const budgets = pickModeBudgets(frameMode, this.budgetOverrides)
     const viewportQuietForMs = Math.max(0, input.viewportQuietForMs)
     const memoryPressureHigh = this.isMemoryPressureHigh(budgets)
     this.memoryPressureHigh = memoryPressureHigh
@@ -1463,7 +1507,7 @@ export class ImageRuntime {
     const visibilitySnapshot = createEmptyVisibilitySnapshot()
     const qualityGuideSnapshot: AvatarQualityGuideSnapshot = {
       ...createEmptyAvatarQualityGuideSnapshot(),
-      mode: input.mode,
+      mode: frameMode,
       zoom: input.viewState.zoom,
       maxHdVisibleNodes: null,
     }
@@ -1560,7 +1604,7 @@ export class ImageRuntime {
       const baseTargetBucket = normalizeBaseAtlasBucket(requestedBucket)
       const qualityGuideBlockReason = visible
         ? resolveAvatarQualityGuideBlockReason({
-            mode: input.mode,
+            mode: frameMode,
             zoomLevel: input.viewState.zoom,
             unclampedBucket: hysteresisBucket,
             requestedBucket,
@@ -1571,9 +1615,9 @@ export class ImageRuntime {
       // visibles; el anillo de prefetch puede calentar base, pero no altera
       // el lane HD ni los contadores de guia para avatares fuera de pantalla.
       const requestedPromotedTier =
-        visible && modeSupportsHd(input.mode)
+        visible && modeSupportsHd(frameMode)
           ? resolveAvatarPromotedQualityTier({
-              mode: input.mode,
+              mode: frameMode,
               zoomLevel: input.viewState.zoom,
               requestedBucket,
               zoomThresholds: input,
@@ -1609,7 +1653,7 @@ export class ImageRuntime {
       }
 
       const hdEligible =
-        modeSupportsHd(input.mode) &&
+        modeSupportsHd(frameMode) &&
         visible &&
         promotedTier !== 'base'
       const hdTargetBucket = normalizeHdTargetBucket(
@@ -1762,7 +1806,7 @@ export class ImageRuntime {
     const requests = [...baseRequests, ...hdRequests].sort(compareRequestPriority)
 
     this.contextSnapshot = {
-      imageQualityMode: input.mode,
+      imageQualityMode: frameMode,
       viewport: {
         width: input.width,
         height: input.height,
@@ -2386,10 +2430,10 @@ export class ImageRuntime {
       (request) => request.priorityClass === 'visible-base',
     )
     if (queuedVisibleBaseRequests === 0 || this.memoryPressureHigh) {
-      return BASE_FETCH_CONCURRENCY
+      return this.baseFetchConcurrency
     }
 
-    return BOOSTED_FETCH_CONCURRENCY
+    return this.boostedFetchConcurrency
   }
 
   private preemptLowerPriorityRequestsForVisibleBacklog() {
@@ -2682,6 +2726,37 @@ export class ImageRuntime {
     transport: 'proxy' | 'direct'
     proxyFallbackError?: Error
   }> {
+    if (!this.allowParallelDirectFallback) {
+      try {
+        const blob = await this.fetchBlob(proxyUrl, abortController, true)
+        return {
+          blob,
+          transport: 'proxy',
+        }
+      } catch (proxyError) {
+        const directBlob = await this.fetchVariantDirect(
+          sourceUrl,
+          abortController,
+          true,
+          proxyError,
+        )
+        return {
+          blob: directBlob,
+          transport: 'direct',
+          proxyFallbackError: buildImageFetchError(
+            describeProxyFallback({
+              error: proxyError,
+              strategy: isTimeoutError(proxyError)
+                ? 'direct-after-timeout'
+                : 'immediate-direct',
+            }),
+            readErrorStatus(proxyError),
+            sourceUrl,
+          ),
+        }
+      }
+    }
+
     const proxyAbort = createLinkedAbortController(
       abortController,
       'avatar-proxy-cancelled',

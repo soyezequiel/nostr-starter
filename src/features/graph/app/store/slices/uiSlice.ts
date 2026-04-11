@@ -1,9 +1,18 @@
 import type {
   AppStateCreator,
+  DevicePerformanceProfile,
+  ImageQualityMode,
   SavedRootEntry,
   SavedRootProfileSnapshot,
   UiSlice,
 } from '@/features/graph/app/store/types'
+import {
+  DEFAULT_DEVICE_PERFORMANCE_PROFILE,
+  DEFAULT_EFFECTIVE_GRAPH_CAPS,
+  DEFAULT_EFFECTIVE_IMAGE_BUDGET,
+  clampImageQualityModeForProfile,
+  getDefaultImageQualityModeForProfile,
+} from '@/features/graph/devicePerformance'
 import {
   DEFAULT_AVATAR_FULL_HD_ZOOM_THRESHOLD,
   DEFAULT_AVATAR_HD_ZOOM_THRESHOLD,
@@ -53,6 +62,31 @@ const mergeSavedRootProfile = (
   return mergedProfile
 }
 
+const normalizeRenderConfig = (
+  profile: DevicePerformanceProfile,
+  currentRenderConfig: UiSlice['renderConfig'],
+  configPatch: Partial<UiSlice['renderConfig']>,
+  fallbackImageQualityMode?: ImageQualityMode,
+) => {
+  const nextRenderConfig = {
+    ...currentRenderConfig,
+    ...configPatch,
+  }
+  const normalizedZoomThresholds = normalizeAvatarZoomThresholds(nextRenderConfig)
+  const requestedImageQualityMode =
+    configPatch.imageQualityMode ?? nextRenderConfig.imageQualityMode
+
+  return {
+    ...nextRenderConfig,
+    ...normalizedZoomThresholds,
+    imageQualityMode: clampImageQualityModeForProfile(
+      profile,
+      requestedImageQualityMode,
+      fallbackImageQualityMode,
+    ),
+  }
+}
+
 export const createInitialUiSliceState = (): Pick<
   UiSlice,
   | 'selectedNodePubkey'
@@ -63,6 +97,9 @@ export const createInitialUiSliceState = (): Pick<
   | 'currentKeyword'
   | 'rootLoad'
   | 'renderConfig'
+  | 'devicePerformanceProfile'
+  | 'effectiveGraphCaps'
+  | 'effectiveImageBudget'
   | 'savedRoots'
   | 'savedRootsHydrated'
   | 'interactionState'
@@ -93,6 +130,9 @@ export const createInitialUiSliceState = (): Pick<
     showAvatarQualityGuide: false,
     showImageResidencyDebug: false,
   },
+  devicePerformanceProfile: DEFAULT_DEVICE_PERFORMANCE_PROFILE,
+  effectiveGraphCaps: DEFAULT_EFFECTIVE_GRAPH_CAPS,
+  effectiveImageBudget: DEFAULT_EFFECTIVE_IMAGE_BUDGET,
   savedRoots: [],
   savedRootsHydrated: typeof window === 'undefined',
   interactionState: {
@@ -140,20 +180,39 @@ export const createUiSlice: AppStateCreator<UiSlice> = (set) => ({
   },
   setRenderConfig: (configPatch) => {
     set((state) => ({
-      renderConfig: (() => {
-        const nextRenderConfig = {
-          ...state.renderConfig,
-          ...configPatch,
-        }
-        const normalizedZoomThresholds =
-          normalizeAvatarZoomThresholds(nextRenderConfig)
-
-        return {
-          ...nextRenderConfig,
-          ...normalizedZoomThresholds,
-        }
-      })(),
+      renderConfig: normalizeRenderConfig(
+        state.devicePerformanceProfile,
+        state.renderConfig,
+        configPatch,
+      ),
     }))
+  },
+  applyDevicePerformanceProfile: ({
+    profile,
+    graphCaps,
+    imageBudget,
+    defaultImageQualityMode,
+  }) => {
+    set((state) => {
+      const nextMaxNodes = Math.max(1, Math.round(graphCaps.maxNodes))
+
+      return {
+        devicePerformanceProfile: profile,
+        effectiveGraphCaps: graphCaps,
+        effectiveImageBudget: imageBudget,
+        renderConfig: normalizeRenderConfig(
+          profile,
+          state.renderConfig,
+          { imageQualityMode: defaultImageQualityMode },
+          getDefaultImageQualityModeForProfile(profile),
+        ),
+        graphCaps: {
+          ...state.graphCaps,
+          maxNodes: nextMaxNodes,
+          capReached: Object.keys(state.nodes).length >= nextMaxNodes,
+        },
+      }
+    })
   },
   markViewportInteraction: (at = Date.now()) => {
     set((state) => ({

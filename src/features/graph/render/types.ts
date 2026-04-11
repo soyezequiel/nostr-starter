@@ -10,6 +10,7 @@ import type {
   GraphLinkRelation,
   GraphNode,
   GraphNodeSource,
+  EffectiveGraphCaps,
   RootLoadStatus,
   UiLayer,
   ZapLayerEdge,
@@ -158,6 +159,7 @@ export interface BuildGraphRenderModelInput {
     path: string[] | null
   }
   graphAnalysis?: DiscoveredGraphAnalysisState
+  effectiveGraphCaps: EffectiveGraphCaps
   renderConfig: RenderConfig
   previousPositions?: ReadonlyMap<string, [number, number]>
   previousLayoutKey?: string

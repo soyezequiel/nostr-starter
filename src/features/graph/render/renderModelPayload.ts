@@ -9,6 +9,7 @@ import type {
   UiLayer,
   ZapLayerEdge,
   RenderConfig,
+  EffectiveGraphCaps,
 } from '@/features/graph/app/store/types'
 import type { BuildGraphRenderModelInput } from '@/features/graph/render/types'
 
@@ -39,6 +40,7 @@ export interface BuildRenderModelRequest {
     path: string[] | null
   }
   graphAnalysis?: DiscoveredGraphAnalysisState
+  effectiveGraphCaps: EffectiveGraphCaps
   renderConfig: RenderConfig
   previousPositions?: Record<string, [number, number]>
   previousLayoutKey?: string
@@ -327,6 +329,29 @@ const sanitizePreviousPositions = (
       )
     : undefined
 
+const DEFAULT_EFFECTIVE_GRAPH_CAPS: EffectiveGraphCaps = {
+  maxNodes: 3000,
+  coldStartLayoutTicks: 90,
+  warmStartLayoutTicks: 50,
+}
+
+const sanitizeEffectiveGraphCaps = (
+  effectiveGraphCaps: BuildGraphRenderModelInput['effectiveGraphCaps'] | undefined,
+): EffectiveGraphCaps => ({
+  maxNodes: sanitizeFiniteNumber(
+    effectiveGraphCaps?.maxNodes,
+    DEFAULT_EFFECTIVE_GRAPH_CAPS.maxNodes,
+  ),
+  coldStartLayoutTicks: sanitizeFiniteNumber(
+    effectiveGraphCaps?.coldStartLayoutTicks,
+    DEFAULT_EFFECTIVE_GRAPH_CAPS.coldStartLayoutTicks,
+  ),
+  warmStartLayoutTicks: sanitizeFiniteNumber(
+    effectiveGraphCaps?.warmStartLayoutTicks,
+    DEFAULT_EFFECTIVE_GRAPH_CAPS.warmStartLayoutTicks,
+  ),
+})
+
 export const serializeBuildGraphRenderModelInput = ({
   jobKey,
   nodes,
@@ -341,6 +366,7 @@ export const serializeBuildGraphRenderModelInput = ({
   comparedNodePubkeys,
   pathfinding,
   graphAnalysis,
+  effectiveGraphCaps,
   renderConfig,
   previousPositions,
   previousLayoutKey,
@@ -365,6 +391,7 @@ export const serializeBuildGraphRenderModelInput = ({
   comparedNodePubkeys: sanitizeExpandedNodePubkeys(comparedNodePubkeys ?? new Set()),
   pathfinding: sanitizePathfindingState(pathfinding),
   graphAnalysis: sanitizeGraphAnalysisState(graphAnalysis),
+  effectiveGraphCaps: sanitizeEffectiveGraphCaps(effectiveGraphCaps),
   renderConfig: {
     edgeThickness: sanitizeFiniteNumber(renderConfig.edgeThickness, 1),
     arrowType: renderConfig.arrowType === 'arrow' || renderConfig.arrowType === 'triangle' ? renderConfig.arrowType : 'none',
@@ -394,6 +421,7 @@ export const deserializeBuildGraphRenderModelInput = ({
   comparedNodePubkeys,
   pathfinding,
   graphAnalysis,
+  effectiveGraphCaps,
   renderConfig,
   previousPositions,
   previousLayoutKey,
@@ -429,6 +457,7 @@ export const deserializeBuildGraphRenderModelInput = ({
       }
     : undefined,
   graphAnalysis,
+  effectiveGraphCaps,
   renderConfig,
   previousPositions: previousPositions
     ? new Map(Object.entries(previousPositions))

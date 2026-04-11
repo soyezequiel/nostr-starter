@@ -40,6 +40,7 @@ import {
   deriveGraphRenderState,
   ImageRuntime,
   resolveGraphNodeScreenRadii,
+  resolveGraphNodeScreenRadiiFast,
   selectVisibleGraphLabels,
   truncatePubkey,
   type GraphRenderLabel,
@@ -49,6 +50,7 @@ import {
   type ImageRenderPayload,
   type ImageResidencySnapshot,
 } from '@/features/graph/render'
+import { isMobileDevicePerformanceProfile } from '@/features/graph/devicePerformance'
 import type {
   ImageFrameComputationMode,
   ImageFrameSkipReason,
@@ -94,6 +96,10 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
   maxNodes: state.graphCaps.maxNodes,
   nodeExpansionStates: state.nodeExpansionStates,
   renderConfig: state.renderConfig,
+  devicePerformanceProfile: state.devicePerformanceProfile,
+  effectiveGraphCaps: state.effectiveGraphCaps,
+  effectiveImageBudget: state.effectiveImageBudget,
+  isViewportActive: state.interactionState.isViewportActive,
 })
 
 const selectGraphCanvasPanelState = (state: AppStore) => ({
@@ -274,6 +280,7 @@ const createBuildRenderModelJobKey = ({
   comparedNodePubkeys,
   pathfinding,
   graphAnalysis,
+  effectiveGraphCaps,
   renderConfig,
 }: {
   graphRevision: number
@@ -288,6 +295,7 @@ const createBuildRenderModelJobKey = ({
   comparedNodePubkeys?: ReadonlySet<string>
   pathfinding?: Pick<AppStore['pathfinding'], 'status' | 'path'>
   graphAnalysis?: AppStore['graphAnalysis']
+  effectiveGraphCaps: AppStore['effectiveGraphCaps']
   renderConfig: AppStore['renderConfig']
 }) =>
   JSON.stringify({
@@ -303,6 +311,7 @@ const createBuildRenderModelJobKey = ({
     comparedNodePubkeys: createSortedCollectionSignature(comparedNodePubkeys),
     pathfinding: createPathfindingSignature(pathfinding),
     graphAnalysis: createGraphAnalysisSignature(graphAnalysis),
+    effectiveGraphCaps,
     renderConfig: createRenderConfigSignature(renderConfig),
   })
 
@@ -713,6 +722,10 @@ export function GraphCanvas({
     maxNodes,
     nodeExpansionStates,
     renderConfig,
+    devicePerformanceProfile,
+    effectiveGraphCaps,
+    effectiveImageBudget,
+    isViewportActive,
   } = useAppStore(useShallow(selectGraphCanvasRenderState))
   const containerRef = useRef<HTMLDivElement | null>(null)
   const perfCountersRef = useRef(createPerfCounters())
@@ -793,9 +806,19 @@ export function GraphCanvas({
   const [isBrowserOnline, setIsBrowserOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine,
   )
+  const [isPointerCoarse, setIsPointerCoarse] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : window.matchMedia('(pointer: coarse)').matches,
+  )
   const hoveredNodePubkey = hoverState.nodePubkey
   const hoveredEdgeId = hoverState.edgeId
   const hoveredEdgePubkeys = hoverState.edgePubkeys
+  const isMobileProfile = isMobileDevicePerformanceProfile(
+    devicePerformanceProfile,
+  )
+  const hoverInteractionEnabled = !isPointerCoarse
+  const shouldCollectDiagnostics = onDiagnosticsChange !== undefined
 
   useEffect(() => {
     const handleOnline = () => {
@@ -816,8 +839,48 @@ export function GraphCanvas({
   }, [])
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const mediaQuery = window.matchMedia('(pointer: coarse)')
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsPointerCoarse(event.matches)
+    }
+
+    setIsPointerCoarse(mediaQuery.matches)
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleChange)
+      return () => {
+        mediaQuery.removeEventListener('change', handleChange)
+      }
+    }
+
+    mediaQuery.addListener(handleChange)
+    return () => {
+      mediaQuery.removeListener(handleChange)
+    }
+  }, [])
+
+  useEffect(() => {
     clearAvatarPipelineProbe()
-    const nextImageRuntime = new ImageRuntime()
+    const nextImageRuntime = new ImageRuntime({
+      budgetOverrides: isMobileProfile
+        ? {
+            performance: {
+              vramBytes: effectiveImageBudget.vramBytes,
+              decodedBytes: effectiveImageBudget.decodedBytes,
+              compressedBytes: effectiveImageBudget.compressedBytes,
+            },
+          }
+        : undefined,
+      baseFetchConcurrency: effectiveImageBudget.baseFetchConcurrency,
+      boostedFetchConcurrency: effectiveImageBudget.boostedFetchConcurrency,
+      allowHdTiers: effectiveImageBudget.allowHdTiers,
+      allowParallelDirectFallback:
+        effectiveImageBudget.allowParallelDirectFallback,
+    })
     imageRuntimeRef.current = nextImageRuntime
     const unsubscribe = nextImageRuntime.subscribe(() => {
       if (imageRefreshTimerRef.current !== null) {
@@ -853,7 +916,16 @@ export function GraphCanvas({
       clearAvatarPipelineProbe()
       setImageRuntime(null)
     }
-  }, [])
+  }, [
+    effectiveImageBudget.allowParallelDirectFallback,
+    effectiveImageBudget.allowHdTiers,
+    effectiveImageBudget.baseFetchConcurrency,
+    effectiveImageBudget.boostedFetchConcurrency,
+    effectiveImageBudget.compressedBytes,
+    effectiveImageBudget.decodedBytes,
+    effectiveImageBudget.vramBytes,
+    isMobileProfile,
+  ])
 
   useEffect(() => {
     const gateway = createGraphRenderModelWorkerGateway()
@@ -1091,6 +1163,7 @@ export function GraphCanvas({
         path: pathfinding.path,
       },
       graphAnalysis,
+      effectiveGraphCaps,
       renderConfig,
     }
 
@@ -1191,6 +1264,7 @@ export function GraphCanvas({
         comparedNodePubkeys: input.comparedNodePubkeys,
         pathfinding: input.pathfinding,
         graphAnalysis: input.graphAnalysis,
+        effectiveGraphCaps: input.effectiveGraphCaps,
         renderConfig: input.renderConfig,
       })
       const request = serializeBuildGraphRenderModelInput(buildInput)
@@ -1248,6 +1322,7 @@ export function GraphCanvas({
     zapEdges,
     zapLayerRevision,
     zapLayerStatus,
+    effectiveGraphCaps,
     renderConfig,
   ])
 
@@ -1500,6 +1575,15 @@ export function GraphCanvas({
       return EMPTY_NODE_SCREEN_RADII
     }
 
+    if (isMobileProfile && isViewportActive) {
+      return resolveGraphNodeScreenRadiiFast({
+        nodes: model.nodes,
+        activeLayer: model.activeLayer,
+        viewState,
+        visibleNodeCount: model.lod.visibleNodeCount,
+      })
+    }
+
     return resolveGraphNodeScreenRadii({
       nodes: model.nodes,
       activeLayer: model.activeLayer,
@@ -1514,6 +1598,8 @@ export function GraphCanvas({
     model.lod.visibleNodeCount,
     model.nodes,
     model.renderConfig?.autoSizeNodes,
+    isViewportActive,
+    isMobileProfile,
     size.height,
     size.width,
     viewState,
@@ -1781,6 +1867,10 @@ export function GraphCanvas({
         | { type: 'edge'; edgeId: string; pubkeys: [string, string] }
         | null,
     ) => {
+      if (!hoverInteractionEnabled) {
+        return
+      }
+
       const nextHoverState: HoverGraphState =
         hover === null
           ? EMPTY_HOVER_STATE
@@ -1813,8 +1903,14 @@ export function GraphCanvas({
         })
       })
     },
-    [],
+    [hoverInteractionEnabled],
   )
+
+  useEffect(() => {
+    if (!hoverInteractionEnabled) {
+      setHoverState(EMPTY_HOVER_STATE)
+    }
+  }, [hoverInteractionEnabled])
 
   const handleViewStateChange = useCallback(
     (nextViewState: GraphViewState) => {
@@ -2105,32 +2201,38 @@ export function GraphCanvas({
         ? 'Exploracion completa del vecindario descubierto. Selecciona nodos, cambia capas o exporta evidencia.'
       : 'Carga una npub o nprofile para iniciar descubrimiento relay-aware.'
 
-  const diagnostics = useMemo<GraphCanvasDiagnostics>(
-    () => ({
-      comparisonCount: comparedNodePubkeys.size,
-      render: {
-        status: renderState.status,
-        reasons: renderState.reasons,
-        nodeCount: model.nodes.length,
-        edgeCount: model.edges.length,
-        labelCount: visibleLabels.length,
-        thinnedEdgeCount: model.lod.thinnedEdgeCount,
-        lastBuildMs: perfCountersRef.current.lastBuildMs,
-        avgBuildMs: perfCountersRef.current.avgBuildMs,
-        lastRenderTrigger: perfCountersRef.current.lastRenderTrigger,
-      },
-      image: {
-        snapshot: imageDiagnosticsSnapshot,
-        readyImageCount: Object.keys(imageFrame.readyImagesByPubkey).length,
-      },
-      stream: {
-        label: streamLabel,
-        meta: streamMeta,
-        activeLayer,
-        zapLayerStatus,
-        keywordLayerStatus,
-      },
-    }),
+  const diagnostics = useMemo<GraphCanvasDiagnostics | null>(
+    () => {
+      if (!shouldCollectDiagnostics) {
+        return null
+      }
+
+      return {
+        comparisonCount: comparedNodePubkeys.size,
+        render: {
+          status: renderState.status,
+          reasons: renderState.reasons,
+          nodeCount: model.nodes.length,
+          edgeCount: model.edges.length,
+          labelCount: visibleLabels.length,
+          thinnedEdgeCount: model.lod.thinnedEdgeCount,
+          lastBuildMs: perfCountersRef.current.lastBuildMs,
+          avgBuildMs: perfCountersRef.current.avgBuildMs,
+          lastRenderTrigger: perfCountersRef.current.lastRenderTrigger,
+        },
+        image: {
+          snapshot: imageDiagnosticsSnapshot,
+          readyImageCount: Object.keys(imageFrame.readyImagesByPubkey).length,
+        },
+        stream: {
+          label: streamLabel,
+          meta: streamMeta,
+          activeLayer,
+          zapLayerStatus,
+          keywordLayerStatus,
+        },
+      }
+    },
     [
       activeLayer,
       comparedNodePubkeys.size,
@@ -2145,12 +2247,17 @@ export function GraphCanvas({
       streamLabel,
       visibleLabels.length,
       keywordLayerStatus,
+      shouldCollectDiagnostics,
       zapLayerStatus,
     ],
   )
 
   useEffect(() => {
-    onDiagnosticsChange?.(diagnostics)
+    if (!onDiagnosticsChange || !diagnostics) {
+      return
+    }
+
+    onDiagnosticsChange(diagnostics)
   }, [diagnostics, onDiagnosticsChange])
 
   useEffect(
@@ -2226,6 +2333,8 @@ export function GraphCanvas({
               viewState={viewState}
               width={size.width}
               renderConfig={renderConfig}
+              forceLowDevicePixels={isMobileProfile}
+              hoverInteractionEnabled={hoverInteractionEnabled}
             />
           ) : null}
 

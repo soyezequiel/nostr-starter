@@ -51,6 +51,8 @@ interface GraphViewportLazyProps {
   onSelectNode: (pubkey: string | null, options?: { shiftKey?: boolean }) => void
   onViewStateChange: (viewState: GraphViewState) => void
   renderConfig: RenderConfig
+  forceLowDevicePixels?: boolean
+  hoverInteractionEnabled?: boolean
 }
 
 /**
@@ -75,6 +77,8 @@ export const GraphViewportLazy = memo(function GraphViewportLazy({
   onSelectNode,
   onViewStateChange,
   renderConfig,
+  forceLowDevicePixels,
+  hoverInteractionEnabled,
 }: GraphViewportLazyProps) {
   return (
     <Suspense fallback={null}>
@@ -95,6 +99,8 @@ export const GraphViewportLazy = memo(function GraphViewportLazy({
         viewState={viewState}
         width={width}
         renderConfig={renderConfig}
+        forceLowDevicePixels={forceLowDevicePixels}
+        hoverInteractionEnabled={hoverInteractionEnabled}
       />
     </Suspense>
   )

@@ -143,6 +143,43 @@ const getKeywordMatchScreenScale = ({
   )
 }
 
+export const resolveGraphNodeScreenRadiiFast = ({
+  nodes,
+  activeLayer,
+  viewState,
+  visibleNodeCount,
+}: {
+  nodes: readonly GraphRenderNode[]
+  activeLayer: UiLayer
+  viewState: GraphViewState
+  visibleNodeCount: number
+}): GraphNodeScreenRadii =>
+  new Map(
+    nodes.map((node) => {
+      const globalRadius = resolveGraphNodeScreenRadius({
+        baseRadius: node.radius,
+        isRoot: node.isRoot,
+        visibleNodeCount,
+        zoomLevel: viewState.zoom,
+      })
+
+      return [
+        node.pubkey,
+        roundRadius(
+          clampNumber(
+            globalRadius *
+              getKeywordMatchScreenScale({
+                activeLayer,
+                keywordHits: node.keywordHits,
+              }),
+            getGraphNodeScreenRadiusBounds(node.isRoot).minRadius,
+            getGraphNodeScreenRadiusBounds(node.isRoot).maxRadius,
+          ),
+        ),
+      ]
+    }),
+  )
+
 const buildCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
 
 const buildProjectedNodeMetrics = ({

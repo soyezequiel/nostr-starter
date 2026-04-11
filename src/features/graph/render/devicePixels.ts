@@ -24,12 +24,18 @@ export interface ResolveGraphUseDevicePixelsInput {
     | 'edgesThinned'
   >
   devicePixelRatio?: number
+  forceLowDevicePixels?: boolean
 }
 
 export const resolveGraphUseDevicePixels = ({
   lod,
   devicePixelRatio = readDevicePixelRatio(),
+  forceLowDevicePixels = false,
 }: ResolveGraphUseDevicePixelsInput) => {
+  if (forceLowDevicePixels) {
+    return 1
+  }
+
   const cappedDevicePixelRatio = clamp(devicePixelRatio, 1, 2)
 
   if (

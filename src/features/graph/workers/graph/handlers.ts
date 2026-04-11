@@ -580,6 +580,33 @@ function validateRenderConfig(input: unknown, path: string): RenderConfig {
   }
 }
 
+function validateEffectiveGraphCaps(
+  input: unknown,
+  path: string,
+): BuildRenderModelRequest['effectiveGraphCaps'] {
+  if (typeof input === 'undefined') {
+    return {
+      maxNodes: 3000,
+      coldStartLayoutTicks: 90,
+      warmStartLayoutTicks: 50,
+    }
+  }
+
+  const caps = expectRecord(input, path)
+
+  return {
+    maxNodes: expectFiniteNumber(caps.maxNodes, `${path}.maxNodes`),
+    coldStartLayoutTicks: expectFiniteNumber(
+      caps.coldStartLayoutTicks,
+      `${path}.coldStartLayoutTicks`,
+    ),
+    warmStartLayoutTicks: expectFiniteNumber(
+      caps.warmStartLayoutTicks,
+      `${path}.warmStartLayoutTicks`,
+    ),
+  }
+}
+
 function validateBuildRenderModelRequest(
   payload: unknown,
 ): BuildRenderModelRequest {
@@ -673,6 +700,10 @@ function validateBuildRenderModelRequest(
     graphAnalysis: validateGraphAnalysisState(
       request.graphAnalysis ?? {},
       'payload.graphAnalysis',
+    ),
+    effectiveGraphCaps: validateEffectiveGraphCaps(
+      request.effectiveGraphCaps,
+      'payload.effectiveGraphCaps',
     ),
     renderConfig: validateRenderConfig(request.renderConfig, 'payload.renderConfig'),
   } satisfies BuildRenderModelRequest

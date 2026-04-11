@@ -68,6 +68,8 @@ interface DeckGraphRendererProps {
   onSelectNode: (pubkey: string | null, options?: { shiftKey?: boolean }) => void
   onViewStateChange: (viewState: GraphViewState) => void
   renderConfig: RenderConfig
+  forceLowDevicePixels?: boolean
+  hoverInteractionEnabled?: boolean
   comparedNodePubkeys?: ReadonlySet<string>
 }
 
@@ -145,6 +147,8 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
   onSelectNode,
   onViewStateChange,
   renderConfig,
+  forceLowDevicePixels = false,
+  hoverInteractionEnabled = true,
 }: DeckGraphRendererProps) {
   const hoverFrameRef = useRef<number | null>(null)
   const hoverResumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -162,8 +166,9 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
     () =>
       resolveGraphUseDevicePixels({
         lod: model.lod,
+        forceLowDevicePixels,
       }),
-    [model.lod],
+    [forceLowDevicePixels, model.lod],
   )
 
   const scheduleHoverDispatch = useCallback(
@@ -289,7 +294,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
 
       lastViewStateRef.current = nextViewState
 
-      if (movedMeaningfully) {
+      if (hoverInteractionEnabled && movedMeaningfully) {
         suspendHoverPicking(
           params.interactionState?.isDragging === true
             ? DRAG_HOVER_RESUME_DELAY_MS
@@ -301,7 +306,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
         sanitizedViewState,
       )
     },
-    [onViewStateChange, suspendHoverPicking],
+    [hoverInteractionEnabled, onViewStateChange, suspendHoverPicking],
   )
 
   const layers = useMemo(
@@ -316,10 +321,10 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
         visibleLabels,
         nodeScreenRadii,
         imageFrame,
-        onAvatarRendererDelivery,
-        hoverPickingEnabled,
-        renderConfig,
-      }),
+      onAvatarRendererDelivery,
+      hoverPickingEnabled: hoverInteractionEnabled && hoverPickingEnabled,
+      renderConfig,
+    }),
     ],
     [
       hoveredNodePubkey,
@@ -331,6 +336,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
       visibleLabels,
       imageFrame,
       onAvatarRendererDelivery,
+      hoverInteractionEnabled,
       hoverPickingEnabled,
       renderConfig,
     ],
@@ -344,7 +350,9 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
       layers={layers}
       useDevicePixels={useDevicePixels}
       onClick={handleClick}
-      onHover={hoverPickingEnabled ? handleHover : undefined}
+      onHover={
+        hoverInteractionEnabled && hoverPickingEnabled ? handleHover : undefined
+      }
       onViewStateChange={handleDeckViewStateChange}
       style={DECK_STYLE}
       views={GRAPH_VIEW}

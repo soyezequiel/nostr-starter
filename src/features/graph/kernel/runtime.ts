@@ -11,6 +11,9 @@ import {
   createEventsWorkerGateway,
   createGraphWorkerGateway,
 } from '@/features/graph/workers/browser'
+import type { GraphWorkerActionMap } from '@/features/graph/workers/graph/contracts'
+import type { WorkerActionName } from '@/features/graph/workers/shared/protocol'
+import type { WorkerClient } from '@/features/graph/workers/shared/runtime'
 
 export interface LoadRootResult {
   status: 'ready' | 'partial' | 'empty' | 'error'
@@ -113,11 +116,35 @@ export {
 
 const browserDatabase = createNostrGraphDatabase()
 
+class LazyGraphWorkerGateway implements WorkerClient<GraphWorkerActionMap> {
+  private activeWorker: WorkerClient<GraphWorkerActionMap> | null = null
+
+  private getWorker() {
+    if (!this.activeWorker) {
+      this.activeWorker = createGraphWorkerGateway()
+    }
+
+    return this.activeWorker
+  }
+
+  public invoke<TAction extends WorkerActionName<GraphWorkerActionMap>>(
+    action: TAction,
+    payload: GraphWorkerActionMap[TAction]['request'],
+  ) {
+    return this.getWorker().invoke(action, payload)
+  }
+
+  public dispose() {
+    this.activeWorker?.dispose()
+    this.activeWorker = null
+  }
+}
+
 export const browserAppKernel: KernelFacade & RootLoader = createKernelFacade({
   store: appStore,
   repositories: createRepositories(browserDatabase),
   eventsWorker: createEventsWorkerGateway(),
-  graphWorker: createGraphWorkerGateway(),
+  graphWorker: new LazyGraphWorkerGateway(),
   createRelayAdapter: createRelayPoolAdapter,
   defaultRelayUrls: [...DEFAULT_SESSION_RELAY_URLS],
   now: () => Date.now(),

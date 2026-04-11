@@ -75,6 +75,10 @@ export type PathfindingStatus =
   | 'not-found'
   | 'error'
 export type PathfindingSelectionMode = 'idle' | 'source' | 'target'
+export type DevicePerformanceProfile =
+  | 'desktop'
+  | 'mobile'
+  | 'low-end-mobile'
 
 export interface GraphNode {
   pubkey: string
@@ -152,6 +156,22 @@ export interface KeywordLayerState {
 export interface GraphCaps {
   maxNodes: number
   capReached: boolean
+}
+
+export interface EffectiveGraphCaps {
+  maxNodes: number
+  coldStartLayoutTicks: number
+  warmStartLayoutTicks: number
+}
+
+export interface EffectiveImageBudget {
+  vramBytes: number
+  decodedBytes: number
+  compressedBytes: number
+  baseFetchConcurrency: number
+  boostedFetchConcurrency: number
+  allowHdTiers: boolean
+  allowParallelDirectFallback: boolean
 }
 
 export type NodeExpansionStatus =
@@ -248,6 +268,7 @@ export interface GraphSlice {
     pubkey: string,
     state: NodeStructurePreviewState,
   ) => void
+  setGraphMaxNodes: (maxNodes: number) => void
   resetGraph: () => void
 }
 
@@ -350,6 +371,9 @@ export interface UiSlice {
   currentKeyword: string
   rootLoad: RootLoadState
   renderConfig: RenderConfig
+  devicePerformanceProfile: DevicePerformanceProfile
+  effectiveGraphCaps: EffectiveGraphCaps
+  effectiveImageBudget: EffectiveImageBudget
   savedRoots: SavedRootEntry[]
   savedRootsHydrated: boolean
   interactionState: ViewportInteractionState
@@ -363,6 +387,12 @@ export interface UiSlice {
   setRootLoadState: (state: Partial<RootLoadState>) => void
   resetRootLoadState: () => void
   setRenderConfig: (config: Partial<RenderConfig>) => void
+  applyDevicePerformanceProfile: (input: {
+    profile: DevicePerformanceProfile
+    graphCaps: EffectiveGraphCaps
+    imageBudget: EffectiveImageBudget
+    defaultImageQualityMode: ImageQualityMode
+  }) => void
   markViewportInteraction: (at?: number) => void
   markViewportSettled: (at?: number) => void
   upsertSavedRoot: (entry: {
