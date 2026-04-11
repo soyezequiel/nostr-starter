@@ -228,6 +228,11 @@ export function createRootLoaderModule(
       let lastProgressMessageAt = 0
       let latestProgressContactListEventId: string | null = null
       let contactListProgressParseSequence = 0
+      let inboundProgressParseSequence = 0
+      let lastInboundProgressParseAt = 0
+      let inboundProgressTimer: ReturnType<typeof setTimeout> | null = null
+      let pendingInboundProgressEnvelopes: RelayEventEnvelope[] = []
+      const progressivelyHydratedInboundPubkeys = new Set<string>()
       let discoveryProgressActive = true
       const publishVisibleLinkProgress = (force = false) => {
         if (isStaleLoad(loadId) || !discoveryProgressActive) {
@@ -294,6 +299,90 @@ export function createRootLoaderModule(
             publishVisibleLinkProgress(true)
           })
       }
+      const scheduleInboundProgressMerge = (
+        envelopes: readonly RelayEventEnvelope[],
+        force = false,
+      ) => {
+        if (
+          envelopes.length === 0 ||
+          isStaleLoad(loadId) ||
+          !discoveryProgressActive
+        ) {
+          return
+        }
+
+        pendingInboundProgressEnvelopes = Array.from(envelopes)
+        const now = ctx.now()
+        if (!force && now - lastInboundProgressParseAt < 450) {
+          if (inboundProgressTimer === null) {
+            inboundProgressTimer = setTimeout(() => {
+              inboundProgressTimer = null
+              scheduleInboundProgressMerge(pendingInboundProgressEnvelopes, true)
+            }, Math.max(0, 450 - (now - lastInboundProgressParseAt)))
+          }
+          return
+        }
+
+        lastInboundProgressParseAt = now
+        const parseSequence = inboundProgressParseSequence + 1
+        inboundProgressParseSequence = parseSequence
+        const latestInboundEvents = selectLatestReplaceableEventsByPubkey(
+          pendingInboundProgressEnvelopes,
+        )
+        pendingInboundProgressEnvelopes = []
+
+        void collectInboundFollowerEvidence(
+          ctx.eventsWorker,
+          latestInboundEvents,
+          rootPubkey,
+        )
+          .then((progressiveEvidence) => {
+            if (
+              isStaleLoad(loadId) ||
+              !discoveryProgressActive ||
+              parseSequence !== inboundProgressParseSequence ||
+              progressiveEvidence.followerPubkeys.length === 0
+            ) {
+              return
+            }
+
+            const acceptedFollowerPubkeys = mergeProgressiveInboundFollowers(
+              rootPubkey,
+              progressiveEvidence.followerPubkeys,
+              loadId,
+            )
+            const hydrationTargets = acceptedFollowerPubkeys.filter((pubkey) => {
+              if (progressivelyHydratedInboundPubkeys.has(pubkey)) {
+                return false
+              }
+
+              progressivelyHydratedInboundPubkeys.add(pubkey)
+              return true
+            })
+
+            if (hydrationTargets.length > 0) {
+              void collaborators.profileHydration
+                .hydrateNodeProfiles(
+                  hydrationTargets,
+                  relayUrls,
+                  () => isStaleLoad(loadId),
+                  {
+                    persistProfileEvent:
+                      collaborators.persistence.persistProfileEvent,
+                  },
+                )
+                .catch((error) => {
+                  console.warn(
+                    'Progressive inbound profile hydration failed:',
+                    error,
+                  )
+                })
+            }
+          })
+          .catch(() => {
+            publishVisibleLinkProgress(true)
+          })
+      }
 
       ctx.store.getState().setRootLoadState({
         message: `Consultando contact list kind:3 y followers inbound en ${relayUrls.length} relays activos...`,
@@ -323,11 +412,16 @@ export function createRootLoaderModule(
           onProgress: (progress) => {
             inboundCandidateEventCount = progress.eventCount
             lastRelayUrl = progress.latestEnvelope?.relayUrl ?? lastRelayUrl
+            scheduleInboundProgressMerge(progress.envelopes)
             publishVisibleLinkProgress()
           },
         }),
       ])
       discoveryProgressActive = false
+      if (inboundProgressTimer !== null) {
+        clearTimeout(inboundProgressTimer)
+        inboundProgressTimer = null
+      }
       if (isStaleLoad(loadId)) {
         return finalize(rootPubkey, createCancelledResult(relayUrls))
       }
@@ -713,6 +807,76 @@ export function createRootLoaderModule(
         ]),
       ),
     }
+  }
+  function mergeProgressiveInboundFollowers(
+    rootPubkey: string,
+    inboundFollowerPubkeys: readonly string[],
+    loadId: number,
+  ): string[] {
+    if (isStaleLoad(loadId)) {
+      return []
+    }
+
+    const state = ctx.store.getState()
+    if (state.rootNodePubkey !== rootPubkey || !state.nodes[rootPubkey]) {
+      return []
+    }
+
+    const discoveredAt = ctx.now()
+    const inboundNewNodes: GraphNode[] = Array.from(
+      new Set(
+        inboundFollowerPubkeys.filter((pubkey) => pubkey && pubkey !== rootPubkey),
+      ),
+    )
+      .filter((pubkey) => !state.nodes[pubkey])
+      .map((pubkey) => ({
+        pubkey,
+        keywordHits: 0,
+        discoveredAt,
+        profileState: 'loading' as const,
+        source: 'inbound' as const,
+      }))
+
+    const nodeResult =
+      inboundNewNodes.length > 0
+        ? state.upsertNodes(inboundNewNodes)
+        : { acceptedPubkeys: [], rejectedPubkeys: [] }
+    const freshState = ctx.store.getState()
+    const acceptedFollowerPubkeys = Array.from(
+      new Set(
+        inboundFollowerPubkeys.filter(
+          (pubkey) => pubkey !== rootPubkey && freshState.nodes[pubkey],
+        ),
+      ),
+    )
+
+    if (acceptedFollowerPubkeys.length === 0) {
+      return []
+    }
+
+    const existingInboundFollowers = new Set(
+      freshState.inboundAdjacency[rootPubkey] ?? [],
+    )
+    const followersNeedingLinks = acceptedFollowerPubkeys.filter(
+      (pubkey) => !existingInboundFollowers.has(pubkey),
+    )
+
+    freshState.upsertInboundLinks(
+      followersNeedingLinks.map((pubkey) => ({
+        source: pubkey,
+        target: rootPubkey,
+        relation: 'inbound' as const,
+      })),
+    )
+
+    if (
+      nodeResult.acceptedPubkeys.length > 0 ||
+      followersNeedingLinks.length > 0
+    ) {
+      collaborators.analysis.schedule()
+    }
+
+    return acceptedFollowerPubkeys
   }
   function captureExpandedNeighborhood(
     rootPubkey: string,

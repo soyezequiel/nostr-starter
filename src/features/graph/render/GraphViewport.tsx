@@ -1,6 +1,6 @@
-import { DeckGraphRenderer } from '@/features/graph/render/DeckGraphRenderer'
 import type { RenderConfig } from '@/features/graph/app/store/types'
 import type { GraphViewState } from '@/features/graph/render/graphViewState'
+import { GraphViewportLazy } from '@/features/graph/render/GraphViewportLazy'
 import type {
   ImageFrameState,
   ImageRendererDeliverySnapshot,
@@ -56,26 +56,24 @@ export function GraphViewport({
   comparedNodePubkeys,
 }: GraphViewportProps) {
   return (
-    <>
-      <DeckGraphRenderer
-        height={height}
-        hoveredNodePubkey={hoveredNodePubkey}
-        hoveredEdgeId={hoveredEdgeId}
-        hoveredEdgePubkeys={hoveredEdgePubkeys}
-        selectedNodePubkey={selectedNodePubkey}
-        model={model}
-        nodeScreenRadii={nodeScreenRadii}
-        visibleLabels={visibleLabels}
-        imageFrame={imageFrame}
-        onAvatarRendererDelivery={onAvatarRendererDelivery}
-        onHoverGraph={onHoverGraph}
-        onSelectNode={onSelectNode}
-        onViewStateChange={onViewStateChange}
-        viewState={viewState}
-        width={width}
-        renderConfig={renderConfig}
-        comparedNodePubkeys={comparedNodePubkeys}
-      />
-    </>
+    <GraphViewportLazy
+      height={height}
+      hoveredNodePubkey={hoveredNodePubkey}
+      hoveredEdgeId={hoveredEdgeId}
+      hoveredEdgePubkeys={hoveredEdgePubkeys}
+      selectedNodePubkey={selectedNodePubkey}
+      model={model}
+      nodeScreenRadii={nodeScreenRadii}
+      visibleLabels={visibleLabels}
+      imageFrame={imageFrame}
+      onAvatarRendererDelivery={onAvatarRendererDelivery}
+      onHoverGraph={onHoverGraph}
+      onSelectNode={onSelectNode}
+      onViewStateChange={onViewStateChange}
+      viewState={viewState}
+      width={width}
+      renderConfig={renderConfig}
+      comparedNodePubkeys={comparedNodePubkeys}
+    />
   )
 }
