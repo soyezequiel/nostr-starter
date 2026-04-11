@@ -149,7 +149,7 @@ interface GraphCanvasProps {
   onTrySampleRoot: () => void
   onDiagnosticsChange?: (snapshot: GraphCanvasDiagnostics | null) => void
 }
-
+// naranja
 const EMPTY_IMAGE_FRAME = createEmptyImageRenderPayload()
 const EMPTY_IMAGE_DIAGNOSTICS = createEmptyImageResidencySnapshot()
 const EMPTY_NODE_SCREEN_RADII = new Map<string, number>()
