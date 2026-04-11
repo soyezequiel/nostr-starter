@@ -1,6 +1,6 @@
 # Invariantes Deterministicos
 
-> Generado por la capa deterministica de context-artifact-generator. sourceRevision=9287f02
+> Generado por la capa deterministica de context-artifact-generator. sourceRevision=6989c5d
 
 - El orden de artefactos es lexical y estable por ruta.
 - El Markdown se renderiza desde templates fijos.

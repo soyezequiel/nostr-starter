@@ -1,6 +1,6 @@
 # Mapa del Repositorio
 
-> Generado por la capa deterministica de context-artifact-generator. sourceRevision=9287f02
+> Generado por la capa deterministica de context-artifact-generator. sourceRevision=6989c5d
 
 ## Proposito del Proyecto
 Package nostr-starter.

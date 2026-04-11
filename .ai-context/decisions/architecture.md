@@ -1,6 +1,6 @@
 # Notas de Arquitectura
 
-> Generado por la capa deterministica de context-artifact-generator. sourceRevision=9287f02
+> Generado por la capa deterministica de context-artifact-generator. sourceRevision=6989c5d
 
 ## Capa 1: Extractor Deterministico
 - Escaneo de filesystem, hashing, ownership de modulos, extraccion de imports/exports, indices de simbolos y render con templates fijos.

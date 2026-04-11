@@ -4455,7 +4455,7 @@
         "src/types/nostr.d.ts",
         "tsconfig.json"
       ],
-      "hash": "8f429e989da6af18ced6f86de14532b6c56fcb58a9dddff04b27382f6726d051"
+      "hash": "a4f1669e154d5562379caa20a902d2bdf033dc28a347915883c71c7037ca65b9"
     },
     "decisions/invariants.md": {
       "dependencies": [
@@ -5068,7 +5068,7 @@
         "src/types/nostr.d.ts",
         "tsconfig.json"
       ],
-      "hash": "f509b12c99b6573444765e54e69c1a7073c3a6efbc3af4f7ee3f3377c5c4160a"
+      "hash": "bcad8a4b88ed1a633bb419c6981eb6bbd62804b534d1e039556fb7096f74e7ef"
     },
     "flows/entrypoints.md": {
       "dependencies": [
@@ -5681,7 +5681,7 @@
         "src/types/nostr.d.ts",
         "tsconfig.json"
       ],
-      "hash": "cae51bbc22ea226d049e0567cda0198a9857a28ce0d24165604448dba9be73e9"
+      "hash": "8b90c42e51b26afbbdb5f8b8b4fc313124992163bd9c62da150cfd802f3eae6a"
     },
     "modules/.claude.md": {
       "dependencies": [
@@ -6962,7 +6962,7 @@
         "src/types/nostr.d.ts",
         "tsconfig.json"
       ],
-      "hash": "1adbf08500cdeab64d75d99124db1c2edfc0fd32fbcca3b633ca73789c93bc80"
+      "hash": "16491ba970112f81ec75427adebfaa31e78b16240853367a45163b5488acf65e"
     },
     "symbols/.claude.symbols.json": {
       "dependencies": [
@@ -7633,7 +7633,7 @@
       "hash": "f78c2e5d633803cc7c4dd7d55b9023fb7ca3508b25781a5424bccc9f83d5c16d"
     }
   },
-  "generatedAt": "2026-04-11T15:31:18.702Z",
+  "generatedAt": "2026-04-11T15:39:47.834Z",
   "schemaVersion": 1,
   "sourceFiles": {
     ".claude/launch.json": {
@@ -18838,6 +18838,6 @@
       "symbolNames": []
     }
   },
-  "sourceRevision": "9287f02",
+  "sourceRevision": "6989c5d",
   "toolVersion": "0.1.0"
 }
