@@ -110,6 +110,7 @@ export default function DevCacheButton() {
         }}
       />
       <span
+        className="dev-cache-labels"
         style={{
           display: 'grid',
           gap: '2px',

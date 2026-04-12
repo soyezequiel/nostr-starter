@@ -11,7 +11,6 @@ import type { RenderConfig } from '@/features/graph/app/store/types'
 import type { GraphViewState } from '@/features/graph/render/graphViewState'
 import {
   COMMON_FOLLOW_NODE_COLOR,
-  CONNECTIONS_FOLLOW_COLOR,
   CONNECTIONS_INBOUND_COLOR,
   EXPANDED_RING_COLOR,
   HIGHLIGHT_LINK_COLOR,
@@ -27,6 +26,10 @@ import {
   buildGraphSceneGeometry,
   createGraphSceneGeometrySignature,
 } from '@/features/graph/render/graphSceneGeometry'
+import {
+  buildArrowMarkerData,
+  type ArrowMarkerDatum,
+} from '@/features/graph/render/arrowMarkers'
 import {
   createEmptyImageRenderPayload,
   type ImageRenderPayload,
@@ -51,7 +54,181 @@ import type {
   GraphRenderNode,
 } from '@/features/graph/render/types'
 
-const fallbackAvatarUrl = '/graph-assets/avatar-fallback.svg'
+const fallbackAvatarUrl =
+  'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGNpcmNsZSBjeD0iNjQiIGN5PSI2NCIgcj0iNjQiIGZpbGw9IiMxMDIwMzMiLz4KICA8Y2lyY2xlIGN4PSI2NCIgY3k9IjY0IiByPSI2MCIgZmlsbD0idXJsKCNhdmF0YXItZmFsbGJhY2stYmcpIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4xOCkiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxjaXJjbGUgY3g9IjY0IiBjeT0iNDgiIHI9IjIwIiBmaWxsPSIjRDlFM0YwIi8+CiAgPHBhdGggZD0iTTMxIDk3LjVDMzUuNyA4MC45IDQ4LjcgNzIgNjQgNzJDNzkuMyA3MiA5Mi4zIDgwLjkgOTcgOTcuNSIgZmlsbD0iI0Q5RTNGMCIvPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJhdmF0YXItZmFsbGJhY2stYmciIHgxPSIyMCIgeTE9IjE4IiB4Mj0iMTA4IiB5Mj0iMTE2IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIHN0b3AtY29sb3I9IiMxRTNBNUYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMEYxQzJEIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KPC9zdmc+'
+const GRAPH_ARROW_ATLAS_CELL_PX = 64
+const GRAPH_ARROW_ATLAS_WIDTH_PX = GRAPH_ARROW_ATLAS_CELL_PX * 4
+const GRAPH_ARROW_ATLAS_HEIGHT_PX = GRAPH_ARROW_ATLAS_CELL_PX
+const GRAPH_ARROW_ANCHOR_X = GRAPH_ARROW_ATLAS_CELL_PX - 4
+const GRAPH_ARROW_ANCHOR_Y = GRAPH_ARROW_ATLAS_CELL_PX / 2
+
+type ArrowIconMappingEntry = {
+  x: number
+  y: number
+  width: number
+  height: number
+  anchorX: number
+  anchorY: number
+  mask: boolean
+}
+
+type ArrowIconAtlasAssets = {
+  iconAtlas: HTMLCanvasElement
+  iconMapping: Record<
+    'triangle' | 'triangle-bidirectional' | 'chevron' | 'chevron-bidirectional',
+    ArrowIconMappingEntry
+  >
+}
+
+let graphArrowAtlasAssets: ArrowIconAtlasAssets | null = null
+
+const drawTriangleArrow = (ctx: CanvasRenderingContext2D) => {
+  ctx.beginPath()
+  ctx.moveTo(6, 8)
+  ctx.lineTo(60, 32)
+  ctx.lineTo(6, 56)
+  ctx.closePath()
+  ctx.fill()
+}
+
+const drawBidirectionalTriangleArrow = (ctx: CanvasRenderingContext2D) => {
+  ctx.beginPath()
+  ctx.moveTo(4, 32)
+  ctx.lineTo(20, 18)
+  ctx.lineTo(20, 27)
+  ctx.lineTo(44, 27)
+  ctx.lineTo(44, 18)
+  ctx.lineTo(60, 32)
+  ctx.lineTo(44, 46)
+  ctx.lineTo(44, 37)
+  ctx.lineTo(20, 37)
+  ctx.lineTo(20, 46)
+  ctx.closePath()
+  ctx.fill()
+}
+
+const drawChevronArrow = (ctx: CanvasRenderingContext2D) => {
+  ctx.beginPath()
+  ctx.moveTo(6, 32)
+  ctx.lineTo(30, 8)
+  ctx.lineTo(48, 8)
+  ctx.lineTo(22, 32)
+  ctx.lineTo(48, 56)
+  ctx.lineTo(30, 56)
+  ctx.closePath()
+  ctx.fill()
+}
+
+const drawBidirectionalChevronArrow = (ctx: CanvasRenderingContext2D) => {
+  ctx.beginPath()
+  ctx.moveTo(4, 32)
+  ctx.lineTo(18, 18)
+  ctx.lineTo(26, 18)
+  ctx.lineTo(14, 32)
+  ctx.lineTo(26, 46)
+  ctx.lineTo(18, 46)
+  ctx.closePath()
+  ctx.fill()
+
+  ctx.fillRect(20, 29, 24, 6)
+
+  ctx.beginPath()
+  ctx.moveTo(60, 32)
+  ctx.lineTo(46, 18)
+  ctx.lineTo(38, 18)
+  ctx.lineTo(50, 32)
+  ctx.lineTo(38, 46)
+  ctx.lineTo(46, 46)
+  ctx.closePath()
+  ctx.fill()
+}
+
+const getGraphArrowAtlasAssets = (): ArrowIconAtlasAssets | null => {
+  if (graphArrowAtlasAssets !== null) {
+    return graphArrowAtlasAssets
+  }
+
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = GRAPH_ARROW_ATLAS_WIDTH_PX
+  canvas.height = GRAPH_ARROW_ATLAS_HEIGHT_PX
+
+  const ctx = canvas.getContext('2d')
+  if (ctx === null) {
+    return null
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#ffffff'
+  ctx.imageSmoothingEnabled = true
+
+  ctx.save()
+  ctx.translate(0, 0)
+  drawTriangleArrow(ctx)
+  ctx.restore()
+
+  ctx.save()
+  ctx.translate(GRAPH_ARROW_ATLAS_CELL_PX, 0)
+  drawBidirectionalTriangleArrow(ctx)
+  ctx.restore()
+
+  ctx.save()
+  ctx.translate(GRAPH_ARROW_ATLAS_CELL_PX * 2, 0)
+  drawChevronArrow(ctx)
+  ctx.restore()
+
+  ctx.save()
+  ctx.translate(GRAPH_ARROW_ATLAS_CELL_PX * 3, 0)
+  drawBidirectionalChevronArrow(ctx)
+  ctx.restore()
+
+  graphArrowAtlasAssets = {
+    iconAtlas: canvas,
+    iconMapping: {
+      triangle: {
+        x: 0,
+        y: 0,
+        width: GRAPH_ARROW_ATLAS_CELL_PX,
+        height: GRAPH_ARROW_ATLAS_CELL_PX,
+        anchorX: GRAPH_ARROW_ANCHOR_X,
+        anchorY: GRAPH_ARROW_ANCHOR_Y,
+        mask: true,
+      },
+      'triangle-bidirectional': {
+        x: GRAPH_ARROW_ATLAS_CELL_PX,
+        y: 0,
+        width: GRAPH_ARROW_ATLAS_CELL_PX,
+        height: GRAPH_ARROW_ATLAS_CELL_PX,
+        anchorX: GRAPH_ARROW_ATLAS_CELL_PX / 2,
+        anchorY: GRAPH_ARROW_ANCHOR_Y,
+        mask: true,
+      },
+      chevron: {
+        x: GRAPH_ARROW_ATLAS_CELL_PX * 2,
+        y: 0,
+        width: GRAPH_ARROW_ATLAS_CELL_PX,
+        height: GRAPH_ARROW_ATLAS_CELL_PX,
+        anchorX: GRAPH_ARROW_ANCHOR_X,
+        anchorY: GRAPH_ARROW_ANCHOR_Y,
+        mask: true,
+      },
+      'chevron-bidirectional': {
+        x: GRAPH_ARROW_ATLAS_CELL_PX * 3,
+        y: 0,
+        width: GRAPH_ARROW_ATLAS_CELL_PX,
+        height: GRAPH_ARROW_ATLAS_CELL_PX,
+        anchorX: GRAPH_ARROW_ATLAS_CELL_PX / 2,
+        anchorY: GRAPH_ARROW_ANCHOR_Y,
+        mask: true,
+      },
+    },
+  }
+
+  return graphArrowAtlasAssets
+}
 
 type GraphSceneLayerProps = {
   model: GraphRenderModel
@@ -400,17 +577,17 @@ const getCommonFollowNodes = (nodes: readonly GraphRenderNode[]) =>
 
 const getFirstDegreeNeighborPubkeys = (
   edges: readonly GraphRenderEdge[],
-  hoveredNodePubkey: string | null,
+  focusNodePubkey: string | null,
 ) => {
-  if (hoveredNodePubkey === null) {
+  if (focusNodePubkey === null) {
     return null
   }
 
   const neighbors = new Set<string>()
   for (const edge of edges) {
-    if (edge.source === hoveredNodePubkey) {
+    if (edge.source === focusNodePubkey) {
       neighbors.add(edge.target)
-    } else if (edge.target === hoveredNodePubkey) {
+    } else if (edge.target === focusNodePubkey) {
       neighbors.add(edge.source)
     }
   }
@@ -434,7 +611,7 @@ type DebugAvatarIconLayerProps = {
 type GraphSceneTopologyCacheEntry = {
   signature: string
   geometry: ReturnType<typeof buildGraphSceneGeometry>
-  arrowData: ReadonlyArray<ReturnType<typeof buildGraphSceneGeometry>['segments'][number]>
+  arrowData: ReadonlyArray<ArrowMarkerDatum>
   maxZapWeight: number
   sharedEmphasisNodes: readonly GraphRenderNode[]
   commonFollowNodes: readonly GraphRenderNode[]
@@ -494,24 +671,9 @@ const getGraphSceneTopologyData = (
   const nextEntry: GraphSceneTopologyCacheEntry = {
     signature,
     geometry,
-    arrowData: geometry.segments.flatMap((segment) => {
-      const arrows: (typeof segment)[] = []
-      if (segment.progressEnd === 1) {
-        arrows.push(segment)
-      }
-      if (segment.progressStart === 0 && segment.isBidirectional === true) {
-        // Create a synthetic reversed segment for the backward arrow
-        arrows.push({
-          ...segment,
-          source: segment.target,
-          target: segment.source,
-          sourcePosition: segment.targetPosition,
-          targetPosition: segment.sourcePosition,
-          progressStart: 0.1,
-          progressEnd: 1,
-        })
-      }
-      return arrows
+    arrowData: buildArrowMarkerData({
+      segments: geometry.segments,
+      arrowType: model.renderConfig.arrowType,
     }),
     maxZapWeight: model.edges.reduce(
       (maxWeight, edge) => Math.max(maxWeight, edge.weight),
@@ -951,9 +1113,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         segment,
         context: visibleGeometryContext,
       })
+    const focusNodePubkey = hoveredNodePubkey ?? selectedNodePubkey
     const focusedNeighborPubkeys = getFirstDegreeNeighborPubkeys(
       model.edges,
-      hoveredNodePubkey,
+      focusNodePubkey,
     )
 
     const applyFocusFade = (
@@ -963,17 +1126,17 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       target?: string,
     ): [number, number, number, number] => {
       const alpha = color[3] ?? 255
-      if (hoveredNodePubkey === null) {
+      if (focusNodePubkey === null) {
         return [color[0], color[1], color[2], alpha]
       }
 
-      let matched = false;
+      let matched = false
       if (opMode === 'edge') {
         matched =
-          pubkeyOrSource === hoveredNodePubkey || target === hoveredNodePubkey
+          pubkeyOrSource === focusNodePubkey || target === focusNodePubkey
       } else {
         matched =
-          pubkeyOrSource === hoveredNodePubkey ||
+          pubkeyOrSource === focusNodePubkey ||
           focusedNeighborPubkeys?.has(pubkeyOrSource) === true
       }
 
@@ -1005,6 +1168,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
     })
 
     const visibleArrowData = arrowType !== 'none' ? arrowData : []
+    const arrowAtlasAssets = getGraphArrowAtlasAssets()
 
     const baseAvatarLayerId = `${this.props.id}-avatars-base`
     const avatarAtlas = getRendererAvatarAtlas(baseAvatarLayerId, {
@@ -1125,7 +1289,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               updateTriggers: {
                 getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
                 getIcon: [hdReadyImageSignature, page.revision, page.key],
-                getColor: [hoveredNodePubkey],
+                getColor: [hoveredNodePubkey, selectedNodePubkey],
               },
               explicitFailedPubkeys: [],
               onDeliveryDebug: (snapshot) => {
@@ -1217,11 +1381,13 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       }),
       ...(visibleArrowData.length > 0
         ? [
-            new TextLayer({
+            new IconLayer({
               id: `${this.props.id}-arrows`,
               data: visibleArrowData,
               pickable: false,
-              sizeUnits: 'common',
+              sizeUnits: 'pixels',
+              iconAtlas: arrowAtlasAssets?.iconAtlas ?? undefined,
+              iconMapping: arrowAtlasAssets?.iconMapping ?? undefined,
               getPosition: (segment) =>
                 getVisibleArrowPlacement({
                   segment,
@@ -1232,7 +1398,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   segment,
                   context: visibleGeometryContext,
                 }).angle,
-              getText: () => (arrowType === 'triangle' ? '▶' : '➤'),
+              getIcon: (segment: ArrowMarkerDatum) => segment.arrowIcon,
               getColor: (segment) => {
                 const color = getEdgeColor(
                   segment,
@@ -1252,7 +1418,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   color[0],
                   color[1],
                   color[2],
-                  Math.round(200 * edgeOpacity),
+                  Math.round(220 * edgeOpacity),
                 ] as const
                 return applyFocusFade(
                   arrowColor,
@@ -1262,7 +1428,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 )
               },
               getSize: (segment) =>
-                (getEdgeWidth(
+                getEdgeWidth(
                   segment,
                   maxZapWeight,
                   hoveredNodePubkey,
@@ -1272,14 +1438,11 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   hasPathHighlight,
                 ) *
                   edgeThickness *
-                  6 +
-                4) / viewScale,
-              getTextAnchor: 'end',
-              getAlignmentBaseline: 'center',
-              fontFamily: 'system-ui, sans-serif',
-              characterSet: 'auto',
+                  1.5 +
+                10,
               transitions: { getColor: 200, getSize: 200 },
               updateTriggers: {
+                getIcon: [arrowType],
                 getColor: [
                   hoveredNodePubkey,
                   hoveredEdgeId,
@@ -1342,8 +1505,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
                 getLineWidth: [viewState.zoom],
-                getLineColor: [hoveredNodePubkey],
-                getFillColor: [hoveredNodePubkey],
+                getLineColor: [hoveredNodePubkey, selectedNodePubkey],
+                getFillColor: [hoveredNodePubkey, selectedNodePubkey],
               },
             }),
           ]
@@ -1388,11 +1551,12 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             nodeScreenRadii,
             nodeSizeFactor,
             hoveredNodePubkey,
+            selectedNodePubkey,
             hoveredEdgePubkeys.join(','),
             viewState.zoom,
           ],
-          getFillColor: [hoveredNodePubkey],
-          getLineColor: [hoveredNodePubkey],
+          getFillColor: [hoveredNodePubkey, selectedNodePubkey],
+          getLineColor: [hoveredNodePubkey, selectedNodePubkey],
           getLineWidth: [viewState.zoom],
         },
       }),
@@ -1416,7 +1580,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               transitions: { getLineColor: 200 },
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
-                getLineColor: [hoveredNodePubkey],
+                getLineColor: [hoveredNodePubkey, selectedNodePubkey],
                 getLineWidth: [viewState.zoom],
               },
             }),
@@ -1438,8 +1602,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         transitions: { getFillColor: 200, getLineColor: 200 },
         updateTriggers: {
           getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
-          getFillColor: [hoveredNodePubkey],
-          getLineColor: [hoveredNodePubkey],
+          getFillColor: [hoveredNodePubkey, selectedNodePubkey],
+          getLineColor: [hoveredNodePubkey, selectedNodePubkey],
           getLineWidth: [viewState.zoom],
         },
       }),
@@ -1469,6 +1633,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             hoveredNodePubkey,
+            selectedNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
@@ -1514,12 +1679,14 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             hoveredNodePubkey,
+            selectedNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
           ],
           getLineColor: [
             hoveredNodePubkey,
+            selectedNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
           ],
@@ -1552,6 +1719,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             hoveredNodePubkey,
+            selectedNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
@@ -1576,7 +1744,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         }),
         updateTriggers: {
           getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
-          getColor: [hoveredNodePubkey],
+          getColor: [hoveredNodePubkey, selectedNodePubkey],
         },
       }),
       ...avatarLayers,
@@ -1597,7 +1765,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 applyFocusFade([148, 163, 184, 132], 'node', node.pubkey),
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
-                getFillColor: [hoveredNodePubkey],
+                getFillColor: [hoveredNodePubkey, selectedNodePubkey],
               },
             }),
           ]
@@ -1629,9 +1797,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         characterSet: 'auto',
         updateTriggers: {
           getPixelOffset: [nodeScreenRadii, nodeSizeFactor],
-          getColor: [hoveredNodePubkey],
-          getBackgroundColor: [hoveredNodePubkey],
-          getBorderColor: [hoveredNodePubkey],
+          getColor: [hoveredNodePubkey, selectedNodePubkey],
+          getBackgroundColor: [hoveredNodePubkey, selectedNodePubkey],
+          getBorderColor: [hoveredNodePubkey, selectedNodePubkey],
         },
       }),
     ]

@@ -240,21 +240,22 @@ export const buildGraphSceneGeometry = (
   )
 
   for (const edge of sortedEdges) {
-    if (edge.relation !== 'follow') {
+    if (edge.relation !== 'follow' && edge.relation !== 'mutual') {
       segments.push(...buildStraightEdgeSegments(edge))
       continue
     }
 
+    const isExplicitMutual = edge.relation === 'mutual'
     const hasOpposingFollow = directedFollowKeys.has(
       createDirectedFollowKey(edge.target, edge.source),
     )
 
-    if (!hasOpposingFollow) {
+    if (!isExplicitMutual && !hasOpposingFollow) {
       segments.push(...buildStraightEdgeSegments(edge))
       continue
     }
 
-    // Mutual follow (A follows B AND B follows A). 
+    // Mutual relation or follow.
     // We consolidate this into a single straight bidirectional edge.
     // To ensure determinism, we only process the edge where source < target.
     if (edge.source.localeCompare(edge.target) < 0) {

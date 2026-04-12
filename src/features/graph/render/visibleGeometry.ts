@@ -64,7 +64,13 @@ const adjustSegmentEndpoint = ({
     return [to[0], to[1]]
   }
 
-  return [to[0] - (dx / length) * paddingWorld, to[1] - (dy / length) * paddingWorld]
+  // Cap padding per-endpoint to avoid crossing.
+  const safePadding = Math.min(paddingWorld, length * 0.45)
+
+  return [
+    to[0] - (dx / length) * safePadding,
+    to[1] - (dy / length) * safePadding,
+  ]
 }
 
 export const getVisibleNodeRadius = ({
@@ -87,7 +93,8 @@ export const getVisibleEdgeEndpoints = ({
   context: VisibleGeometryContext
 }) => {
   const { nodeByPubkey, nodeScreenRadii, nodeSizeFactor, viewState } = context
-  const viewScale = Math.max(Number.MIN_VALUE, Math.pow(2, viewState.zoom))
+  const zoom = Number.isFinite(viewState.zoom) ? viewState.zoom : 0
+  const viewScale = Math.max(Number.MIN_VALUE, Math.pow(2, zoom))
   let sourcePosition = segment.sourcePosition
   let targetPosition = segment.targetPosition
 
@@ -145,7 +152,8 @@ export const getVisibleArrowPlacement = ({
     segment,
     context,
   })
-  const viewScale = Math.max(Number.MIN_VALUE, Math.pow(2, context.viewState.zoom))
+  const zoom = Number.isFinite(context.viewState.zoom) ? context.viewState.zoom : 0
+  const viewScale = Math.max(Number.MIN_VALUE, Math.pow(2, zoom))
   const dx = targetPosition[0] - sourcePosition[0]
   const dy = targetPosition[1] - sourcePosition[1]
   const length = Math.hypot(dx, dy)
@@ -157,11 +165,16 @@ export const getVisibleArrowPlacement = ({
     }
   }
 
+  // Cap arrow compensation to not fly too far away from the edge.
+  // When zoom is very low, screen-space padding can exceed world-space length.
+  const compensationWorld = (ARROW_TARGET_COMPENSATION_PX / viewScale)
+  const safeCompensation = Math.min(compensationWorld, length * 0.4)
+
   return {
     angle: ((-Math.atan2(dy, dx) * 180) / Math.PI),
     position: [
-      targetPosition[0] + (dx / length) * (ARROW_TARGET_COMPENSATION_PX / viewScale),
-      targetPosition[1] + (dy / length) * (ARROW_TARGET_COMPENSATION_PX / viewScale),
+      targetPosition[0] + (dx / length) * safeCompensation,
+      targetPosition[1] + (dy / length) * safeCompensation,
     ] as [number, number],
   }
 }
