@@ -172,6 +172,23 @@ export class RelayPoolAdapter {
     options: { timeoutMs: number; id: string },
   ): Promise<RelayCountResult> {
     const startedAtMs = this.clock.now()
+    const health = this.relayHealth.get(url)
+
+    // Circuit breaker: stop hammering relays that have recently failed.
+    if (
+      health &&
+      health.status === 'offline' &&
+      this.clock.now() - health.lastChangeMs < 60_000
+    ) {
+      return {
+        relayUrl: url,
+        count: null,
+        supported: false,
+        elapsedMs: 0,
+        errorMessage: 'Relay is temporarily skipped due to offline status.',
+      }
+    }
+
     let connection: RelayConnection
 
     try {
@@ -438,6 +455,20 @@ export class RelayPoolAdapter {
     }
 
     const startRelay = async (url: string, attemptNumber: number) => {
+      if (attemptNumber === 1) {
+        const health = this.relayHealth.get(url)
+        // Circuit breaker: hold off retrying dead relays for 60s to prevent spamming
+        // the console with native WebSocket trace logs on batch requests.
+        if (
+          health &&
+          health.status === 'offline' &&
+          this.clock.now() - health.lastChangeMs < 60_000
+        ) {
+          finishRelay(url)
+          return
+        }
+      }
+
       const activeAttempt: ActiveRelayAttempt = {
         url,
         attempt: attemptNumber,
@@ -492,7 +523,12 @@ export class RelayPoolAdapter {
 
         if (attemptNumber <= this.retryCount && !cancelled) {
           this.evictConnection(url)
-          void startRelay(url, attemptNumber + 1)
+          await new Promise<void>((resolve) =>
+            this.clock.setTimeout(resolve, 500 * attemptNumber),
+          )
+          if (!cancelled) {
+            void startRelay(url, attemptNumber + 1)
+          }
           return
         }
 
@@ -629,7 +665,12 @@ export class RelayPoolAdapter {
 
         if (attemptNumber <= this.retryCount && !cancelled) {
           this.evictConnection(url)
-          void startRelay(url, attemptNumber + 1)
+          await new Promise<void>((resolve) =>
+            this.clock.setTimeout(resolve, 500 * attemptNumber),
+          )
+          if (!cancelled) {
+            void startRelay(url, attemptNumber + 1)
+          }
           return
         }
 
