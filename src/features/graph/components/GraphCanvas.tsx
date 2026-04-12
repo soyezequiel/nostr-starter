@@ -218,6 +218,11 @@ const isRelationshipLayer = (layer: AppStore['activeLayer']) =>
   layer === 'nonreciprocal-followers' ||
   layer === 'mutuals'
 
+const resolveRelationshipControlLayer = (
+  activeLayer: AppStore['activeLayer'],
+  connectionsSourceLayer: AppStore['connectionsSourceLayer'],
+) => (activeLayer === 'connections' ? connectionsSourceLayer : activeLayer)
+
 const getRelationshipToggleState = (activeLayer: AppStore['activeLayer']) => ({
   following:
     activeLayer === 'following' ||
@@ -544,6 +549,7 @@ const GraphProgressMetricRow = memo(function GraphProgressMetricRow({
 const emptyStateCopy = (
   status: ReturnType<typeof deriveGraphRenderState>,
   activeLayer: AppStore['activeLayer'],
+  connectionsSourceLayer: AppStore['connectionsSourceLayer'],
 ) => {
   if (status.reasons.includes('worker-error')) {
     return {
@@ -560,9 +566,21 @@ const emptyStateCopy = (
   }
 
   if (activeLayer === 'connections') {
+    const sourceCopy =
+      connectionsSourceLayer === 'following'
+        ? 'entre las cuentas que sigue el root'
+        : connectionsSourceLayer === 'following-non-followers'
+          ? 'entre las cuentas que sigue el root sin follow-back'
+          : connectionsSourceLayer === 'followers'
+            ? 'entre las cuentas que siguen al root'
+            : connectionsSourceLayer === 'nonreciprocal-followers'
+              ? 'entre las cuentas que siguen al root sin reciprocidad'
+              : connectionsSourceLayer === 'mutuals'
+                ? 'entre las cuentas con relacion reciproca con el root'
+                : 'entre los nodos visibles de la vista desde la que entraste'
     return {
       title: 'Todavia no hay conexiones internas visibles.',
-      body: 'Esta vista muestra solo enlaces internos entre los nodos visibles de la vista desde la que entraste.',
+      body: `Esta vista muestra solo enlaces internos ${sourceCopy}.`,
     }
   }
 
@@ -2058,20 +2076,55 @@ export const GraphCanvas = memo(function GraphCanvas({
     [runtime],
   )
 
-  const relationshipToggleState = getRelationshipToggleState(activeLayer)
+  const setConnectionsSourceLayer = useAppStore(
+    (storeState) => storeState.setConnectionsSourceLayer,
+  )
+  const relationshipControlLayer = resolveRelationshipControlLayer(
+    activeLayer,
+    connectionsSourceLayer,
+  )
+  const relationshipToggleState = getRelationshipToggleState(
+    relationshipControlLayer,
+  )
   const onlyOneRelationshipSideActive =
     relationshipToggleState.following !== relationshipToggleState.followers
   const canToggleOnlyNonReciprocal =
-    isRelationshipLayer(activeLayer) &&
+    isRelationshipLayer(relationshipControlLayer) &&
     (relationshipToggleState.following || relationshipToggleState.followers)
 
   const handleToggleRelationship = useCallback(
     (role: 'following' | 'followers') => {
-      const current = getRelationshipToggleState(activeLayer)
+      const current = getRelationshipToggleState(relationshipControlLayer)
       const nextFollowing =
         role === 'following' ? !current.following : current.following
       const nextFollowers =
         role === 'followers' ? !current.followers : current.followers
+
+      if (activeLayer === 'connections') {
+        if (!nextFollowing && !nextFollowers) {
+          setConnectionsSourceLayer('graph')
+          return
+        }
+
+        if (nextFollowing && nextFollowers) {
+          setConnectionsSourceLayer('mutuals')
+          return
+        }
+
+        if (nextFollowing) {
+          setConnectionsSourceLayer(
+            current.onlyNonReciprocal ? 'following-non-followers' : 'following',
+          )
+          return
+        }
+
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal
+            ? 'nonreciprocal-followers'
+            : 'followers',
+        )
+        return
+      }
 
       if (!nextFollowing && !nextFollowers) {
         runtime.toggleLayer('graph')
@@ -2096,13 +2149,31 @@ export const GraphCanvas = memo(function GraphCanvas({
           : 'followers',
       )
     },
-    [activeLayer, runtime],
+    [activeLayer, relationshipControlLayer, runtime, setConnectionsSourceLayer],
   )
 
   const handleToggleOnlyNonReciprocal = useCallback(() => {
-    const current = getRelationshipToggleState(activeLayer)
+    const current = getRelationshipToggleState(relationshipControlLayer)
 
     if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) {
+      return
+    }
+
+    if (activeLayer === 'connections') {
+      if (current.following) {
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal ? 'following' : 'following-non-followers',
+        )
+        return
+      }
+
+      if (current.followers) {
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal
+            ? 'followers'
+            : 'nonreciprocal-followers',
+        )
+      }
       return
     }
 
@@ -2124,7 +2195,9 @@ export const GraphCanvas = memo(function GraphCanvas({
     activeLayer,
     canToggleOnlyNonReciprocal,
     onlyOneRelationshipSideActive,
+    relationshipControlLayer,
     runtime,
+    setConnectionsSourceLayer,
   ])
 
   useEffect(() => {
@@ -2138,7 +2211,11 @@ export const GraphCanvas = memo(function GraphCanvas({
     setHeavyWorkViewState(resolvedViewState)
   }, [fitSignature, resolvedViewState])
 
-  const overlayCopy = emptyStateCopy(renderState, activeLayer)
+  const overlayCopy = emptyStateCopy(
+    renderState,
+    activeLayer,
+    connectionsSourceLayer,
+  )
   const activeNodeExpansions = useMemo<ActiveNodeExpansion[]>(
     () =>
       Object.entries(nodeExpansionStates)
@@ -2373,7 +2450,17 @@ export const GraphCanvas = memo(function GraphCanvas({
     : isRootDiscoveryProgressActive
       ? rootDiscoveryStatusCopy ?? 'Buscando links visibles'
     : activeLayer === 'connections'
-      ? `${model.edges.length} conexiones internas`
+      ? connectionsSourceLayer === 'following'
+        ? `${model.edges.length} conexiones internas entre cuentas que sigo`
+        : connectionsSourceLayer === 'following-non-followers'
+          ? `${model.edges.length} conexiones entre cuentas que sigo sin reciprocidad`
+          : connectionsSourceLayer === 'followers'
+            ? `${model.edges.length} conexiones internas entre cuentas que me siguen`
+            : connectionsSourceLayer === 'nonreciprocal-followers'
+              ? `${model.edges.length} conexiones entre seguidores sin reciprocidad`
+              : connectionsSourceLayer === 'mutuals'
+                ? `${model.edges.length} conexiones internas entre mutuos`
+                : `${model.edges.length} conexiones internas`
     : activeLayer === 'following'
       ? `${model.edges.length} seguidos visibles`
     : activeLayer === 'following-non-followers'
@@ -2398,8 +2485,28 @@ export const GraphCanvas = memo(function GraphCanvas({
   const layerStatusNote =
     activeLayer === 'connections'
       ? model.edges.length > 0
-        ? 'Solo enlaces internos entre los nodos visibles de la vista anterior.'
-        : 'Todavia no hay enlaces internos entre los nodos visibles de esa vista.'
+        ? connectionsSourceLayer === 'following'
+          ? 'Solo enlaces internos entre cuentas seguidas por el root.'
+          : connectionsSourceLayer === 'following-non-followers'
+            ? 'Solo enlaces internos entre cuentas seguidas por el root sin follow-back.'
+            : connectionsSourceLayer === 'followers'
+              ? 'Solo enlaces internos entre cuentas que siguen al root.'
+              : connectionsSourceLayer === 'nonreciprocal-followers'
+                ? 'Solo enlaces internos entre seguidores sin reciprocidad hacia el root.'
+                : connectionsSourceLayer === 'mutuals'
+                  ? 'Solo enlaces internos entre cuentas con relacion reciproca con el root.'
+                  : 'Solo enlaces internos entre los nodos visibles de la vista anterior.'
+        : connectionsSourceLayer === 'following'
+          ? 'Todavia no hay enlaces internos entre las cuentas que sigue el root.'
+          : connectionsSourceLayer === 'following-non-followers'
+            ? 'Todavia no hay enlaces internos entre las cuentas que sigue el root sin reciprocidad.'
+            : connectionsSourceLayer === 'followers'
+              ? 'Todavia no hay enlaces internos entre las cuentas que siguen al root.'
+              : connectionsSourceLayer === 'nonreciprocal-followers'
+                ? 'Todavia no hay enlaces internos entre seguidores sin reciprocidad.'
+                : connectionsSourceLayer === 'mutuals'
+                  ? 'Todavia no hay enlaces internos entre los mutuos detectados.'
+                  : 'Todavia no hay enlaces internos entre los nodos visibles de esa vista.'
     : activeLayer === 'following'
       ? model.edges.length > 0
         ? 'Cuentas seguidas por el root en esta sesion.'

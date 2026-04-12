@@ -31,9 +31,45 @@ interface GraphControlRailProps {
 
 const resolveControlFeedback = (
   activeLayer: AppStore['activeLayer'],
+  relationshipToggleState: RelationshipToggleState,
 ): ControlFeedback => {
   switch (activeLayer) {
     case 'connections':
+      if (
+        relationshipToggleState.following &&
+        relationshipToggleState.followers
+      ) {
+        return {
+          label: 'Viendo',
+          value: 'Conexiones entre mutuos',
+          detail: 'Solo enlaces internos entre cuentas con relacion reciproca con el root.',
+          tone: 'blue',
+        }
+      }
+      if (relationshipToggleState.following) {
+        return {
+          label: 'Viendo',
+          value: relationshipToggleState.onlyNonReciprocal
+            ? 'Conexiones entre sigo sin reciprocidad'
+            : 'Conexiones entre sigo',
+          detail: relationshipToggleState.onlyNonReciprocal
+            ? 'Subgrafo inducido sobre las cuentas que sigue el root y no devuelven follow.'
+            : 'Subgrafo inducido sobre las cuentas que sigue el root.',
+          tone: 'blue',
+        }
+      }
+      if (relationshipToggleState.followers) {
+        return {
+          label: 'Viendo',
+          value: relationshipToggleState.onlyNonReciprocal
+            ? 'Conexiones entre me siguen sin reciprocidad'
+            : 'Conexiones entre me siguen',
+          detail: relationshipToggleState.onlyNonReciprocal
+            ? 'Subgrafo inducido sobre cuentas que siguen al root sin recibir follow-back.'
+            : 'Subgrafo inducido sobre las cuentas que siguen al root.',
+          tone: 'blue',
+        }
+      }
       return {
         label: 'Viendo',
         value: 'Conexiones internas',
@@ -111,7 +147,10 @@ export const GraphControlRail = memo(function GraphControlRail({
   onToggleOnlyNonReciprocal,
   keywordSearch,
 }: GraphControlRailProps) {
-  const controlFeedback = resolveControlFeedback(activeLayer)
+  const controlFeedback = resolveControlFeedback(
+    activeLayer,
+    relationshipToggleState,
+  )
   const isNonReciprocalAvailable =
     canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
   const isNonReciprocalActive =

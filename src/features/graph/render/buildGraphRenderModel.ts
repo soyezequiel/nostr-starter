@@ -293,6 +293,97 @@ const isRelationshipLayer = (layer: BuildGraphRenderModelInput['activeLayer']) =
   layer === 'followers' ||
   layer === 'nonreciprocal-followers'
 
+const resolveConnectionsVisiblePubkeys = ({
+  connectionsSourceLayer,
+  currentGraphNodePubkeys,
+  followingLayerLinks,
+  nonReciprocalFollowingLayerLinks,
+  mutualLayerLinks,
+  followerLayerLinks,
+  nonReciprocalFollowerLayerLinks,
+  nodes,
+  rootNodePubkey,
+  selectedNodePubkey,
+  expandedNodePubkeys,
+}: {
+  connectionsSourceLayer: BuildGraphRenderModelInput['connectionsSourceLayer']
+  currentGraphNodePubkeys: ReadonlySet<string>
+  followingLayerLinks: readonly GraphLink[]
+  nonReciprocalFollowingLayerLinks: readonly GraphLink[]
+  mutualLayerLinks: readonly GraphLink[]
+  followerLayerLinks: readonly GraphLink[]
+  nonReciprocalFollowerLayerLinks: readonly GraphLink[]
+  nodes: BuildGraphRenderModelInput['nodes']
+  rootNodePubkey: string | null
+  selectedNodePubkey: string | null
+  expandedNodePubkeys: ReadonlySet<string>
+}) => {
+  const removeRootPubkey = (visiblePubkeys: Set<string>) => {
+    if (rootNodePubkey) {
+      visiblePubkeys.delete(rootNodePubkey)
+    }
+
+    return visiblePubkeys
+  }
+
+  if (connectionsSourceLayer === 'following') {
+    return removeRootPubkey(buildVisiblePubkeysForLayer({
+      layer: 'following',
+      layerLinks: followingLayerLinks,
+      nodes,
+      rootNodePubkey,
+      selectedNodePubkey,
+      expandedNodePubkeys,
+    }))
+  }
+
+  if (connectionsSourceLayer === 'following-non-followers') {
+    return removeRootPubkey(buildVisiblePubkeysForLayer({
+      layer: 'following-non-followers',
+      layerLinks: nonReciprocalFollowingLayerLinks,
+      nodes,
+      rootNodePubkey,
+      selectedNodePubkey,
+      expandedNodePubkeys,
+    }))
+  }
+
+  if (connectionsSourceLayer === 'mutuals') {
+    return removeRootPubkey(buildVisiblePubkeysForLayer({
+      layer: 'mutuals',
+      layerLinks: mutualLayerLinks,
+      nodes,
+      rootNodePubkey,
+      selectedNodePubkey,
+      expandedNodePubkeys,
+    }))
+  }
+
+  if (connectionsSourceLayer === 'followers') {
+    return removeRootPubkey(buildVisiblePubkeysForLayer({
+      layer: 'followers',
+      layerLinks: followerLayerLinks,
+      nodes,
+      rootNodePubkey,
+      selectedNodePubkey,
+      expandedNodePubkeys,
+    }))
+  }
+
+  if (connectionsSourceLayer === 'nonreciprocal-followers') {
+    return removeRootPubkey(buildVisiblePubkeysForLayer({
+      layer: 'nonreciprocal-followers',
+      layerLinks: nonReciprocalFollowerLayerLinks,
+      nodes,
+      rootNodePubkey,
+      selectedNodePubkey,
+      expandedNodePubkeys,
+    }))
+  }
+
+  return removeRootPubkey(new Set(currentGraphNodePubkeys))
+}
+
 const buildVisiblePubkeysForLayer = ({
   layer,
   layerLinks,
@@ -1179,7 +1270,6 @@ export const buildGraphRenderModel = ({
   connectionsLinks,
   zapEdges,
   activeLayer,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   connectionsSourceLayer,
   rootNodePubkey,
   selectedNodePubkey,
@@ -1284,6 +1374,19 @@ export const buildGraphRenderModel = ({
   const graphLayerLinks = [...links]
   const zapLayerLinks = [...links, ...zapEdges]
   const currentGraphNodePubkeys = new Set(Object.keys(nodes))
+  const connectionsVisiblePubkeys = resolveConnectionsVisiblePubkeys({
+    connectionsSourceLayer,
+    currentGraphNodePubkeys,
+    followingLayerLinks,
+    nonReciprocalFollowingLayerLinks,
+    mutualLayerLinks,
+    followerLayerLinks,
+    nonReciprocalFollowerLayerLinks,
+    nodes,
+    rootNodePubkey,
+    selectedNodePubkey,
+    expandedNodePubkeys,
+  })
   const internalConnectionLinksByKey = new Map<string, GraphLink>()
 
   // Primary source: edges already in state (from expansion or inbound discovery).
@@ -1295,6 +1398,8 @@ export const buildGraphRenderModel = ({
       link.relation === 'zap' ||
       link.source === rootNodePubkey ||
       link.target === rootNodePubkey ||
+      !connectionsVisiblePubkeys.has(link.source) ||
+      !connectionsVisiblePubkeys.has(link.target) ||
       !currentGraphNodePubkeys.has(link.source) ||
       !currentGraphNodePubkeys.has(link.target)
     ) {
@@ -1335,7 +1440,7 @@ export const buildGraphRenderModel = ({
           : graphLayerLinks
   const visiblePubkeys =
     activeLayer === 'connections'
-      ? new Set(currentGraphNodePubkeys)
+      ? connectionsVisiblePubkeys
       : buildVisiblePubkeysForLayer({
           layer: activeLayer,
           layerLinks: renderedLinks,

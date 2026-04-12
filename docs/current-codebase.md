@@ -150,7 +150,12 @@ Slices importantes:
 Capas actuales representadas en store y render:
 
 - `graph`
+- `connections`
+- `following`
+- `following-non-followers`
 - `mutuals`
+- `followers`
+- `nonreciprocal-followers`
 - `keywords`
 - `zaps`
 - `pathfinding`
@@ -180,6 +185,96 @@ Esta capa resuelve:
 - orquestacion del export de snapshots
 
 Si la logica se parece a workflow, ciclo de vida de sesion o comportamiento transversal del grafo, pertenece aca.
+
+### Como funciona la capa `connections`
+
+La capa `connections` no expande el grafo ni agrega nodos nuevos.
+
+Su objetivo es mostrar un **subgrafo inducido** usando solamente cuentas que ya
+estan presentes en `state.nodes`.
+
+Reglas:
+
+- solo se renderizan aristas cuyo `source` y `target` ya existen en el grafo actual
+- no se agregan cuentas externas
+- no se usan edges centrados en el root para esta vista
+- se preserva direccion
+- `follow` e `inbound` se distinguen visualmente
+
+#### Donde vive cada parte
+
+- wiring del boton: `src/features/graph/components/GraphControlRail.tsx`
+- cambio de capa y refresco reactivo: `src/features/graph/kernel/facade.ts`
+- estado derivado para conexiones: `src/features/graph/app/store/slices/graphSlice.ts`
+- derivacion final de aristas renderizables: `src/features/graph/render/buildGraphRenderModel.ts`
+- color por tipo de relacion: `src/features/graph/render/GraphSceneLayer.ts`
+
+#### Fuente de datos
+
+La capa se apoya en tres fuentes de evidencia ya conocidas por la app:
+
+- `links`: follows ya presentes en memoria
+- `inboundLinks`: evidencia inbound/follower ya presente en memoria
+- `connectionsLinks`: edges extra derivados desde contact lists cacheadas para nodos ya visibles
+
+`connectionsLinks` existe para cubrir el caso donde dos nodos del grafo actual
+si tienen relacion entre si, pero esa arista todavia no vive en `links` o
+`inboundLinks` porque no se expandio manualmente ese nodo.
+
+#### Derivacion
+
+En `facade.ts`, `deriveConnectionsLinks()` hace esto:
+
+1. toma el conjunto actual de pubkeys en `state.nodes`
+2. busca en IndexedDB (`contactLists`) las contact lists de esos nodos
+3. si faltan contact lists para nodos ya visibles, intenta traer sus kind:3 desde relays
+4. persiste esas contact lists faltantes
+5. deriva edges `source -> target` solo cuando ambos endpoints ya estan en el grafo actual
+6. guarda el resultado en `state.connectionsLinks`
+
+Luego, en `buildGraphRenderModel.ts`, la capa `connections` arma las aristas
+renderizables a partir de:
+
+- `links`
+- `inboundLinks`
+- `connectionsLinks`
+
+pero filtra cualquier edge donde:
+
+- algun endpoint no exista en `nodes`
+- `source` o `target` sean el root
+- la relacion sea `zap`
+
+Eso deja solamente conexiones internas entre nodos ya descubiertos.
+
+#### Distincion visual
+
+En `GraphSceneLayer.ts`:
+
+- `follow` usa `CONNECTIONS_FOLLOW_COLOR`
+- `inbound` usa `CONNECTIONS_INBOUND_COLOR`
+
+Eso permite diferenciar:
+
+- evidencia outbound confirmada (`A sigue a B`)
+- evidencia inbound observada por traversal/cache (`A aparece siguiendo a B`)
+
+#### Fix importante de timing
+
+La primera version del feature tenia un bug: si la persona entraba a
+`connections` mientras el root todavia estaba cargando, la derivacion podia
+ejecutarse demasiado temprano y quedarse en `0 conexiones internas` hasta salir
+y volver a entrar a la capa.
+
+Eso se corrigio en `facade.ts` con un refresco reactivo:
+
+- mientras `activeLayer === 'connections'`, la app vuelve a derivar conexiones si cambian `graphRevision`
+- tambien rederiva si cambia `inboundGraphRevision`
+- el refresco usa cola simple para evitar derivaciones concurrentes
+
+Con eso, la capa `connections` acompana el crecimiento del grafo durante la
+carga inicial y durante expansiones posteriores, sin requerir retogglear el
+boton.
 
 ### Base de datos y persistencia
 

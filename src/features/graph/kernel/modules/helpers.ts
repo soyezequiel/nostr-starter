@@ -50,6 +50,7 @@ export interface RelayCollectionResult {
 export interface RelayCollectionProgress {
   eventCount: number
   latestBatchCount: number
+  latestBatchEnvelopes: readonly RelayEventEnvelope[]
   latestEnvelope: RelayEventEnvelope | null
   envelopes: readonly RelayEventEnvelope[]
 }
@@ -293,6 +294,7 @@ export async function collectRelayEvents(
       onProgress({
         eventCount: events.length,
         latestBatchCount: latestBatch.length,
+        latestBatchEnvelopes: latestBatch,
         latestEnvelope: latestBatch[latestBatch.length - 1] ?? null,
         envelopes: events,
       })
