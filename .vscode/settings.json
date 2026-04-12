@@ -1,0 +1,9 @@
+{
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    "Responde SIEMPRE en Español Argentino (Argentine Spanish).",
+    "El título y la descripción del commit DEBEN estar en español argentino nativo.",
+    "No uses inglés bajo ninguna circunstancia.",
+    "Usa frases naturales de Argentina (ej: 'arreglo/arreglar-quilombo-de-websockets', 'agregado un botón piola').",
+    "Formato esperado sugerido: <tipo>: <descripción argentina>"
+  ]
+}

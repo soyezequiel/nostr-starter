@@ -79,6 +79,11 @@ Notes:
 - Prefer deterministic transforms for export and evidence code.
 - Use existing media/avatar pipeline helpers instead of adding parallel image caches.
 
+## Git & Workflow conventions
+
+- Branch names MUST be in Argentine Spanish (español argentino). Use natural phrasing (e.g., `caracteristica/agregar-boton-piola`, `arreglo/arreglar-quilombo-de-websockets`).
+- Commits MUST also be in Argentine Spanish (español argentino). Both the title and the description must be written naturally in this dialect.
+
 ## Validation / done criteria
 
 Run the smallest checks that cover your change; explain any skipped check.
