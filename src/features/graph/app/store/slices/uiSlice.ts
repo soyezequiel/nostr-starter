@@ -118,6 +118,7 @@ export const createInitialUiSliceState = (): Pick<
   },
   renderConfig: {
     edgeThickness: 1,
+    edgeOpacity: 1,
     arrowType: 'none',
     nodeSpacingFactor: 1,
     nodeSizeFactor: 1,

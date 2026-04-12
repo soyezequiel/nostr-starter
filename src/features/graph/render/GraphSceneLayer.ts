@@ -374,6 +374,26 @@ const getSharedEmphasisNodes = (nodes: readonly GraphRenderNode[]) =>
 const getCommonFollowNodes = (nodes: readonly GraphRenderNode[]) =>
   nodes.filter((node) => node.isCommonFollow && !node.isRoot)
 
+const getFirstDegreeNeighborPubkeys = (
+  edges: readonly GraphRenderEdge[],
+  hoveredNodePubkey: string | null,
+) => {
+  if (hoveredNodePubkey === null) {
+    return null
+  }
+
+  const neighbors = new Set<string>()
+  for (const edge of edges) {
+    if (edge.source === hoveredNodePubkey) {
+      neighbors.add(edge.target)
+    } else if (edge.target === hoveredNodePubkey) {
+      neighbors.add(edge.source)
+    }
+  }
+
+  return neighbors
+}
+
 const getSharedRingScale = (sharedByExpandedCount: number) =>
   Math.min(2.55, 1.45 + Math.log2(sharedByExpandedCount + 1) * 0.5)
 
@@ -806,7 +826,6 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
   public static defaultProps = defaultProps
 
   public static layerName = 'GraphSceneLayer'
-
   public renderLayers(): Layer[] {
     const {
       model,
@@ -887,7 +906,38 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         segment,
         context: visibleGeometryContext,
       })
+    const focusedNeighborPubkeys = getFirstDegreeNeighborPubkeys(
+      model.edges,
+      hoveredNodePubkey,
+    )
 
+    const applyFocusFade = (
+      color: readonly number[],
+      opMode: 'node' | 'edge' | 'avatar',
+      pubkeyOrSource: string,
+      target?: string,
+    ): [number, number, number, number] => {
+      const alpha = color[3] ?? 255
+      if (hoveredNodePubkey === null) {
+        return [color[0], color[1], color[2], alpha]
+      }
+
+      let matched = false;
+      if (opMode === 'edge') {
+        matched =
+          pubkeyOrSource === hoveredNodePubkey || target === hoveredNodePubkey
+      } else {
+        matched =
+          pubkeyOrSource === hoveredNodePubkey ||
+          focusedNeighborPubkeys?.has(pubkeyOrSource) === true
+      }
+
+      if (matched) {
+        return [color[0], color[1], color[2], alpha]
+      }
+
+      return [color[0], color[1], color[2], Math.round(alpha * 0.05)]
+    }
     const edgeThickness = renderConfig.edgeThickness ?? 1
     const arrowType = renderConfig.arrowType ?? 'none'
     const baseReadyImagesByPubkey =
@@ -949,7 +999,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             const layerProps = {
               id: pageLayerId,
               data: pageNodes,
-              pickable: false,
+              pickable: hoverPickingEnabled,
+              getColor: (node: GraphRenderNode) =>
+                applyFocusFade([255, 255, 255, 255], 'avatar', node.pubkey),
               iconAtlas: coerceIconAtlasTexture(page.iconAtlas),
               iconMapping: page.iconMapping,
               sizeUnits: 'common' as const,
@@ -960,9 +1012,11 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               // arma nuestro atlas controlado base. Evitamos el auto-packing opaco de deck.gl.
               getIcon: (node: GraphRenderNode) =>
                 baseReadyImagesByPubkey[node.pubkey].key,
+              transitions: { getColor: 200 },
               updateTriggers: {
                 getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
                 getIcon: [baseReadyImageSignature, page.revision, page.key],
+                getColor: [hoveredNodePubkey],
               },
             }
 
@@ -1019,11 +1073,15 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               getPosition: (node: GraphRenderNode) => node.position,
               getSize: (node: GraphRenderNode) =>
                 getWorldSize(node.pubkey, node.radius),
+              getColor: (node: GraphRenderNode) =>
+                applyFocusFade([255, 255, 255, 255], 'avatar', node.pubkey),
               getIcon: (node: GraphRenderNode) =>
                 hdReadyImagesByPubkey[node.pubkey].key,
+              transitions: { getColor: 200 },
               updateTriggers: {
                 getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
                 getIcon: [hdReadyImageSignature, page.revision, page.key],
+                getColor: [hoveredNodePubkey],
               },
               explicitFailedPubkeys: [],
               onDeliveryDebug: (snapshot) => {
@@ -1053,29 +1111,43 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             hasPathHighlight,
           )
 
+          const edgeOpacity = renderConfig.edgeOpacity ?? 1
+          let color = baseColor as unknown as readonly [
+            number,
+            number,
+            number,
+            number,
+          ]
+
           if (model.activeLayer === 'connections') {
-            return baseColor
+            color = [
+              baseColor[0],
+              baseColor[1],
+              baseColor[2],
+              Math.round((baseColor[3] ?? 255) * edgeOpacity),
+            ]
+          } else {
+            const progress =
+              ((segment.progressStart ?? 1) + (segment.progressEnd ?? 1)) / 2
+            const fadedAlpha = Math.max(
+              0,
+              Math.round((baseColor[3] ?? 255) * progress * progress * edgeOpacity),
+            )
+            color = [baseColor[0], baseColor[1], baseColor[2], fadedAlpha]
           }
-
-          const progress =
-            ((segment.progressStart ?? 1) + (segment.progressEnd ?? 1)) / 2
-          const fadedAlpha = Math.max(
-            0,
-            Math.round(baseColor[3] * progress * progress),
-          )
-
-          return [baseColor[0], baseColor[1], baseColor[2], fadedAlpha]
+          return applyFocusFade(color, 'edge', segment.source, segment.target)
         },
-          getWidth: (segment) =>
-            (getEdgeWidth(
-              segment,
-              maxZapWeight,
-              hoveredNodePubkey,
-              hoveredEdgeId,
-              selectedNodePubkey,
-              model.activeLayer,
-              hasPathHighlight,
-            ) * edgeThickness) / viewScale,
+        getWidth: (segment) =>
+          (getEdgeWidth(
+            segment,
+            maxZapWeight,
+            hoveredNodePubkey,
+            hoveredEdgeId,
+            selectedNodePubkey,
+            model.activeLayer,
+            hasPathHighlight,
+          ) * edgeThickness) / viewScale,
+        transitions: { getColor: 200 },
         updateTriggers: {
           getColor: [
             hoveredNodePubkey,
@@ -1083,6 +1155,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             selectedNodePubkey,
             model.activeLayer,
             hasPathHighlight,
+            renderConfig.edgeOpacity,
           ],
           getWidth: [
             hoveredNodePubkey,
@@ -1122,7 +1195,19 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   model.activeLayer,
                   hasPathHighlight,
                 )
-                return [color[0], color[1], color[2], 200]
+                const edgeOpacity = renderConfig.edgeOpacity ?? 1
+                const arrowColor = [
+                  color[0],
+                  color[1],
+                  color[2],
+                  Math.round(200 * edgeOpacity),
+                ] as const
+                return applyFocusFade(
+                  arrowColor,
+                  'edge',
+                  segment.source,
+                  segment.target,
+                )
               },
               getSize: (segment) =>
                 (getEdgeWidth(
@@ -1141,6 +1226,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               getAlignmentBaseline: 'center',
               fontFamily: 'system-ui, sans-serif',
               characterSet: 'auto',
+              transitions: { getColor: 200, getSize: 200 },
               updateTriggers: {
                 getColor: [
                   hoveredNodePubkey,
@@ -1148,6 +1234,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   selectedNodePubkey,
                   model.activeLayer,
                   hasPathHighlight,
+                  renderConfig.edgeOpacity,
                 ],
                 getSize: [
                   hoveredNodePubkey,
@@ -1176,13 +1263,33 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 getWorldRadius(node.pubkey, node.radius) *
                 (node.isPathEndpoint ? 1.78 : 1.38),
               getFillColor: (node) =>
-                node.isPathEndpoint ? [167, 243, 208, 74] : [56, 189, 248, 34],
+                applyFocusFade(
+                  node.isPathEndpoint
+                    ? [167, 243, 208, 74]
+                    : [56, 189, 248, 34],
+                  'node',
+                  node.pubkey,
+                ),
               getLineColor: (node) =>
-                node.isPathEndpoint ? [167, 243, 208, 220] : [125, 211, 252, 172],
+                applyFocusFade(
+                  node.isPathEndpoint
+                    ? [167, 243, 208, 220]
+                    : [125, 211, 252, 172],
+                  'node',
+                  node.pubkey,
+                ),
               getLineWidth: (node) => (node.isPathEndpoint ? 3.2 : 2) / viewScale,
+              transitions: {
+                getRadius: 200,
+                getFillColor: 200,
+                getLineColor: 200,
+                getWidth: 200,
+              },
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
                 getLineWidth: [viewState.zoom],
+                getLineColor: [hoveredNodePubkey],
+                getFillColor: [hoveredNodePubkey],
               },
             }),
           ]
@@ -1204,15 +1311,24 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               ? 2.1
               : 1.72),
         getFillColor: (node) =>
-          node.pubkey === hoveredNodePubkey || hoveredEdgePubkeys.includes(node.pubkey)
-            ? HOVER_RING_COLOR
-            : [148, 163, 184, 30],
+          applyFocusFade(
+            node.pubkey === hoveredNodePubkey || hoveredEdgePubkeys.includes(node.pubkey)
+              ? HOVER_RING_COLOR
+              : [148, 163, 184, 30],
+            'node',
+            node.pubkey,
+          ),
         getLineColor: (node) =>
-          node.pubkey === hoveredNodePubkey || hoveredEdgePubkeys.includes(node.pubkey)
-            ? HOVER_RING_COLOR
-            : EXPANDED_RING_COLOR,
+          applyFocusFade(
+            node.pubkey === hoveredNodePubkey || hoveredEdgePubkeys.includes(node.pubkey)
+              ? HOVER_RING_COLOR
+              : EXPANDED_RING_COLOR,
+            'node',
+            node.pubkey,
+          ),
         getLineWidth: (node) =>
           (hoveredEdgePubkeys.includes(node.pubkey) ? 2.6 : 2) / viewScale,
+        transitions: { getFillColor: 200, getLineColor: 200 },
         updateTriggers: {
           getRadius: [
             nodeScreenRadii,
@@ -1221,6 +1337,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             hoveredEdgePubkeys.join(','),
             viewState.zoom,
           ],
+          getFillColor: [hoveredNodePubkey],
+          getLineColor: [hoveredNodePubkey],
           getLineWidth: [viewState.zoom],
         },
       }),
@@ -1238,11 +1356,13 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               getRadius: (node) =>
                 getWorldRadius(node.pubkey, node.radius) *
                 getSharedRingScale(node.sharedByExpandedCount),
-              getLineColor: () => SHARED_RING_COLOR,
+              getLineColor: (node) => applyFocusFade(SHARED_RING_COLOR, 'node', node.pubkey),
               getLineWidth: (node) =>
                 getSharedRingWidth(node.sharedByExpandedCount) / viewScale,
+              transitions: { getLineColor: 200 },
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
+                getLineColor: [hoveredNodePubkey],
                 getLineWidth: [viewState.zoom],
               },
             }),
@@ -1258,11 +1378,14 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         lineWidthUnits: 'common',
         getPosition: (node) => node.position,
         getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 1.2,
-        getFillColor: () => [167, 243, 208, 100],
-        getLineColor: () => [167, 243, 208, 220],
+        getFillColor: (node) => applyFocusFade([167, 243, 208, 100], 'node', node.pubkey),
+        getLineColor: (node) => applyFocusFade([167, 243, 208, 220], 'node', node.pubkey),
         getLineWidth: 3 / viewScale,
+        transitions: { getFillColor: 200, getLineColor: 200 },
         updateTriggers: {
           getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
+          getFillColor: [hoveredNodePubkey],
+          getLineColor: [hoveredNodePubkey],
           getLineWidth: [viewState.zoom],
         },
       }),
@@ -1276,16 +1399,22 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         getPosition: (node) => node.position,
         getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 1.14,
         getFillColor: (node) =>
-          getNodeGlassHaloColor(
-            node,
-            paintedAvatarPubkeySet,
-            model,
-            model.activeLayer,
-            hasPathHighlight,
+          applyFocusFade(
+            getNodeGlassHaloColor(
+              node,
+              paintedAvatarPubkeySet,
+              model,
+              model.activeLayer,
+              hasPathHighlight,
+            ),
+            'node',
+            node.pubkey,
           ),
+        transitions: { getFillColor: 200 },
         updateTriggers: {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
+            hoveredNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
@@ -1303,29 +1432,43 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         getPosition: (node) => node.position,
         getRadius: (node) => getWorldRadius(node.pubkey, node.radius),
         getFillColor: (node) =>
-          getNodeGlassFillColor(
-            node,
-            paintedAvatarPubkeySet,
-            model,
-            model.activeLayer,
-            hasPathHighlight,
+          applyFocusFade(
+            getNodeGlassFillColor(
+              node,
+              paintedAvatarPubkeySet,
+              model,
+              model.activeLayer,
+              hasPathHighlight,
+            ),
+            'node',
+            node.pubkey,
           ),
         getLineColor: (node) =>
-          getNodeGlassLineColor(node, paintedAvatarPubkeySet, model),
+          applyFocusFade(
+            getNodeGlassLineColor(node, paintedAvatarPubkeySet, model),
+            'node',
+            node.pubkey,
+          ),
         getLineWidth: (node) =>
           (node.isRoot
             ? 2.2
             : paintedAvatarPubkeySet.has(node.pubkey)
               ? 1.35
               : 1.15) / viewScale,
+        transitions: { getFillColor: 200, getLineColor: 200 },
         updateTriggers: {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
+            hoveredNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
           ],
-          getLineColor: [imageFrame.paintedPubkeys.join(','), model.activeLayer],
+          getLineColor: [
+            hoveredNodePubkey,
+            imageFrame.paintedPubkeys.join(','),
+            model.activeLayer,
+          ],
           getLineWidth: [imageFrame.paintedPubkeys.join(','), viewState.zoom],
         },
       }),
@@ -1339,16 +1482,22 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         getPosition: (node) => node.position,
         getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 0.72,
         getFillColor: (node) =>
-          getNodeGlassHighlightColor(
-            node,
-            paintedAvatarPubkeySet,
-            model,
-            model.activeLayer,
-            hasPathHighlight,
+          applyFocusFade(
+            getNodeGlassHighlightColor(
+              node,
+              paintedAvatarPubkeySet,
+              model,
+              model.activeLayer,
+              hasPathHighlight,
+            ),
+            'node',
+            node.pubkey,
           ),
+        transitions: { getFillColor: 200 },
         updateTriggers: {
           getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
+            hoveredNodePubkey,
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
@@ -1358,10 +1507,12 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       new IconLayer<GraphRenderNode>({
         id: `${this.props.id}-fallback-avatars`,
         data: fallbackAvatarNodes,
-        pickable: false,
+        pickable: hoverPickingEnabled,
         sizeUnits: 'common',
         getPosition: (node) => node.position,
         getSize: (node) => getWorldSize(node.pubkey, node.radius),
+        getColor: (node) =>
+          applyFocusFade([255, 255, 255, 255], 'avatar', node.pubkey),
         getIcon: () => ({
           id: 'fallback-avatar',
           url: fallbackAvatarUrl,
@@ -1371,6 +1522,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         }),
         updateTriggers: {
           getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
+          getColor: [hoveredNodePubkey],
         },
       }),
       ...avatarLayers,
@@ -1387,9 +1539,11 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               getPosition: (node) => node.position,
               getRadius: (node) =>
                 getWorldRadius(node.pubkey, node.radius) * 0.98,
-              getFillColor: () => [148, 163, 184, 132],
+              getFillColor: (node) =>
+                applyFocusFade([148, 163, 184, 132], 'node', node.pubkey),
               updateTriggers: {
                 getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
+                getFillColor: [hoveredNodePubkey],
               },
             }),
           ]
@@ -1402,7 +1556,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         sizeUnits: 'pixels',
         getPosition: (label) => label.position,
         getText: (label) => label.text,
-        getColor: () => LABEL_TEXT_COLOR,
+        getColor: (label) => applyFocusFade(LABEL_TEXT_COLOR, 'node', label.pubkey),
         getSize: (label) => (label.isRoot ? 14 : 13),
         getPixelOffset: (label) => [
           0,
@@ -1410,8 +1564,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         ],
         getTextAnchor: 'middle',
         getAlignmentBaseline: 'top',
-        getBackgroundColor: () => LABEL_BACKGROUND_COLOR,
-        getBorderColor: () => LABEL_BORDER_COLOR,
+        getBackgroundColor: (label) =>
+          applyFocusFade(LABEL_BACKGROUND_COLOR, 'node', label.pubkey),
+        getBorderColor: (label) =>
+          applyFocusFade(LABEL_BORDER_COLOR, 'node', label.pubkey),
         getBorderWidth: 0.8,
         backgroundBorderRadius: 8,
         backgroundPadding: [6, 3],
@@ -1419,6 +1575,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         characterSet: 'auto',
         updateTriggers: {
           getPixelOffset: [nodeScreenRadii, nodeSizeFactor],
+          getColor: [hoveredNodePubkey],
+          getBackgroundColor: [hoveredNodePubkey],
+          getBorderColor: [hoveredNodePubkey],
         },
       }),
     ]

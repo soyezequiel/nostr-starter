@@ -49,6 +49,66 @@ export function RenderConfigPanel() {
             <option value="triangle">Triangulo</option>
           </select>
         </div>
+
+        <div className="settings-field">
+          <div className="settings-field__label-row">
+            <label htmlFor="edge-opacity-input">Opacidad de conexiones</label>
+            <span>{Math.round((renderConfig.edgeOpacity ?? 1) * 100)}%</span>
+          </div>
+          <input
+            id="edge-opacity-input"
+            max="1"
+            min="0.1"
+            onChange={(event) =>
+              setRenderConfig({ edgeOpacity: parseFloat(event.target.value) })
+            }
+            step="0.05"
+            type="range"
+            value={renderConfig.edgeOpacity ?? 1}
+          />
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card__title-row">
+          <h3>Nodes</h3>
+        </div>
+
+        <div className="settings-field">
+          <div className="settings-field__label-row">
+            <label htmlFor="node-spacing-input">Separacion de nodos</label>
+            <span>{(renderConfig.nodeSpacingFactor ?? 1).toFixed(1)}x</span>
+          </div>
+          <input
+            id="node-spacing-input"
+            max="3"
+            min="0.5"
+            onChange={(event) =>
+              setRenderConfig({ nodeSpacingFactor: parseFloat(event.target.value) })
+            }
+            step="0.1"
+            type="range"
+            value={renderConfig.nodeSpacingFactor ?? 1}
+          />
+        </div>
+
+        <div className="settings-field">
+          <div className="settings-field__label-row">
+            <label htmlFor="node-size-input">Tamano de nodos</label>
+            <span>{(renderConfig.nodeSizeFactor ?? 1).toFixed(1)}x</span>
+          </div>
+          <input
+            id="node-size-input"
+            max="2"
+            min="0.5"
+            onChange={(event) =>
+              setRenderConfig({ nodeSizeFactor: parseFloat(event.target.value) })
+            }
+            step="0.1"
+            type="range"
+            value={renderConfig.nodeSizeFactor ?? 1}
+          />
+        </div>
       </section>
 
       <section className="settings-card">

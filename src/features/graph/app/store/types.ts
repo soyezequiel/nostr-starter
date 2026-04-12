@@ -330,6 +330,7 @@ export type ImageQualityMode =
 
 export interface RenderConfig {
   edgeThickness: number
+  edgeOpacity: number
   arrowType: ArrowType
   nodeSpacingFactor: number
   nodeSizeFactor: number

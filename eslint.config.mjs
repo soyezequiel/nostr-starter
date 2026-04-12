@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "public/workers/**",
     "next-env.d.ts",
+    "**/*_tmp/**",
+    "tmp_*.js",
   ]),
 ]);
 

@@ -568,6 +568,7 @@ function validateRenderConfig(input: unknown, path: string): RenderConfig {
   
   return {
     edgeThickness: expectFiniteNumber(config.edgeThickness, `${path}.edgeThickness`),
+    edgeOpacity: typeof config.edgeOpacity === 'number' && Number.isFinite(config.edgeOpacity) ? config.edgeOpacity : 1,
     arrowType: expectString(config.arrowType, `${path}.arrowType`) as RenderConfig['arrowType'],
     nodeSpacingFactor: expectFiniteNumber(config.nodeSpacingFactor, `${path}.nodeSpacingFactor`),
     nodeSizeFactor: expectFiniteNumber(config.nodeSizeFactor, `${path}.nodeSizeFactor`),

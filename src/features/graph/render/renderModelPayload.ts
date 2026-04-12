@@ -397,6 +397,7 @@ export const serializeBuildGraphRenderModelInput = ({
   effectiveGraphCaps: sanitizeEffectiveGraphCaps(effectiveGraphCaps),
   renderConfig: {
     edgeThickness: sanitizeFiniteNumber(renderConfig.edgeThickness, 1),
+    edgeOpacity: sanitizeFiniteNumber(renderConfig.edgeOpacity, 1),
     arrowType: renderConfig.arrowType === 'arrow' || renderConfig.arrowType === 'triangle' ? renderConfig.arrowType : 'none',
     nodeSpacingFactor: sanitizeFiniteNumber(renderConfig.nodeSpacingFactor, 1),
     nodeSizeFactor: sanitizeFiniteNumber(renderConfig.nodeSizeFactor, 1),
