@@ -8,6 +8,7 @@ import { IconLayer, LineLayer, ScatterplotLayer, TextLayer } from '@deck.gl/laye
 import type { Texture } from '@luma.gl/core'
 
 import type { RenderConfig } from '@/features/graph/app/store/types'
+import type { GraphViewState } from '@/features/graph/render/graphViewState'
 import {
   COMMON_FOLLOW_NODE_COLOR,
   CONNECTIONS_FOLLOW_COLOR,
@@ -35,6 +36,12 @@ import {
   AvatarAtlasManager,
   createAvatarAtlasEntry,
 } from '@/features/graph/render/avatarAtlasManager'
+import {
+  getVisibleArrowPlacement,
+  getVisibleEdgeEndpoints,
+  getVisibleNodeRadius,
+  type VisibleGeometryContext,
+} from '@/features/graph/render/visibleGeometry'
 import type {
   GraphRenderEdge,
   GraphRenderLabel,
@@ -46,6 +53,7 @@ const fallbackAvatarUrl = '/graph-assets/avatar-fallback.svg'
 
 type GraphSceneLayerProps = {
   model: GraphRenderModel
+  viewState: GraphViewState
   hoveredNodePubkey: string | null
   hoveredEdgeId: string | null
   hoveredEdgePubkeys: readonly string[]
@@ -382,11 +390,7 @@ type DebugAvatarIconLayerProps = {
 type GraphSceneTopologyCacheEntry = {
   signature: string
   geometry: ReturnType<typeof buildGraphSceneGeometry>
-  arrowData: ReadonlyArray<
-    ReturnType<typeof buildGraphSceneGeometry>['segments'][number] & {
-      angle: number
-    }
-  >
+  arrowData: ReadonlyArray<ReturnType<typeof buildGraphSceneGeometry>['segments'][number]>
   maxZapWeight: number
   sharedEmphasisNodes: readonly GraphRenderNode[]
   commonFollowNodes: readonly GraphRenderNode[]
@@ -446,17 +450,7 @@ const getGraphSceneTopologyData = (
   const nextEntry: GraphSceneTopologyCacheEntry = {
     signature,
     geometry,
-    arrowData: geometry.segments
-      .filter((segment) => segment.progressEnd === 1)
-      .map((segment) => {
-        const dx = segment.targetPosition[0] - segment.sourcePosition[0]
-        const dy = segment.targetPosition[1] - segment.sourcePosition[1]
-
-        return {
-          ...segment,
-          angle: (Math.atan2(dy, dx) * 180) / Math.PI,
-        }
-      }),
+    arrowData: geometry.segments.filter((segment) => segment.progressEnd === 1),
     maxZapWeight: model.edges.reduce(
       (maxWeight, edge) => Math.max(maxWeight, edge.weight),
       0,
@@ -816,6 +810,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
   public renderLayers(): Layer[] {
     const {
       model,
+      viewState,
       hoveredNodePubkey,
       hoveredEdgeId,
       hoveredEdgePubkeys,
@@ -844,7 +839,26 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
     const { segments } = topologyData.geometry
     const nodeSizeFactor = renderConfig.nodeSizeFactor ?? 1
     const getScreenRadius = (pubkey: string, fallbackRadius: number) =>
-      (nodeScreenRadii.get(pubkey) ?? fallbackRadius) * nodeSizeFactor
+      getVisibleNodeRadius({
+        pubkey,
+        fallbackRadius,
+        nodeScreenRadii,
+        nodeSizeFactor,
+      })
+    const nodeByPubkey = new Map(model.nodes.map((node) => [node.pubkey, node]))
+    const visibleGeometryContext: VisibleGeometryContext = {
+      nodeByPubkey,
+      nodeScreenRadii,
+      nodeSizeFactor,
+      viewState,
+    }
+    const getSegmentPositions = (
+      segment: (typeof segments)[number],
+    ) =>
+      getVisibleEdgeEndpoints({
+        segment,
+        context: visibleGeometryContext,
+      })
 
     const edgeThickness = renderConfig.edgeThickness ?? 1
     const arrowType = renderConfig.arrowType ?? 'none'
@@ -998,8 +1012,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         data: segments,
         pickable: hoverPickingEnabled,
         widthUnits: 'pixels',
-        getSourcePosition: (segment) => segment.sourcePosition,
-        getTargetPosition: (segment) => segment.targetPosition,
+        getSourcePosition: (segment) => getSegmentPositions(segment).sourcePosition,
+        getTargetPosition: (segment) => getSegmentPositions(segment).targetPosition,
         getColor: (segment) => {
           const baseColor = getEdgeColor(
             segment,
@@ -1058,8 +1072,16 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               data: visibleArrowData,
               pickable: false,
               sizeUnits: 'pixels',
-              getPosition: (segment) => segment.targetPosition,
-              getAngle: (segment) => -segment.angle,
+              getPosition: (segment) =>
+                getVisibleArrowPlacement({
+                  segment,
+                  context: visibleGeometryContext,
+                }).position,
+              getAngle: (segment) =>
+                getVisibleArrowPlacement({
+                  segment,
+                  context: visibleGeometryContext,
+                }).angle,
               getText: () => (arrowType === 'triangle' ? '▶' : '➤'),
               getColor: (segment) => {
                 const color = getEdgeColor(

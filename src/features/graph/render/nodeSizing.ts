@@ -39,6 +39,29 @@ const GRAPH_NODE_KEYWORD_EMPHASIS_SETTINGS = {
   scaleLogFactor: 0.18,
 } as const
 
+const GRAPH_NODE_PROMINENCE_SETTINGS = {
+  capBoostFactor: 0.22,
+  commonFollowBoost: 0.06,
+  connectionsLayerBoost: 0.08,
+  expandedBoost: 0.08,
+  floorBoostFactor: 0.34,
+  pathEndpointBoost: 0.18,
+  pathNodeBoost: 0.1,
+  prominenceLegibilityFloorBoost: 0.18,
+  rootBoost: 0.08,
+  scaleCap: 1.38,
+  selectedBoost: 0.22,
+  sharedBoostCap: 0.14,
+  sharedBoostLogFactor: 0.05,
+} as const
+
+const GRAPH_NODE_RELATIVE_SIZE_SETTINGS = {
+  exponent: 1.08,
+  maxScale: 1.32,
+  minScale: 0.82,
+  spreadThreshold: 1.25,
+} as const
+
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
@@ -123,6 +146,12 @@ type ProjectedNodeMetric = {
   isRoot: boolean
   isViewportAdjacent: boolean
   nearestNeighborWorldDist?: number
+  prominenceScale: number
+}
+
+type VisibleNodeRadiusStats = {
+  minBaseRadius: number
+  maxBaseRadius: number
 }
 
 const getKeywordMatchScreenScale = ({
@@ -144,6 +173,140 @@ const getKeywordMatchScreenScale = ({
   )
 }
 
+const getNodeProminenceScale = ({
+  node,
+  activeLayer,
+}: {
+  node: GraphRenderNode
+  activeLayer: UiLayer
+}) => {
+  let boost = 0
+
+  if (node.isSelected) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.selectedBoost
+  }
+
+  if (node.isPathEndpoint) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.pathEndpointBoost
+  } else if (node.isPathNode) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.pathNodeBoost
+  }
+
+  if (node.isExpanded) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.expandedBoost
+  }
+
+  if (node.isCommonFollow) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.commonFollowBoost
+  }
+
+  if (node.sharedByExpandedCount > 1) {
+    boost += Math.min(
+      GRAPH_NODE_PROMINENCE_SETTINGS.sharedBoostCap,
+      Math.log2(node.sharedByExpandedCount + 1) *
+        GRAPH_NODE_PROMINENCE_SETTINGS.sharedBoostLogFactor,
+    )
+  }
+
+  if (activeLayer === 'connections' && !node.isRoot) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.connectionsLayerBoost
+  }
+
+  if (node.isRoot) {
+    boost += GRAPH_NODE_PROMINENCE_SETTINGS.rootBoost
+  }
+
+  return clampNumber(
+    1 + boost,
+    1,
+    GRAPH_NODE_PROMINENCE_SETTINGS.scaleCap,
+  )
+}
+
+const resolveNodeGlobalScreenRadius = ({
+  node,
+  activeLayer,
+  visibleNodeCount,
+  zoomLevel,
+  radiusStats,
+}: {
+  node: GraphRenderNode
+  activeLayer: UiLayer
+  visibleNodeCount: number
+  zoomLevel: number
+  radiusStats: VisibleNodeRadiusStats
+}) => {
+  const globalRadius = resolveGraphNodeScreenRadius({
+    baseRadius: node.radius,
+    isRoot: node.isRoot,
+    visibleNodeCount,
+    zoomLevel,
+  })
+  const keywordScale = getKeywordMatchScreenScale({
+    activeLayer,
+    keywordHits: node.keywordHits,
+  })
+  const prominenceScale = getNodeProminenceScale({
+    node,
+    activeLayer,
+  })
+  const radiusSpread = radiusStats.maxBaseRadius - radiusStats.minBaseRadius
+  const relativeSizeScale =
+    radiusSpread < GRAPH_NODE_RELATIVE_SIZE_SETTINGS.spreadThreshold
+      ? 1
+      : clampNumber(
+          GRAPH_NODE_RELATIVE_SIZE_SETTINGS.minScale +
+            Math.pow(
+              (node.radius - radiusStats.minBaseRadius) / radiusSpread,
+              GRAPH_NODE_RELATIVE_SIZE_SETTINGS.exponent,
+            ) *
+              (GRAPH_NODE_RELATIVE_SIZE_SETTINGS.maxScale -
+                GRAPH_NODE_RELATIVE_SIZE_SETTINGS.minScale),
+          GRAPH_NODE_RELATIVE_SIZE_SETTINGS.minScale,
+          GRAPH_NODE_RELATIVE_SIZE_SETTINGS.maxScale,
+        )
+  const { minRadius, maxRadius } = getGraphNodeScreenRadiusBounds(node.isRoot)
+
+  return {
+    prominenceScale,
+    radius: roundRadius(
+      clampNumber(
+        globalRadius * keywordScale * prominenceScale * relativeSizeScale,
+        minRadius,
+        maxRadius,
+      ),
+    ),
+  }
+}
+
+const resolveVisibleNodeRadiusStats = (
+  nodes: readonly GraphRenderNode[],
+): VisibleNodeRadiusStats => {
+  let minBaseRadius = Number.POSITIVE_INFINITY
+  let maxBaseRadius = Number.NEGATIVE_INFINITY
+
+  for (const node of nodes) {
+    if (node.isRoot) {
+      continue
+    }
+
+    minBaseRadius = Math.min(minBaseRadius, node.radius)
+    maxBaseRadius = Math.max(maxBaseRadius, node.radius)
+  }
+
+  if (!Number.isFinite(minBaseRadius) || !Number.isFinite(maxBaseRadius)) {
+    return {
+      minBaseRadius: 0,
+      maxBaseRadius: 0,
+    }
+  }
+
+  return {
+    minBaseRadius,
+    maxBaseRadius,
+  }
+}
+
 export const resolveGraphNodeScreenRadiiFast = ({
   nodes,
   activeLayer,
@@ -154,32 +317,26 @@ export const resolveGraphNodeScreenRadiiFast = ({
   activeLayer: UiLayer
   viewState: GraphViewState
   visibleNodeCount: number
-}): GraphNodeScreenRadii =>
-  new Map(
+}): GraphNodeScreenRadii => {
+  const radiusStats = resolveVisibleNodeRadiusStats(nodes)
+
+  return new Map(
     nodes.map((node) => {
-      const globalRadius = resolveGraphNodeScreenRadius({
-        baseRadius: node.radius,
-        isRoot: node.isRoot,
+      const resolved = resolveNodeGlobalScreenRadius({
+        node,
+        activeLayer,
         visibleNodeCount,
         zoomLevel: viewState.zoom,
+        radiusStats,
       })
 
       return [
         node.pubkey,
-        roundRadius(
-          clampNumber(
-            globalRadius *
-              getKeywordMatchScreenScale({
-                activeLayer,
-                keywordHits: node.keywordHits,
-              }),
-            getGraphNodeScreenRadiusBounds(node.isRoot).minRadius,
-            getGraphNodeScreenRadiusBounds(node.isRoot).maxRadius,
-          ),
-        ),
+        resolved.radius,
       ]
     }),
   )
+}
 
 const buildCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`
 
@@ -190,6 +347,7 @@ const buildProjectedNodeMetrics = ({
   width,
   height,
   visibleNodeCount,
+  radiusStats,
 }: {
   nodes: readonly GraphRenderNode[]
   activeLayer: UiLayer
@@ -197,6 +355,7 @@ const buildProjectedNodeMetrics = ({
   width: number
   height: number
   visibleNodeCount: number
+  radiusStats: VisibleNodeRadiusStats
 }) => {
   return nodes.map((node) => {
     const [screenX, screenY] = projectGraphPointToScreen({
@@ -205,29 +364,20 @@ const buildProjectedNodeMetrics = ({
       viewState,
       width,
     })
-    const globalRadius = resolveGraphNodeScreenRadius({
-      baseRadius: node.radius,
-      isRoot: node.isRoot,
+    const resolved = resolveNodeGlobalScreenRadius({
+      node,
+      activeLayer,
       visibleNodeCount,
       zoomLevel: viewState.zoom,
+      radiusStats,
     })
-    const emphasizedGlobalRadius = clampNumber(
-      globalRadius *
-        getKeywordMatchScreenScale({
-          activeLayer,
-          keywordHits: node.keywordHits,
-        }),
-      getGraphNodeScreenRadiusBounds(node.isRoot).minRadius,
-      getGraphNodeScreenRadiusBounds(node.isRoot).maxRadius,
-    )
-    const bleed =
-      emphasizedGlobalRadius + GRAPH_NODE_LEGIBILITY_SETTINGS.offscreenBleedPx
+    const bleed = resolved.radius + GRAPH_NODE_LEGIBILITY_SETTINGS.offscreenBleedPx
 
     return {
       pubkey: node.pubkey,
       screenX,
       screenY,
-      globalRadius: emphasizedGlobalRadius,
+      globalRadius: resolved.radius,
       keywordHits: node.keywordHits,
       isRoot: node.isRoot,
       isViewportAdjacent:
@@ -236,6 +386,7 @@ const buildProjectedNodeMetrics = ({
         screenY >= -bleed &&
         screenY <= height + bleed,
       nearestNeighborWorldDist: node.nearestNeighborWorldDist,
+      prominenceScale: resolved.prominenceScale,
     } satisfies ProjectedNodeMetric
   })
 }
@@ -324,17 +475,26 @@ const resolveLegibilityScale = ({
   globalRadius,
   nearestDistance,
   isRoot,
+  prominenceScale,
 }: {
   globalRadius: number
   nearestDistance: number
   isRoot: boolean
+  prominenceScale: number
 }) => {
-  const scaleMin = isRoot
+  const baseScaleMin = isRoot
     ? GRAPH_NODE_LEGIBILITY_SETTINGS.rootScaleMin
     : GRAPH_NODE_LEGIBILITY_SETTINGS.scaleMin
   const scaleMax = isRoot
     ? GRAPH_NODE_LEGIBILITY_SETTINGS.rootScaleMax
     : GRAPH_NODE_LEGIBILITY_SETTINGS.scaleMax
+  const scaleMin = clampNumber(
+    baseScaleMin +
+      (prominenceScale - 1) *
+        GRAPH_NODE_PROMINENCE_SETTINGS.prominenceLegibilityFloorBoost,
+    baseScaleMin,
+    scaleMax,
+  )
 
   if (!Number.isFinite(nearestDistance)) {
     return scaleMax
@@ -355,20 +515,25 @@ const resolveLegibilityCap = ({
   nearestDistance,
   maxRadius,
   minRadius,
+  prominenceScale,
 }: {
   nearestDistance: number
   maxRadius: number
   minRadius: number
+  prominenceScale: number
 }) => {
   if (!Number.isFinite(nearestDistance)) {
     return maxRadius
   }
 
+  const capFactor =
+    0.5 + (prominenceScale - 1) * GRAPH_NODE_PROMINENCE_SETTINGS.capBoostFactor
+
   return Math.max(
     minRadius,
     Math.min(
       maxRadius,
-      nearestDistance * 0.5 - GRAPH_NODE_LEGIBILITY_SETTINGS.spacingCapGapPx,
+      nearestDistance * capFactor - GRAPH_NODE_LEGIBILITY_SETTINGS.spacingCapGapPx,
     ),
   )
 }
@@ -401,6 +566,7 @@ export const resolveGraphNodeScreenRadii = ({
     width,
     height,
     visibleNodeCount,
+    radiusStats: resolveVisibleNodeRadiusStats(nodes),
   })
   const cells = buildProjectedNodeCells(projectedMetrics)
 
@@ -435,20 +601,31 @@ export const resolveGraphNodeScreenRadii = ({
         globalRadius: metric.globalRadius,
         nearestDistance,
         isRoot: metric.isRoot,
+        prominenceScale: metric.prominenceScale,
       })
       const legibilityCap = resolveLegibilityCap({
         nearestDistance,
         maxRadius,
         minRadius,
+        prominenceScale: metric.prominenceScale,
       })
+      const prominenceFloor = clampNumber(
+        metric.globalRadius *
+          (1 + (metric.prominenceScale - 1) * GRAPH_NODE_PROMINENCE_SETTINGS.floorBoostFactor),
+        minRadius,
+        maxRadius,
+      )
 
       return [
         metric.pubkey,
         roundRadius(
-          clampNumber(
-            metric.globalRadius * legibilityScale,
-            minRadius,
-            legibilityCap,
+          Math.max(
+            prominenceFloor,
+            clampNumber(
+              metric.globalRadius * legibilityScale,
+              minRadius,
+              legibilityCap,
+            ),
           ),
         ),
       ]

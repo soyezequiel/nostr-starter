@@ -316,6 +316,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
       new GraphSceneLayer({
         id: 'graph-scene',
         model,
+        viewState,
         hoveredNodePubkey,
         hoveredEdgeId,
         hoveredEdgePubkeys,
@@ -334,6 +335,7 @@ export const DeckGraphRenderer = memo(function DeckGraphRenderer({
       hoveredEdgePubkeys,
       selectedNodePubkey,
       model,
+      viewState,
       nodeScreenRadii,
       visibleLabels,
       imageFrame,

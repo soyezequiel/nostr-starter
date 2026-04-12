@@ -28,23 +28,13 @@ type EdgeEndpoints = {
 }
 
 const EDGE_SOURCE_PADDING_PX = 3
-const EDGE_TARGET_PADDING_PX = 4
+const EDGE_TARGET_PADDING_PX = 2
 
 const compareEdgesById = <T extends { id: string }>(left: T, right: T) =>
   left.id.localeCompare(right.id)
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
-
-const hashString = (value: string) => {
-  let hash = 0
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) | 0
-  }
-
-  return hash
-}
 
 const graphSceneGeometryCache = new Map<
   string,
@@ -86,26 +76,6 @@ const getEdgeEndpoints = (edge: GraphRenderEdge): EdgeEndpoints => ({
   }),
 })
 
-const compareConvergingEdges = (
-  left: GraphRenderEdge,
-  right: GraphRenderEdge,
-) => {
-  const leftAngle = Math.atan2(
-    left.sourcePosition[1] - left.targetPosition[1],
-    left.sourcePosition[0] - left.targetPosition[0],
-  )
-  const rightAngle = Math.atan2(
-    right.sourcePosition[1] - right.targetPosition[1],
-    right.sourcePosition[0] - right.targetPosition[0],
-  )
-
-  if (leftAngle !== rightAngle) {
-    return leftAngle - rightAngle
-  }
-
-  return left.id.localeCompare(right.id)
-}
-
 export const createGraphSceneGeometrySignature = (
   edges: readonly GraphRenderEdge[],
 ) => {
@@ -141,15 +111,8 @@ export const createGraphSceneGeometrySignature = (
   return `${edges.length}e:${(hash >>> 0).toString(36)}`
 }
 
-const resolveLaneOffsets = (count: number, targetPubkey: string) => {
-  const midpoint = (count - 1) / 2
-  const centerLaneSign = hashString(targetPubkey) % 2 === 0 ? -1 : 1
-
-  return Array.from({ length: count }, (_, index) => {
-    const lane = index - midpoint
-    return lane === 0 ? centerLaneSign * 0.5 : lane
-  })
-}
+const createDirectedFollowKey = (source: string, target: string) =>
+  `${source}->${target}`
 
 const sampleQuadraticBezierPath = ({
   start,
@@ -235,6 +198,9 @@ const buildCurvedEdgeSegments = (
   return buildSegmentsFromPath(edge, path)
 }
 
+const resolveOpposingFollowLaneOffset = (edge: GraphRenderEdge) =>
+  edge.source.localeCompare(edge.target) <= 0 ? -0.8 : 0.8
+
 const buildStraightEdgeSegments = (edge: GraphRenderEdge): GraphEdgeSegment[] => {
   const { sourcePosition, targetPosition } = getEdgeEndpoints(edge)
   const path = Array.from({ length: GRAPH_CURVED_EDGE_SAMPLE_STEPS + 1 }, (_, step) => {
@@ -260,8 +226,12 @@ export const buildGraphSceneGeometry = (
   }
 
   const segments: GraphEdgeSegment[] = []
-  const convergingFollowEdges = new Map<string, GraphRenderEdge[]>()
   const sortedEdges = [...edges].sort(compareEdgesById)
+  const directedFollowKeys = new Set(
+    sortedEdges
+      .filter((edge) => edge.relation === 'follow')
+      .map((edge) => createDirectedFollowKey(edge.source, edge.target)),
+  )
 
   for (const edge of sortedEdges) {
     if (edge.relation !== 'follow') {
@@ -269,34 +239,26 @@ export const buildGraphSceneGeometry = (
       continue
     }
 
-    const targetEdges = convergingFollowEdges.get(edge.target) ?? []
-    targetEdges.push(edge)
-    convergingFollowEdges.set(edge.target, targetEdges)
-  }
+    const hasOpposingFollow = directedFollowKeys.has(
+      createDirectedFollowKey(edge.target, edge.source),
+    )
 
-  const orderedTargets = [...convergingFollowEdges.keys()].sort()
-
-  for (const targetPubkey of orderedTargets) {
-    const group = convergingFollowEdges.get(targetPubkey)!
-
-    if (group.length < 2) {
-      segments.push(...buildStraightEdgeSegments(group[0]))
+    if (!hasOpposingFollow) {
+      segments.push(...buildStraightEdgeSegments(edge))
       continue
     }
 
-    const orderedGroup = [...group].sort(compareConvergingEdges)
-    const laneOffsets = resolveLaneOffsets(orderedGroup.length, targetPubkey)
+    const curvedSegments = buildCurvedEdgeSegments(
+      edge,
+      resolveOpposingFollowLaneOffset(edge),
+    )
 
-    for (const [index, edge] of orderedGroup.entries()) {
-      const curvedSegments = buildCurvedEdgeSegments(edge, laneOffsets[index])
-
-      if (!curvedSegments) {
-        segments.push(...buildStraightEdgeSegments(edge))
-        continue
-      }
-
-      segments.push(...curvedSegments)
+    if (!curvedSegments) {
+      segments.push(...buildStraightEdgeSegments(edge))
+      continue
     }
+
+    segments.push(...curvedSegments)
   }
 
   const geometry = { segments }
