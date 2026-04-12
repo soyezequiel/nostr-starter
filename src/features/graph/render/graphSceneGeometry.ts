@@ -20,6 +20,7 @@ export type GraphEdgeSegment = {
   targetSharedByExpandedCount: number
   progressStart: number
   progressEnd: number
+  isBidirectional?: boolean
 }
 
 type EdgeEndpoints = {
@@ -108,7 +109,7 @@ export const createGraphSceneGeometrySignature = (
     feedString(edge.isPriority ? '1' : '0')
   }
 
-  return `${edges.length}e:${(hash >>> 0).toString(36)}`
+  return `${edges.length}e:v3:${(hash >>> 0).toString(36)}`
 }
 
 const createDirectedFollowKey = (source: string, target: string) =>
@@ -140,6 +141,7 @@ const sampleQuadraticBezierPath = ({
 const buildSegmentsFromPath = (
   edge: GraphRenderEdge,
   path: Point[],
+  isBidirectional = false,
 ): GraphEdgeSegment[] => {
   const segments: GraphEdgeSegment[] = []
   
@@ -156,6 +158,7 @@ const buildSegmentsFromPath = (
       targetSharedByExpandedCount: edge.targetSharedByExpandedCount,
       progressStart: index / (path.length - 1),
       progressEnd: (index + 1) / (path.length - 1),
+      isBidirectional,
     })
   }
 
@@ -201,7 +204,10 @@ const buildCurvedEdgeSegments = (
 const resolveOpposingFollowLaneOffset = (edge: GraphRenderEdge) =>
   edge.source.localeCompare(edge.target) <= 0 ? -0.8 : 0.8
 
-const buildStraightEdgeSegments = (edge: GraphRenderEdge): GraphEdgeSegment[] => {
+const buildStraightEdgeSegments = (
+  edge: GraphRenderEdge,
+  isBidirectional = false,
+): GraphEdgeSegment[] => {
   const { sourcePosition, targetPosition } = getEdgeEndpoints(edge)
   const path = Array.from({ length: GRAPH_CURVED_EDGE_SAMPLE_STEPS + 1 }, (_, step) => {
     const t = step / GRAPH_CURVED_EDGE_SAMPLE_STEPS
@@ -211,7 +217,7 @@ const buildStraightEdgeSegments = (edge: GraphRenderEdge): GraphEdgeSegment[] =>
     ] as Point
   })
 
-  return buildSegmentsFromPath(edge, path)
+  return buildSegmentsFromPath(edge, path, isBidirectional)
 }
 
 export const buildGraphSceneGeometry = (
@@ -248,17 +254,12 @@ export const buildGraphSceneGeometry = (
       continue
     }
 
-    const curvedSegments = buildCurvedEdgeSegments(
-      edge,
-      resolveOpposingFollowLaneOffset(edge),
-    )
-
-    if (!curvedSegments) {
-      segments.push(...buildStraightEdgeSegments(edge))
-      continue
+    // Mutual follow (A follows B AND B follows A). 
+    // We consolidate this into a single straight bidirectional edge.
+    // To ensure determinism, we only process the edge where source < target.
+    if (edge.source.localeCompare(edge.target) < 0) {
+      segments.push(...buildStraightEdgeSegments(edge, true))
     }
-
-    segments.push(...curvedSegments)
   }
 
   const geometry = { segments }

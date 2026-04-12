@@ -40,3 +40,4 @@ export const LABEL_BORDER_COLOR = [255, 255, 255, 36] as const
 export const COMMON_FOLLOW_NODE_COLOR = [52, 211, 153, 255] as const
 export const COMMON_FOLLOW_RING_COLOR = [16, 185, 129, 210] as const
 export const HIGHLIGHT_LINK_COLOR = [56, 189, 248, 255] as const
+export const MUTUAL_LINK_COLOR = [217, 70, 239, 255] as const

@@ -5,6 +5,29 @@ import { normalizeAvatarZoomThresholds } from '@/features/graph/render/avatarQua
 
 const DEFAULT_RENDER_CONFIG = createInitialUiSliceState().renderConfig
 
+const COLOR_PROFILES: Record<string, { label: string; edge: string; mutual: string }> = {
+  monochrome: {
+    label: 'Monocromo Técnico',
+    edge: '#94a3b8',
+    mutual: '#2dd4bf',
+  },
+  identity: {
+    label: 'Identidad Total',
+    edge: '#38bdf8',
+    mutual: '#b4f953',
+  },
+  cyberpunk: {
+    label: 'Cyberpunk Night',
+    edge: '#6366f1',
+    mutual: '#f472b6',
+  },
+  custom: {
+    label: 'Personalizado',
+    edge: '',
+    mutual: '',
+  },
+}
+
 export function RenderConfigPanel() {
   const renderConfig = useAppStore((state) => state.renderConfig)
   const setRenderConfig = useAppStore((state) => state.setRenderConfig)
@@ -15,6 +38,33 @@ export function RenderConfigPanel() {
       <section className="settings-card">
         <div className="settings-card__title-row">
           <h3>Connections</h3>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="color-profile-select">Estilo de color</label>
+          <select
+            id="color-profile-select"
+            onChange={(event) => {
+              const profileKey = event.target.value
+              const profile = COLOR_PROFILES[profileKey]
+              if (profile && profileKey !== 'custom') {
+                setRenderConfig({
+                  colorProfile: profileKey,
+                  edgeColor: profile.edge,
+                  mutualEdgeColor: profile.mutual,
+                })
+              } else {
+                setRenderConfig({ colorProfile: 'custom' })
+              }
+            }}
+            value={renderConfig.colorProfile ?? 'custom'}
+          >
+            {Object.entries(COLOR_PROFILES).map(([key, p]) => (
+              <option key={key} value={key}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="settings-field">
@@ -48,6 +98,62 @@ export function RenderConfigPanel() {
             <option value="arrow">Linea V</option>
             <option value="triangle">Triangulo</option>
           </select>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="edge-color-input">Color conexiones</label>
+          <div className="settings-field__color-row">
+            <input
+              id="edge-color-input"
+              onChange={(event) =>
+                setRenderConfig({
+                  edgeColor: event.target.value,
+                  colorProfile: 'custom',
+                })
+              }
+              type="color"
+              value={renderConfig.edgeColor ?? '#94a3b8'}
+            />
+            <input
+              onChange={(event) =>
+                setRenderConfig({
+                  edgeColor: event.target.value,
+                  colorProfile: 'custom',
+                })
+              }
+              placeholder="#000000"
+              type="text"
+              value={renderConfig.edgeColor ?? '#94a3b8'}
+            />
+          </div>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="mutual-edge-color-input">Color mutuo</label>
+          <div className="settings-field__color-row">
+            <input
+              id="mutual-edge-color-input"
+              onChange={(event) =>
+                setRenderConfig({
+                  mutualEdgeColor: event.target.value,
+                  colorProfile: 'custom',
+                })
+              }
+              type="color"
+              value={renderConfig.mutualEdgeColor ?? '#2dd4bf'}
+            />
+            <input
+              onChange={(event) =>
+                setRenderConfig({
+                  mutualEdgeColor: event.target.value,
+                  colorProfile: 'custom',
+                })
+              }
+              placeholder="#000000"
+              type="text"
+              value={renderConfig.mutualEdgeColor ?? '#2dd4bf'}
+            />
+          </div>
         </div>
 
         <div className="settings-field">

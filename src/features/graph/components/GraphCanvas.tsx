@@ -2680,6 +2680,8 @@ export const GraphCanvas = memo(function GraphCanvas({
     [onDiagnosticsChange],
   )
 
+  const [isStreamProgressCollapsed, setIsStreamProgressCollapsed] = useState(true)
+
   return (
     <Profiler
       id="graph-canvas"
@@ -2763,18 +2765,48 @@ export const GraphCanvas = memo(function GraphCanvas({
           <div
             aria-atomic="false"
             aria-live="polite"
-            className="graph-panel__stream-status"
+            className={`graph-panel__stream-status ${isStreamProgressCollapsed ? 'graph-panel__stream-status--collapsed' : ''}`}
             role="status"
           >
-            <span className="graph-panel__stream-eyebrow">Progreso</span>
-            <span className="graph-panel__stream-label">{streamLabel}</span>
-            <span className="graph-panel__stream-meta">{streamMeta}</span>
-            <div className="graph-panel__progress-grid">
-              {progressMetrics.map((metric) => (
-                <GraphProgressMetricRow key={metric.id} metric={metric} />
-              ))}
-            </div>
-            <span className="graph-panel__stream-detail">{streamDetail}</span>
+            <button
+              className="graph-panel__stream-toggle"
+              onClick={() => setIsStreamProgressCollapsed(!isStreamProgressCollapsed)}
+              type="button"
+              aria-expanded={!isStreamProgressCollapsed}
+            >
+              <span className="graph-panel__stream-eyebrow">Progreso</span>
+              <div className="graph-panel__stream-header-main">
+                <span className="graph-panel__stream-label">{streamLabel}</span>
+                <span className="graph-panel__stream-meta">{streamMeta}</span>
+              </div>
+              <svg
+                fill="none"
+                height="12"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+                width="12"
+                style={{ 
+                  transform: isStreamProgressCollapsed ? 'none' : 'rotate(180deg)',
+                  transition: 'transform 0.2s ease'
+                }}
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            
+            {!isStreamProgressCollapsed && (
+              <>
+                <div className="graph-panel__progress-grid">
+                  {progressMetrics.map((metric) => (
+                    <GraphProgressMetricRow key={metric.id} metric={metric} />
+                  ))}
+                </div>
+                <span className="graph-panel__stream-detail">{streamDetail}</span>
+              </>
+            )}
           </div>
 
           <GraphControlRail

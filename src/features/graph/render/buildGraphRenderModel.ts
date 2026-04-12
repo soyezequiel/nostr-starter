@@ -1185,11 +1185,18 @@ export const buildGraphRenderModel = async ({
 
       return Array.from(followedPubkeys)
         .filter((targetPubkey) => followerPubkeys.has(targetPubkey))
-        .map((targetPubkey) => ({
-          source: anchorPubkey,
-          target: targetPubkey,
-          relation: 'follow' as const,
-        }))
+        .flatMap((targetPubkey) => [
+          {
+            source: anchorPubkey,
+            target: targetPubkey,
+            relation: 'follow' as const,
+          },
+          {
+            source: targetPubkey,
+            target: anchorPubkey,
+            relation: 'follow' as const,
+          },
+        ])
     }),
   )
   const nonReciprocalFollowingLayerLinks = sortAndDedupeGraphLinks(

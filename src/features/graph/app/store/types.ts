@@ -342,6 +342,9 @@ export interface RenderConfig {
   showSharedEmphasis: boolean
   showAvatarQualityGuide?: boolean
   showImageResidencyDebug?: boolean
+  edgeColor?: string
+  mutualEdgeColor?: string
+  colorProfile?: string
 }
 
 export interface PathfindingState {

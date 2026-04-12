@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { NodeExpansionState } from '@/features/graph/app/store/types'
 
 interface NodeExpansionProgressCardProps {
@@ -26,6 +27,28 @@ const formatPhaseLabel = (phase: NodeExpansionState['phase']) => {
   }
 }
 
+function ChevronIcon({ className, direction = 'down' }: { className?: string, direction?: 'up' | 'down' }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      height="14"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      width="14"
+      style={{ 
+        transform: direction === 'up' ? 'rotate(180deg)' : 'none',
+        transition: 'transform 0.2s ease'
+      }}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+
 export function NodeExpansionProgressCard({
   className,
   nodeLabel = null,
@@ -33,6 +56,7 @@ export function NodeExpansionProgressCard({
   title = 'Expansion en curso',
   variant = 'panel',
 }: NodeExpansionProgressCardProps) {
+  const [isCollapsed, setIsCollapsed] = useState(true)
   const progressStep = state.step ?? 0
   const progressTotalSteps = state.totalSteps ?? 0
   const hasProgress = progressStep > 0 && progressTotalSteps > 0
@@ -40,25 +64,37 @@ export function NodeExpansionProgressCard({
     ? `${Math.max(0, Math.min(100, (progressStep / progressTotalSteps) * 100))}%`
     : null
 
+  const handleToggle = () => setIsCollapsed(!isCollapsed)
+
   return (
     <section
       aria-busy={state.status === 'loading'}
       className={joinClassNames(
         'node-expansion-progress',
         `node-expansion-progress--${variant}`,
+        isCollapsed && 'node-expansion-progress--collapsed',
         className,
       )}
     >
       <div className="node-expansion-progress__header">
-        <div className="node-expansion-progress__title-row">
-          <span aria-hidden="true" className="node-expansion-progress__spinner" />
-          <div className="node-expansion-progress__heading">
-            <p className="node-expansion-progress__eyebrow">{title}</p>
-            {nodeLabel ? (
-              <h3 className="node-expansion-progress__node">{nodeLabel}</h3>
-            ) : null}
+        <button 
+          className="node-expansion-progress__toggle-btn"
+          onClick={handleToggle}
+          type="button"
+          aria-expanded={!isCollapsed}
+          aria-label={isCollapsed ? 'Expandir progreso' : 'Colapsar progreso'}
+        >
+          <div className="node-expansion-progress__title-row">
+            <span aria-hidden="true" className="node-expansion-progress__spinner" />
+            <div className="node-expansion-progress__heading">
+              <p className="node-expansion-progress__eyebrow">{title}</p>
+              {nodeLabel ? (
+                <h3 className="node-expansion-progress__node">{nodeLabel}</h3>
+              ) : null}
+            </div>
           </div>
-        </div>
+          <ChevronIcon direction={isCollapsed ? 'down' : 'up'} />
+        </button>
 
         {hasProgress ? (
           <span className="node-expansion-progress__step">
@@ -67,32 +103,36 @@ export function NodeExpansionProgressCard({
         ) : null}
       </div>
 
-      <p
-        aria-live="polite"
-        className="node-expansion-progress__message"
-        role="status"
-      >
-        {state.message ?? 'Procesando evidencia estructural...'}
-      </p>
+      {!isCollapsed && (
+        <div className="node-expansion-progress__body">
+          <p
+            aria-live="polite"
+            className="node-expansion-progress__message"
+            role="status"
+          >
+            {state.message ?? 'Procesando evidencia estructural...'}
+          </p>
 
-      {hasProgress && progressWidth ? (
-        <div
-          aria-hidden="true"
-          className="node-expansion-progress__meter"
-        >
-          <span
-            className="node-expansion-progress__meter-fill"
-            style={{ width: progressWidth }}
-          />
-        </div>
-      ) : null}
+          {hasProgress && progressWidth ? (
+            <div
+              aria-hidden="true"
+              className="node-expansion-progress__meter"
+            >
+              <span
+                className="node-expansion-progress__meter-fill"
+                style={{ width: progressWidth }}
+              />
+            </div>
+          ) : null}
 
-      {hasProgress ? (
-        <div className="node-expansion-progress__meta">
-          <span>Trabajando</span>
-          {hasProgress ? <span>{formatPhaseLabel(state.phase)}</span> : null}
+          {hasProgress ? (
+            <div className="node-expansion-progress__meta">
+              <span>Trabajando</span>
+              {hasProgress ? <span>{formatPhaseLabel(state.phase)}</span> : null}
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      )}
     </section>
   )
 }

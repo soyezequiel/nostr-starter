@@ -21,6 +21,7 @@ import {
   LABEL_TEXT_COLOR,
   LINK_COLOR,
   SHARED_RING_COLOR,
+  MUTUAL_LINK_COLOR,
 } from '@/features/graph/render/constants'
 import {
   buildGraphSceneGeometry,
@@ -82,6 +83,16 @@ const defaultProps: DefaultProps<GraphSceneLayerProps> = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any
 
+const hexToRgba = (hex: string, alpha = 255): [number, number, number, number] => {
+  if (!hex || hex.length < 7) {
+    return [0, 0, 0, alpha]
+  }
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return [r, g, b, alpha]
+}
+
 const getEdgeColor = (
   edge: Pick<
     GraphRenderEdge,
@@ -90,13 +101,14 @@ const getEdgeColor = (
     | 'isPriority'
     | 'targetSharedByExpandedCount'
     | 'isPathEdge'
-  > & { source: string; target: string },
+  > & { source: string; target: string; isBidirectional?: boolean },
   maxZapWeight: number,
   hoveredNodePubkey: string | null,
   hoveredEdgeId: string | null,
   selectedNodePubkey: string | null,
   activeLayer: GraphRenderModel['activeLayer'],
   hasPathHighlight: boolean,
+  customColors?: { edgeColor: string; mutualEdgeColor: string },
 ) => {
   const isHighlighted =
     ('id' in edge && hoveredEdgeId !== null && edge.id === hoveredEdgeId) ||
@@ -113,13 +125,24 @@ const getEdgeColor = (
     return isHighlighted ? [94, 234, 212, 110] as const : [71, 85, 105, 28] as const
   }
 
+  const mutualColor = customColors?.mutualEdgeColor
+    ? hexToRgba(customColors.mutualEdgeColor)
+    : MUTUAL_LINK_COLOR
+  const regularColor = customColors?.edgeColor
+    ? hexToRgba(customColors.edgeColor)
+    : LINK_COLOR
+
+  if (edge.isBidirectional) {
+    return isHighlighted ? mixColor(mutualColor, [255, 255, 255, 255], 0.35) : mutualColor
+  }
+
   if (isHighlighted) {
     return HIGHLIGHT_LINK_COLOR
   }
 
   if (activeLayer === 'connections') {
     const baseColor =
-      edge.relation === 'follow' ? CONNECTIONS_FOLLOW_COLOR : CONNECTIONS_INBOUND_COLOR
+      edge.relation === 'follow' ? regularColor : CONNECTIONS_INBOUND_COLOR
     return [baseColor[0], baseColor[1], baseColor[2], 188] as const
   }
 
@@ -128,7 +151,7 @@ const getEdgeColor = (
       edge.isPriority ||
       edge.targetSharedByExpandedCount < SHARED_NODE_THRESHOLD
     ) {
-      return LINK_COLOR
+      return regularColor
     }
 
     const sharedAlpha = Math.max(
@@ -137,15 +160,15 @@ const getEdgeColor = (
     )
 
     return [
-      LINK_COLOR[0],
-      LINK_COLOR[1],
-      LINK_COLOR[2],
+      regularColor[0],
+      regularColor[1],
+      regularColor[2],
       Math.round(sharedAlpha * 255),
     ] as const
   }
 
   if (edge.relation !== 'zap') {
-    return LINK_COLOR
+    return regularColor
   }
 
   const normalizedWeight =
@@ -471,7 +494,25 @@ const getGraphSceneTopologyData = (
   const nextEntry: GraphSceneTopologyCacheEntry = {
     signature,
     geometry,
-    arrowData: geometry.segments.filter((segment) => segment.progressEnd === 1),
+    arrowData: geometry.segments.flatMap((segment) => {
+      const arrows: (typeof segment)[] = []
+      if (segment.progressEnd === 1) {
+        arrows.push(segment)
+      }
+      if (segment.progressStart === 0 && segment.isBidirectional === true) {
+        // Create a synthetic reversed segment for the backward arrow
+        arrows.push({
+          ...segment,
+          source: segment.target,
+          target: segment.source,
+          sourcePosition: segment.targetPosition,
+          targetPosition: segment.sourcePosition,
+          progressStart: 0.1,
+          progressEnd: 1,
+        })
+      }
+      return arrows
+    }),
     maxZapWeight: model.edges.reduce(
       (maxWeight, edge) => Math.max(maxWeight, edge.weight),
       0,
@@ -963,8 +1004,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       imageFrame,
     })
 
-    const visibleArrowData =
-      arrowType !== 'none' && model.activeLayer !== 'mutuals' ? arrowData : []
+    const visibleArrowData = arrowType !== 'none' ? arrowData : []
 
     const baseAvatarLayerId = `${this.props.id}-avatars-base`
     const avatarAtlas = getRendererAvatarAtlas(baseAvatarLayerId, {
@@ -1113,6 +1153,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             selectedNodePubkey,
             model.activeLayer,
             hasPathHighlight,
+            {
+              edgeColor: renderConfig.edgeColor ?? '',
+              mutualEdgeColor: renderConfig.mutualEdgeColor ?? '',
+            },
           )
 
           const edgeOpacity = renderConfig.edgeOpacity ?? 1
@@ -1198,6 +1242,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   selectedNodePubkey,
                   model.activeLayer,
                   hasPathHighlight,
+                  {
+                    edgeColor: renderConfig.edgeColor ?? '',
+                    mutualEdgeColor: renderConfig.mutualEdgeColor ?? '',
+                  },
                 )
                 const edgeOpacity = renderConfig.edgeOpacity ?? 1
                 const arrowColor = [
@@ -1239,6 +1287,8 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   model.activeLayer,
                   hasPathHighlight,
                   renderConfig.edgeOpacity,
+                  renderConfig.edgeColor,
+                  renderConfig.mutualEdgeColor,
                 ],
                 getSize: [
                   hoveredNodePubkey,
