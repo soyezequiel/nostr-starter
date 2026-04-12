@@ -765,6 +765,10 @@ export function createRootLoaderModule(
         ctx.eventsWorker,
         selectLatestReplaceableEventsByPubkey(inboundFollowerResult.events),
         rootPubkey,
+        {
+          onContactListParsed: (envelope, parsed) =>
+            collaborators.persistence.persistContactListEvent(envelope, parsed),
+        },
       )
       if (inboundFollowerEvidence.followerPubkeys.length > 0) {
         void followerDiscovery.persistInboundFollowerSnapshot(

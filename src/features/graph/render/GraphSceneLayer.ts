@@ -10,6 +10,8 @@ import type { Texture } from '@luma.gl/core'
 import type { RenderConfig } from '@/features/graph/app/store/types'
 import {
   COMMON_FOLLOW_NODE_COLOR,
+  CONNECTIONS_FOLLOW_COLOR,
+  CONNECTIONS_INBOUND_COLOR,
   EXPANDED_RING_COLOR,
   HIGHLIGHT_LINK_COLOR,
   HOVER_RING_COLOR,
@@ -104,6 +106,10 @@ const getEdgeColor = (
 
   if (isHighlighted) {
     return HIGHLIGHT_LINK_COLOR
+  }
+
+  if (activeLayer === 'connections') {
+    return edge.relation === 'follow' ? CONNECTIONS_FOLLOW_COLOR : CONNECTIONS_INBOUND_COLOR
   }
 
   if (edge.relation === 'follow') {

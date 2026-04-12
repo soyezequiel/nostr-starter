@@ -147,6 +147,8 @@ export interface BuildGraphRenderModelInput {
   nodes: Record<string, GraphNode>
   links: readonly GraphLink[]
   inboundLinks: readonly GraphLink[]
+  /** Pre-derived cross-edges for the connections layer (from cached contact lists). */
+  connectionsLinks: readonly GraphLink[]
   zapEdges: readonly ZapLayerEdge[]
   activeLayer: UiLayer
   connectionsSourceLayer: ConnectionsSourceLayer

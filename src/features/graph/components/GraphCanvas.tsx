@@ -77,6 +77,8 @@ const selectGraphCanvasRenderState = (state: AppStore) => ({
   nodes: state.nodes,
   links: state.links,
   inboundLinks: state.inboundLinks,
+  connectionsLinks: state.connectionsLinks,
+  connectionsLinksRevision: state.connectionsLinksRevision,
   graphRevision: state.graphRevision,
   inboundGraphRevision: state.inboundGraphRevision,
   zapEdges: state.zapLayer.edges,
@@ -317,6 +319,7 @@ const createGraphAnalysisSignature = (
 const createBuildRenderModelJobKey = ({
   graphRevision,
   inboundGraphRevision,
+  connectionsLinksRevision,
   zapLayerRevision,
   zapLayerStatus,
   activeLayer,
@@ -332,6 +335,7 @@ const createBuildRenderModelJobKey = ({
 }: {
   graphRevision: number
   inboundGraphRevision: number
+  connectionsLinksRevision: number
   zapLayerRevision: number
   zapLayerStatus: AppStore['zapLayer']['status']
   activeLayer: AppStore['activeLayer']
@@ -348,6 +352,7 @@ const createBuildRenderModelJobKey = ({
   JSON.stringify({
     graphRevision,
     inboundGraphRevision,
+    connectionsLinksRevision,
     zapLayerRevision,
     zapLayerStatus,
     activeLayer,
@@ -778,6 +783,8 @@ export const GraphCanvas = memo(function GraphCanvas({
     nodes,
     links,
     inboundLinks,
+    connectionsLinks,
+    connectionsLinksRevision,
     graphRevision,
     inboundGraphRevision,
     zapEdges,
@@ -1235,6 +1242,7 @@ export const GraphCanvas = memo(function GraphCanvas({
       nodes,
       links,
       inboundLinks,
+      connectionsLinks,
       zapEdges,
       activeLayer,
       connectionsSourceLayer,
@@ -1338,6 +1346,7 @@ export const GraphCanvas = memo(function GraphCanvas({
       const jobKey = createBuildRenderModelJobKey({
         graphRevision,
         inboundGraphRevision,
+        connectionsLinksRevision,
         zapLayerRevision,
         zapLayerStatus,
         activeLayer: input.activeLayer,
@@ -1390,6 +1399,8 @@ export const GraphCanvas = memo(function GraphCanvas({
   }, [
     activeLayer,
     connectionsSourceLayer,
+    connectionsLinks,
+    connectionsLinksRevision,
     comparedNodePubkeys,
     expandedNodePubkeys,
     graphRevision,

@@ -38,6 +38,8 @@ export const createInitialGraphSliceState = (): Pick<
   | 'adjacency'
   | 'inboundLinks'
   | 'inboundAdjacency'
+  | 'connectionsLinks'
+  | 'connectionsLinksRevision'
   | 'graphRevision'
   | 'inboundGraphRevision'
   | 'rootNodePubkey'
@@ -51,6 +53,8 @@ export const createInitialGraphSliceState = (): Pick<
   adjacency: {},
   inboundLinks: [],
   inboundAdjacency: {},
+  connectionsLinks: [],
+  connectionsLinksRevision: 0,
   graphRevision: 0,
   inboundGraphRevision: 0,
   rootNodePubkey: null,
@@ -293,6 +297,13 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       inboundLinks: nextLinks,
       inboundAdjacency: nextAdjacency,
       inboundGraphRevision: state.inboundGraphRevision + 1,
+    })
+  },
+  setConnectionsLinks: (links) => {
+    const state = get()
+    set({
+      connectionsLinks: links,
+      connectionsLinksRevision: state.connectionsLinksRevision + 1,
     })
   },
   markNodeExpanded: (pubkey) => {

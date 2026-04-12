@@ -641,6 +641,12 @@ function validateBuildRenderModelRequest(
     ).map((link, index) =>
       validateGraphLinkForRender(link, `payload.inboundLinks[${index}]`),
     ),
+    connectionsLinks: (Array.isArray(request.connectionsLinks)
+      ? request.connectionsLinks
+      : []
+    ).map((link: unknown, index: number) =>
+      validateGraphLinkForRender(link, `payload.connectionsLinks[${index}]`),
+    ),
     zapEdges: expectArray(request.zapEdges, 'payload.zapEdges').map(
       (edge, index) => validateZapEdge(edge, `payload.zapEdges[${index}]`),
     ),

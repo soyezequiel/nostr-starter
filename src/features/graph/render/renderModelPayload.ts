@@ -28,6 +28,7 @@ export interface BuildRenderModelRequest {
   nodes: Record<string, BuildRenderModelNodeInput>
   links: GraphLink[]
   inboundLinks: GraphLink[]
+  connectionsLinks: GraphLink[]
   zapEdges: ZapLayerEdge[]
   activeLayer: UiLayer
   connectionsSourceLayer: ConnectionsSourceLayer
@@ -357,6 +358,7 @@ export const serializeBuildGraphRenderModelInput = ({
   nodes,
   links,
   inboundLinks,
+  connectionsLinks,
   zapEdges,
   activeLayer,
   connectionsSourceLayer,
@@ -380,6 +382,7 @@ export const serializeBuildGraphRenderModelInput = ({
   nodes: sanitizeNodes(nodes),
   links: sanitizeLinks(links),
   inboundLinks: sanitizeLinks(inboundLinks),
+  connectionsLinks: sanitizeLinks(connectionsLinks),
   zapEdges: sanitizeZapEdges(zapEdges),
   activeLayer: isUiLayer(activeLayer) ? activeLayer : 'graph',
   connectionsSourceLayer: isConnectionsSourceLayer(connectionsSourceLayer)
@@ -412,6 +415,7 @@ export const deserializeBuildGraphRenderModelInput = ({
   nodes,
   links,
   inboundLinks,
+  connectionsLinks,
   zapEdges,
   activeLayer,
   connectionsSourceLayer,
@@ -441,6 +445,7 @@ export const deserializeBuildGraphRenderModelInput = ({
   ),
   links,
   inboundLinks,
+  connectionsLinks: connectionsLinks ?? [],
   zapEdges,
   activeLayer,
   connectionsSourceLayer: isConnectionsSourceLayer(connectionsSourceLayer)

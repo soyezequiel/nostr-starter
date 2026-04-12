@@ -265,6 +265,10 @@ export interface GraphSlice {
   adjacency: Record<string, string[]>
   inboundLinks: GraphLink[]
   inboundAdjacency: Record<string, string[]>
+  /** Derived cross-edges used exclusively by the connections layer. Computed from
+   *  locally-cached contact lists when the connections layer is activated. */
+  connectionsLinks: GraphLink[]
+  connectionsLinksRevision: number
   graphRevision: number
   inboundGraphRevision: number
   rootNodePubkey: string | null
@@ -277,6 +281,7 @@ export interface GraphSlice {
   removeNodes: (pubkeys: readonly string[]) => void
   upsertLinks: (links: GraphLink[]) => void
   upsertInboundLinks: (links: GraphLink[]) => void
+  setConnectionsLinks: (links: GraphLink[]) => void
   markNodeExpanded: (pubkey: string) => void
   setNodeExpansionState: (pubkey: string, state: NodeExpansionState) => void
   setNodeStructurePreviewState: (

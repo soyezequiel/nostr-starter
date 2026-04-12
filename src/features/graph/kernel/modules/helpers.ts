@@ -26,6 +26,7 @@ import {
 import type { RelayAdapterInstance } from '@/features/graph/kernel/modules/context'
 import type {
   EventsWorkerActionMap,
+  ParseContactListResult,
   ZapReceiptInput,
 } from '@/features/graph/workers/events/contracts'
 import type { WorkerClient } from '@/features/graph/workers/shared/runtime'
@@ -338,6 +339,12 @@ export async function collectInboundFollowerEvidence(
   eventsWorker: WorkerClient<EventsWorkerActionMap>,
   envelopes: readonly RelayEventEnvelope[],
   targetPubkey: string,
+  options?: {
+    onContactListParsed?: (
+      envelope: RelayEventEnvelope,
+      parsed: ParseContactListResult,
+    ) => void | Promise<void>
+  },
 ): Promise<InboundFollowerEvidence> {
   if (envelopes.length === 0) {
     return {
@@ -367,6 +374,8 @@ export async function collectInboundFollowerEvidence(
         ) {
           followerPubkeys.add(envelope.event.pubkey)
         }
+
+        await options?.onContactListParsed?.(envelope, parsedContactList)
       } catch {
         partial = true
       }

@@ -1176,8 +1176,10 @@ export const buildGraphRenderModel = ({
   nodes,
   links,
   inboundLinks,
+  connectionsLinks,
   zapEdges,
   activeLayer,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   connectionsSourceLayer,
   rootNodePubkey,
   selectedNodePubkey,
@@ -1281,37 +1283,18 @@ export const buildGraphRenderModel = ({
   )
   const graphLayerLinks = [...links]
   const zapLayerLinks = [...links, ...zapEdges]
-  const baseConnectionVisiblePubkeys = buildVisiblePubkeysForLayer({
-    layer: connectionsSourceLayer,
-    layerLinks:
-      connectionsSourceLayer === 'following'
-        ? followingLayerLinks
-        : connectionsSourceLayer === 'following-non-followers'
-          ? nonReciprocalFollowingLayerLinks
-        : connectionsSourceLayer === 'mutuals'
-          ? mutualLayerLinks
-        : connectionsSourceLayer === 'followers'
-          ? followerLayerLinks
-        : connectionsSourceLayer === 'nonreciprocal-followers'
-          ? nonReciprocalFollowerLayerLinks
-        : connectionsSourceLayer === 'zaps'
-          ? zapLayerLinks
-        : graphLayerLinks,
-    nodes,
-    rootNodePubkey,
-    selectedNodePubkey,
-    expandedNodePubkeys,
-  })
   const currentGraphNodePubkeys = new Set(Object.keys(nodes))
   const internalConnectionLinksByKey = new Map<string, GraphLink>()
 
-  for (const link of [...links, ...inboundLinks]) {
+  // Primary source: edges already in state (from expansion or inbound discovery).
+  // connectionsLinks adds cross-edges derived from locally-cached contact lists
+  // (no network fetch required). 'follow' relation always wins over 'inbound'
+  // for the same directed pair so the authoritative direction is preserved.
+  for (const link of [...links, ...inboundLinks, ...connectionsLinks]) {
     if (
       link.relation === 'zap' ||
       link.source === rootNodePubkey ||
       link.target === rootNodePubkey ||
-      !baseConnectionVisiblePubkeys.has(link.source) ||
-      !baseConnectionVisiblePubkeys.has(link.target) ||
       !currentGraphNodePubkeys.has(link.source) ||
       !currentGraphNodePubkeys.has(link.target)
     ) {
@@ -1352,7 +1335,7 @@ export const buildGraphRenderModel = ({
           : graphLayerLinks
   const visiblePubkeys =
     activeLayer === 'connections'
-      ? new Set(baseConnectionVisiblePubkeys)
+      ? new Set(currentGraphNodePubkeys)
       : buildVisiblePubkeysForLayer({
           layer: activeLayer,
           layerLinks: renderedLinks,
