@@ -305,6 +305,7 @@ Esta capa maneja:
 - integracion con deck.gl
 - viewport y logica de fit
 - generacion del render model apoyada en workers
+- fisicas de layout separadas en `src/features/graph/render/graphPhysics.ts`
 - runtime de avatares e imagenes con umbrales segun zoom
 - seleccion de labels y geometria de escena
 - resaltado de comparacion y transformaciones visuales por capa

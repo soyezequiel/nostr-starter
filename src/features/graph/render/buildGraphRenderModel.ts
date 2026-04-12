@@ -1,10 +1,3 @@
-import {
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-} from 'd3-force'
-
 import type { DiscoveredGraphAnalysisState } from '@/features/graph/analysis/types'
 import type { GraphLink, GraphNode, ZapLayerEdge } from '@/features/graph/app/store/types'
 import { deriveDirectedEvidence } from '@/features/graph/evidence/directedEvidence'
@@ -20,6 +13,11 @@ import {
 } from '@/features/graph/render/constants'
 import { isSafeAvatarUrl } from '@/features/graph/render/avatar'
 import { getNodeDisplayLabel } from '@/features/graph/render/labels'
+import {
+  runGraphPhysicsLayout,
+  type GraphPhysicsLink,
+  type GraphPhysicsNode,
+} from '@/features/graph/render/graphPhysics'
 import type {
   AccessibleNodeSummary,
   BuildGraphRenderModelInput,
@@ -29,26 +27,6 @@ import type {
   GraphRenderModel,
   GraphRenderNode,
 } from '@/features/graph/render/types'
-
-type ForceLayoutNode = {
-  id: string
-  pubkey: string
-  radius: number
-  isRoot: boolean
-  x: number
-  y: number
-  vx?: number
-  vy?: number
-  fx?: number
-  fy?: number
-}
-
-type ForceLayoutLink = {
-  id: string
-  source: string | ForceLayoutNode
-  target: string | ForceLayoutNode
-  relation: GraphLink['relation'] | ZapLayerEdge['relation']
-}
 
 type NodeRadiusContext = {
   activeLayer: BuildGraphRenderModelInput['activeLayer']
@@ -60,25 +38,6 @@ type NodeRadiusContext = {
 
 type VisibleLayer = Exclude<BuildGraphRenderModelInput['activeLayer'], 'connections'>
 type VisibleLink = Pick<GraphLink, 'source' | 'target'> | Pick<ZapLayerEdge, 'source' | 'target'>
-
-const GRAPH_FORCE_SETTINGS = {
-  alphaDecay: 0.04,
-  chargeStrength: -220,
-  chargeTheta: 1.2,
-  chargeDistanceMax: 800,
-  collisionPadding: 10,
-  connectionsCollisionPadding: 16,
-  ticks: 90,
-  velocityDecay: 0.35,
-  linkStrength: 0.28,
-  sharedLinkStrengthLogFactor: 0.12,
-  sharedLinkStrengthCap: 0.52,
-  rootLinkDistance: 110,
-  siblingLinkDistance: 56,
-  connectionsLinkDistance: 92,
-  sharedLinkDistanceReductionPerLog2: 10,
-  sharedLinkDistanceReductionCap: 18,
-} as const
 
 const GRAPH_RADIUS_SETTINGS = {
   avatarBoost: 2.4,
@@ -542,15 +501,6 @@ const resolvePathfindingNodeVisuals = ({
   }
 }
 
-const createSeededRandom = (seed: number) => {
-  let state = seed >>> 0
-
-  return () => {
-    state = (state * 1664525 + 1013904223) >>> 0
-    return state / 0x100000000
-  }
-}
-
 const getInitialNodePosition = (index: number) => {
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
   const radius = 56 + Math.sqrt(index + 1) * 24
@@ -758,179 +708,6 @@ const buildSharedByExpandedCount = ({
       sources.size,
     ]),
   )
-}
-
-const createFastSeed = (
-  rootNodePubkey: string | null,
-  nodeCount: number,
-  linkCount: number,
-) => {
-  let hash = 2166136261
-  const key = rootNodePubkey ?? 'none'
-
-  for (let index = 0; index < key.length; index += 1) {
-    hash ^= key.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-
-  hash ^= nodeCount
-  hash = Math.imul(hash, 16777619)
-  hash ^= linkCount
-  hash = Math.imul(hash, 16777619)
-
-  return hash >>> 0
-}
-
-const resolveSharedLinkStrength = ({
-  link,
-  sharedByExpandedCount,
-}: {
-  link: ForceLayoutLink
-  sharedByExpandedCount: ReadonlyMap<string, number>
-}) => {
-  if (link.relation !== 'follow') {
-    return GRAPH_FORCE_SETTINGS.linkStrength
-  }
-
-  const targetPubkey = (link.target as ForceLayoutNode).pubkey
-  const sharedCount = sharedByExpandedCount.get(targetPubkey) ?? 1
-
-  if (sharedCount <= 1) {
-    return GRAPH_FORCE_SETTINGS.linkStrength
-  }
-
-  return clampNumber(
-    GRAPH_FORCE_SETTINGS.linkStrength +
-      Math.log2(sharedCount) * GRAPH_FORCE_SETTINGS.sharedLinkStrengthLogFactor,
-    GRAPH_FORCE_SETTINGS.linkStrength,
-    GRAPH_FORCE_SETTINGS.sharedLinkStrengthCap,
-  )
-}
-
-const resolveLinkDistance = ({
-  link,
-  rootNodePubkey,
-  sharedByExpandedCount,
-  renderConfig,
-  activeLayer,
-}: {
-  link: ForceLayoutLink
-  rootNodePubkey: string | null
-  sharedByExpandedCount: ReadonlyMap<string, number>
-  renderConfig: BuildGraphRenderModelInput['renderConfig']
-  activeLayer: BuildGraphRenderModelInput['activeLayer']
-}) => {
-  const sourceNode = link.source as ForceLayoutNode
-  const targetNode = link.target as ForceLayoutNode
-  const minimumDistance =
-    sourceNode.radius +
-    targetNode.radius +
-    (activeLayer === 'connections' ? 32 : 20)
-  const baseDistance =
-    activeLayer === 'connections'
-      ? GRAPH_FORCE_SETTINGS.connectionsLinkDistance
-      : sourceNode.pubkey === rootNodePubkey || targetNode.pubkey === rootNodePubkey
-      ? GRAPH_FORCE_SETTINGS.rootLinkDistance
-      : GRAPH_FORCE_SETTINGS.siblingLinkDistance
-  const resolvedBaseDistance = Math.max(
-    baseDistance * renderConfig.nodeSpacingFactor,
-    minimumDistance,
-  )
-
-  if (activeLayer === 'connections' || link.relation !== 'follow') {
-    return resolvedBaseDistance
-  }
-
-  const sharedCount = sharedByExpandedCount.get(targetNode.pubkey) ?? 1
-  if (sharedCount <= 1) {
-    return resolvedBaseDistance
-  }
-
-  const reduction = Math.min(
-    Math.log2(sharedCount) *
-      GRAPH_FORCE_SETTINGS.sharedLinkDistanceReductionPerLog2,
-    GRAPH_FORCE_SETTINGS.sharedLinkDistanceReductionCap,
-  )
-
-  return Math.max(resolvedBaseDistance - reduction, minimumDistance)
-}
-
-const runLayoutSimulation = ({
-  nodes,
-  links,
-  rootNodePubkey,
-  sharedByExpandedCount,
-  renderConfig,
-  activeLayer,
-  ticks = GRAPH_FORCE_SETTINGS.ticks,
-}: {
-  nodes: ForceLayoutNode[]
-  links: ForceLayoutLink[]
-  rootNodePubkey: string | null
-  sharedByExpandedCount: ReadonlyMap<string, number>
-  renderConfig: BuildGraphRenderModelInput['renderConfig']
-  activeLayer: BuildGraphRenderModelInput['activeLayer']
-  ticks?: number
-}) => {
-  const simulation = forceSimulation(nodes)
-    .randomSource(
-      createSeededRandom(
-        createFastSeed(rootNodePubkey, nodes.length, links.length),
-      ),
-    )
-    .alpha(1)
-    .alphaDecay(GRAPH_FORCE_SETTINGS.alphaDecay)
-    .velocityDecay(GRAPH_FORCE_SETTINGS.velocityDecay)
-    .force(
-      'charge',
-      forceManyBody<ForceLayoutNode>()
-        .strength(GRAPH_FORCE_SETTINGS.chargeStrength)
-        .distanceMax(GRAPH_FORCE_SETTINGS.chargeDistanceMax)
-        .theta(GRAPH_FORCE_SETTINGS.chargeTheta),
-    )
-    .force(
-      'collision',
-      forceCollide<ForceLayoutNode>()
-        .radius((node) =>
-          node.radius +
-          (activeLayer === 'connections'
-            ? GRAPH_FORCE_SETTINGS.connectionsCollisionPadding
-            : GRAPH_FORCE_SETTINGS.collisionPadding),
-        )
-        .strength(0.9)
-        .iterations(2),
-    )
-    .force(
-      'link',
-      forceLink<ForceLayoutNode, ForceLayoutLink>(links)
-        .id((node) => node.id)
-        .distance((link: ForceLayoutLink) =>
-          resolveLinkDistance({
-            link,
-            rootNodePubkey,
-            sharedByExpandedCount,
-            renderConfig,
-            activeLayer,
-          }),
-        )
-        .strength((link: ForceLayoutLink) =>
-          resolveSharedLinkStrength({
-            link,
-            sharedByExpandedCount,
-          }),
-        ),
-    )
-    .stop()
-
-  // PERF: stop early when simulation has converged. This saves iterations on
-  // warm restarts where previous positions are close to equilibrium.
-  const ALPHA_CONVERGENCE_THRESHOLD = 0.002
-  for (let tick = 0; tick < ticks; tick += 1) {
-    simulation.tick()
-    if (simulation.alpha() < ALPHA_CONVERGENCE_THRESHOLD) break
-  }
-
-  simulation.stop()
 }
 
 const thinCandidateEdges = ({
@@ -1569,7 +1346,7 @@ export const buildGraphRenderModel = ({
     previousPositions !== undefined &&
     previousPositions.size > 0
 
-  const layoutNodes: ForceLayoutNode[] = []
+  const layoutNodes: GraphPhysicsNode[] = []
   let nonRootIndex = 0
   let warmStartedCount = 0
   const communitySeedPositions = buildCommunitySeedPositions({
@@ -1631,7 +1408,7 @@ export const buildGraphRenderModel = ({
   const layoutNodeByPubkey = new Map(
     layoutNodes.map((node) => [node.pubkey, node]),
   )
-  const layoutLinks: ForceLayoutLink[] = renderedLinks
+  const layoutLinks: GraphPhysicsLink[] = renderedLinks
     .filter(
       (link) =>
         layoutNodeByPubkey.has(link.source) &&
@@ -1649,7 +1426,7 @@ export const buildGraphRenderModel = ({
       warmStartedCount > 0 &&
       warmStartedCount >= Math.floor(layoutNodes.length * 0.5)
 
-    runLayoutSimulation({
+    runGraphPhysicsLayout({
       nodes: layoutNodes,
       links: layoutLinks,
       rootNodePubkey,
