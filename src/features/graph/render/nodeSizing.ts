@@ -11,13 +11,15 @@ const GRAPH_NODE_SCREEN_SCALE_SETTINGS = {
   densityPaddingMin: 1.5,
   densityScaleMax: 1.12,
   densityScaleMin: 1.02,
-  maxScale: 2.75,
+  maxScale: 5.0,
   minScale: 0.92,
-  rootMaxRadiusPx: 56,
+  rootMaxRadiusPx: 82,
   rootMinRadiusPx: 24,
   visibleDensityFactor: 0.03,
-  zoomExponent: 0.34,
-  nodeMaxRadiusPx: 44,
+  // zoomExponent is 0 because zoom scaling is now handled by deck.gl world units.
+  // The sizing pipeline produces a base pixel radius; deck.gl scales it with the camera.
+  zoomExponent: 0,
+  nodeMaxRadiusPx: 72,
   nodeMinRadiusPx: 12,
 } as const
 
@@ -29,7 +31,7 @@ const GRAPH_NODE_LEGIBILITY_SETTINGS = {
   rootScaleMax: 1.3,
   rootScaleMin: 0.92,
   scaleMax: 1.52,
-  scaleMin: 0.8,
+  scaleMin: 0.88,
   spacingCapGapPx: 0.5,
 } as const
 
@@ -41,8 +43,14 @@ const GRAPH_NODE_KEYWORD_EMPHASIS_SETTINGS = {
 
 const GRAPH_NODE_PROMINENCE_SETTINGS = {
   capBoostFactor: 0.22,
+  connectionsCapBoostFactor: 0.52,
   commonFollowBoost: 0.06,
+  connectionsDegreeBoostCap: 0.72,
+  connectionsDegreeBoostLogFactor: 0.22,
+  connectionsDegreeBoostRelativeFactor: 0.35,
   connectionsLayerBoost: 0.08,
+  connectionsScaleCap: 1.72,
+  connectionsScaleMin: 0.72,
   degreeBoostCap: 0.34,
   degreeBoostLogFactor: 0.1,
   expandedBoost: 0.08,
@@ -179,9 +187,11 @@ const getKeywordMatchScreenScale = ({
 const getNodeProminenceScale = ({
   node,
   activeLayer,
+  maxVisibleDegree,
 }: {
   node: GraphRenderNode
   activeLayer: UiLayer
+  maxVisibleDegree: number
 }) => {
   let boost = 0
 
@@ -211,26 +221,42 @@ const getNodeProminenceScale = ({
     )
   }
 
-  if (node.visibleDegree > 1) {
+  if (activeLayer === 'connections' && !node.isRoot && node.visibleDegree > 0) {
     boost += Math.min(
-      GRAPH_NODE_PROMINENCE_SETTINGS.degreeBoostCap,
+      GRAPH_NODE_PROMINENCE_SETTINGS.connectionsDegreeBoostCap,
       Math.log2(node.visibleDegree + 1) *
-        GRAPH_NODE_PROMINENCE_SETTINGS.degreeBoostLogFactor,
+        GRAPH_NODE_PROMINENCE_SETTINGS.connectionsDegreeBoostLogFactor +
+        (maxVisibleDegree > 1
+          ? (node.visibleDegree / maxVisibleDegree) *
+            GRAPH_NODE_PROMINENCE_SETTINGS.connectionsDegreeBoostRelativeFactor
+          : 0),
     )
-  }
+  } else {
+    if (node.visibleDegree > 1) {
+      boost += Math.min(
+        GRAPH_NODE_PROMINENCE_SETTINGS.degreeBoostCap,
+        Math.log2(node.visibleDegree + 1) *
+          GRAPH_NODE_PROMINENCE_SETTINGS.degreeBoostLogFactor,
+      )
+    }
 
-  if (activeLayer === 'connections' && !node.isRoot) {
-    boost += GRAPH_NODE_PROMINENCE_SETTINGS.connectionsLayerBoost
+    if (activeLayer === 'connections' && !node.isRoot) {
+      boost += GRAPH_NODE_PROMINENCE_SETTINGS.connectionsLayerBoost
+    }
   }
 
   if (node.isRoot) {
     boost += GRAPH_NODE_PROMINENCE_SETTINGS.rootBoost
   }
 
+  const cap = activeLayer === 'connections'
+    ? GRAPH_NODE_PROMINENCE_SETTINGS.connectionsScaleCap
+    : GRAPH_NODE_PROMINENCE_SETTINGS.scaleCap
+
   return clampNumber(
     1 + boost,
     1,
-    GRAPH_NODE_PROMINENCE_SETTINGS.scaleCap,
+    cap,
   )
 }
 
@@ -260,6 +286,7 @@ const resolveNodeGlobalScreenRadius = ({
   const prominenceScale = getNodeProminenceScale({
     node,
     activeLayer,
+    maxVisibleDegree: radiusStats.maxVisibleDegree,
   })
   const radiusSpread = radiusStats.maxBaseRadius - radiusStats.minBaseRadius
   const relativeSizeScale =
@@ -323,6 +350,76 @@ const resolveVisibleNodeRadiusStats = (
   }
 }
 
+// ─── Connections-mode direct sizing ───────────────────────────────────────────
+// All other modes go through the world-radius + legibility pipeline; connections
+// uses a direct visibleDegree → screen-px mapping so the hierarchy is never
+// compressed out by the legibility cap or multi-factor radius chain.
+const CONNECTIONS_SIZING = {
+  // Pixel radius for a node with zero visible connections.
+  minPx: 10,
+  // Pixel radius for the most-connected node.
+  maxPx: 42,
+  // Selected / expanded override (always prominent).
+  selectedPx: 38,
+  // zoomExponent is 0 because zoom scaling is now handled by deck.gl world units.
+  zoomExponent: 0,
+} as const
+
+const resolveConnectionsNodeScreenRadii = ({
+  nodes,
+  viewState,
+}: {
+  nodes: readonly GraphRenderNode[]
+  viewState: GraphViewState
+}): GraphNodeScreenRadii => {
+  const maxDegree = nodes.reduce(
+    (max, n) => (n.isRoot ? max : Math.max(max, n.visibleDegree)),
+    0,
+  )
+  // Apply a gentle zoom factor so the graph reads well at all zoom levels.
+  const zoomBias = clampNumber(
+    Math.pow(2, viewState.zoom * CONNECTIONS_SIZING.zoomExponent),
+    0.72,
+    5.0,
+  )
+
+  return new Map(
+    nodes.map((node) => {
+      const { minRadius, maxRadius } = getGraphNodeScreenRadiusBounds(node.isRoot)
+
+      if (node.isRoot) {
+        return [
+          node.pubkey,
+          roundRadius(clampNumber(30 * zoomBias, minRadius, maxRadius)),
+        ]
+      }
+
+      // Prominence override: selected / path-endpoint nodes always appear large.
+      if (node.isSelected || node.isPathEndpoint === true) {
+        return [
+          node.pubkey,
+          roundRadius(
+            clampNumber(CONNECTIONS_SIZING.selectedPx * zoomBias, minRadius, maxRadius),
+          ),
+        ]
+      }
+
+      // Perceptual (sqrt) mapping so area is proportional to degree.
+      const degreeRatio = maxDegree > 0 ? node.visibleDegree / maxDegree : 0
+      const perceptual = Math.sqrt(degreeRatio)
+      const rawPx =
+        CONNECTIONS_SIZING.minPx +
+        perceptual * (CONNECTIONS_SIZING.maxPx - CONNECTIONS_SIZING.minPx)
+
+      return [
+        node.pubkey,
+        roundRadius(clampNumber(rawPx * zoomBias, minRadius, maxRadius)),
+      ]
+    }),
+  )
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 export const resolveGraphNodeScreenRadiiFast = ({
   nodes,
   activeLayer,
@@ -334,6 +431,10 @@ export const resolveGraphNodeScreenRadiiFast = ({
   viewState: GraphViewState
   visibleNodeCount: number
 }): GraphNodeScreenRadii => {
+  if (activeLayer === 'connections') {
+    return resolveConnectionsNodeScreenRadii({ nodes, viewState })
+  }
+
   const radiusStats = resolveVisibleNodeRadiusStats(nodes)
 
   return new Map(
@@ -492,15 +593,19 @@ const resolveLegibilityScale = ({
   nearestDistance,
   isRoot,
   prominenceScale,
+  activeLayer,
 }: {
   globalRadius: number
   nearestDistance: number
   isRoot: boolean
   prominenceScale: number
+  activeLayer: UiLayer
 }) => {
   const baseScaleMin = isRoot
     ? GRAPH_NODE_LEGIBILITY_SETTINGS.rootScaleMin
-    : GRAPH_NODE_LEGIBILITY_SETTINGS.scaleMin
+    : activeLayer === 'connections'
+      ? GRAPH_NODE_PROMINENCE_SETTINGS.connectionsScaleMin
+      : GRAPH_NODE_LEGIBILITY_SETTINGS.scaleMin
   const scaleMax = isRoot
     ? GRAPH_NODE_LEGIBILITY_SETTINGS.rootScaleMax
     : GRAPH_NODE_LEGIBILITY_SETTINGS.scaleMax
@@ -532,18 +637,24 @@ const resolveLegibilityCap = ({
   maxRadius,
   minRadius,
   prominenceScale,
+  activeLayer,
 }: {
   nearestDistance: number
   maxRadius: number
   minRadius: number
   prominenceScale: number
+  activeLayer: UiLayer
 }) => {
   if (!Number.isFinite(nearestDistance)) {
     return maxRadius
   }
 
+  const capBoostFactor =
+    activeLayer === 'connections'
+      ? GRAPH_NODE_PROMINENCE_SETTINGS.connectionsCapBoostFactor
+      : GRAPH_NODE_PROMINENCE_SETTINGS.capBoostFactor
   const capFactor =
-    0.5 + (prominenceScale - 1) * GRAPH_NODE_PROMINENCE_SETTINGS.capBoostFactor
+    0.5 + (prominenceScale - 1) * capBoostFactor
 
   return Math.max(
     minRadius,
@@ -573,6 +684,13 @@ export const resolveGraphNodeScreenRadii = ({
 }): GraphNodeScreenRadii => {
   if (width <= 0 || height <= 0 || nodes.length === 0) {
     return new Map()
+  }
+
+  // Connections mode: bypass the world-radius + legibility pipeline entirely.
+  // Use a direct visibleDegree → screen-px mapping so size hierarchy is
+  // never compressed out by the multi-factor chain (see resolveConnectionsNodeScreenRadii).
+  if (activeLayer === 'connections') {
+    return resolveConnectionsNodeScreenRadii({ nodes, viewState })
   }
 
   const projectedMetrics = buildProjectedNodeMetrics({
@@ -618,12 +736,14 @@ export const resolveGraphNodeScreenRadii = ({
         nearestDistance,
         isRoot: metric.isRoot,
         prominenceScale: metric.prominenceScale,
+        activeLayer,
       })
       const legibilityCap = resolveLegibilityCap({
         nearestDistance,
         maxRadius,
         minRadius,
         prominenceScale: metric.prominenceScale,
+        activeLayer,
       })
       const prominenceFloor = clampNumber(
         metric.globalRadius *

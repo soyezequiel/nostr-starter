@@ -2780,18 +2780,11 @@ export const GraphCanvas = memo(function GraphCanvas({
           <GraphControlRail
             activeLayer={activeLayer}
             canToggleOnlyNonReciprocal={canToggleOnlyNonReciprocal}
-            keywordLayerDisabledReason={keywordLayerDisabledReason}
-            keywordSearch={
-              activeLayer === 'keywords' ? (
-                <GraphCanvasKeywordSearch runtime={runtime} />
-              ) : undefined
-            }
             onlyOneRelationshipSideActive={onlyOneRelationshipSideActive}
             onToggleLayer={handleToggleLayer}
             onToggleOnlyNonReciprocal={handleToggleOnlyNonReciprocal}
             onToggleRelationship={handleToggleRelationship}
             relationshipToggleState={relationshipToggleState}
-            zapLayerStatus={zapLayerStatus}
           />
 
           {activeLayer === 'keywords' && layerStatusNote ? (

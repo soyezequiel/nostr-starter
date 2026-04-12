@@ -21,12 +21,9 @@ interface GraphControlRailProps {
   relationshipToggleState: RelationshipToggleState
   canToggleOnlyNonReciprocal: boolean
   onlyOneRelationshipSideActive: boolean
-  keywordLayerDisabledReason: string
-  zapLayerStatus: AppStore['zapLayer']['status']
   onToggleLayer: (layer: AppStore['activeLayer']) => void
   onToggleRelationship: (role: 'following' | 'followers') => void
   onToggleOnlyNonReciprocal: () => void
-  keywordSearch?: ReactNode
 }
 
 const resolveControlFeedback = (
@@ -140,12 +137,9 @@ export const GraphControlRail = memo(function GraphControlRail({
   relationshipToggleState,
   canToggleOnlyNonReciprocal,
   onlyOneRelationshipSideActive,
-  keywordLayerDisabledReason,
-  zapLayerStatus,
   onToggleLayer,
   onToggleRelationship,
   onToggleOnlyNonReciprocal,
-  keywordSearch,
 }: GraphControlRailProps) {
   const controlFeedback = resolveControlFeedback(
     activeLayer,
@@ -252,47 +246,7 @@ export const GraphControlRail = memo(function GraphControlRail({
             Sin reciprocidad
           </button>
         </div>
-
-        <div
-          className="graph-panel__control-group graph-panel__control-group--secondary"
-          role="group"
-          aria-label="Capas complementarias"
-        >
-          <button
-            aria-pressed={activeLayer === 'keywords'}
-            className={`graph-panel__control-btn${
-              activeLayer === 'keywords' ? ' graph-panel__control-btn--primary' : ''
-            }`}
-            data-control-tone="keywords"
-            onClick={() => onToggleLayer('keywords')}
-            title={keywordLayerDisabledReason || undefined}
-            type="button"
-          >
-            Palabras
-          </button>
-          <button
-            aria-pressed={activeLayer === 'zaps'}
-            className={`graph-panel__control-btn${
-              activeLayer === 'zaps' ? ' graph-panel__control-btn--primary' : ''
-            }`}
-            data-control-tone="zaps"
-            disabled={zapLayerStatus !== 'enabled'}
-            onClick={() => onToggleLayer('zaps')}
-            title={
-              zapLayerStatus !== 'enabled'
-                ? 'La capa de zaps depende de recibos disponibles.'
-                : undefined
-            }
-            type="button"
-          >
-            Zaps
-          </button>
-        </div>
       </div>
-
-      {keywordSearch ? (
-        <div className="graph-panel__control-search-slot">{keywordSearch}</div>
-      ) : null}
     </div>
   )
 })

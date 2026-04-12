@@ -87,6 +87,7 @@ const GRAPH_RADIUS_SETTINGS = {
   contextScaleMin: 0.76,
   densityLogFactor: 0.28,
   followMaxRadius: 22,
+  connectionsFollowMaxRadius: 32,
   followMinRadius: 8,
   keywordBoostCap: 5.2,
   degreeBoostCap: 4.1,
@@ -605,12 +606,16 @@ const getContextScale = ({
     GRAPH_RADIUS_SETTINGS.contextScaleMax,
   )
 
+const CONNECTIONS_DEGREE_BOOST_MULTIPLIER = 1.6
+
 const getDegreeBoost = ({
   visibleDegree,
   maxVisibleDegree,
+  activeLayer,
 }: {
   visibleDegree: number
   maxVisibleDegree: number
+  activeLayer?: BuildGraphRenderModelInput['activeLayer']
 }) => {
   if (visibleDegree <= 0) {
     return 0
@@ -619,11 +624,12 @@ const getDegreeBoost = ({
   const absoluteBoost = Math.log2(visibleDegree + 1) * 0.95
   const relativeBoost =
     maxVisibleDegree > 1 ? (visibleDegree / maxVisibleDegree) * 1.35 : 0
+  const cap =
+    activeLayer === 'connections'
+      ? GRAPH_RADIUS_SETTINGS.degreeBoostCap * CONNECTIONS_DEGREE_BOOST_MULTIPLIER
+      : GRAPH_RADIUS_SETTINGS.degreeBoostCap
 
-  return Math.min(
-    GRAPH_RADIUS_SETTINGS.degreeBoostCap,
-    absoluteBoost + relativeBoost,
-  )
+  return Math.min(cap, absoluteBoost + relativeBoost)
 }
 
 const getKeywordBoost = ({
@@ -686,6 +692,7 @@ const getNodeRadius = (
   const degreeBoost = getDegreeBoost({
     visibleDegree,
     maxVisibleDegree: context.maxVisibleDegree,
+    activeLayer: context.activeLayer,
   })
   const keywordBoost = getKeywordBoost({
     keywordHits: node.keywordHits,
@@ -703,7 +710,9 @@ const getNodeRadius = (
   const maxRadius =
     node.source === 'zap'
       ? GRAPH_RADIUS_SETTINGS.zapMaxRadius
-      : GRAPH_RADIUS_SETTINGS.followMaxRadius
+      : context.activeLayer === 'connections'
+        ? GRAPH_RADIUS_SETTINGS.connectionsFollowMaxRadius
+        : GRAPH_RADIUS_SETTINGS.followMaxRadius
 
   return roundRadius(
     clampNumber(

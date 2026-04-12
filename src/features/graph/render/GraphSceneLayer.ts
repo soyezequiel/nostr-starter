@@ -838,6 +838,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
       topologyData
     const { segments } = topologyData.geometry
     const nodeSizeFactor = renderConfig.nodeSizeFactor ?? 1
+    const viewScale = Math.max(Number.MIN_VALUE, Math.pow(2, viewState.zoom))
     const getScreenRadius = (pubkey: string, fallbackRadius: number) =>
       getVisibleNodeRadius({
         pubkey,
@@ -845,6 +846,18 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         nodeScreenRadii,
         nodeSizeFactor,
       })
+    // Convert screen-pixel radius to world-space units for deck.gl 'common' sizing.
+    // dampingFactor controls how much the screen-pixel size compensates for zoom:
+    //   1.0 = full compensation → nodes stay same screen size (cancels out, broken)
+    //   0.0 = no compensation  → nodes scale 1:1 with zoom (too aggressive)
+    //   0.5 = partial           → nodes grow at sqrt of zoom rate (natural)
+    // Net screen size at zoom z = screenRadius × viewScale^(1 - dampingFactor)
+    const NODE_ZOOM_DAMPING = 0.5
+    const worldDivisor = Math.pow(viewScale, NODE_ZOOM_DAMPING)
+    const getWorldRadius = (pubkey: string, fallbackRadius: number) =>
+      getScreenRadius(pubkey, fallbackRadius) / worldDivisor
+    const getWorldSize = (pubkey: string, fallbackRadius: number) =>
+      getWorldRadius(pubkey, fallbackRadius) * 2
     const nodeByPubkey = new Map(model.nodes.map((node) => [node.pubkey, node]))
     const visibleGeometryContext: VisibleGeometryContext = {
       nodeByPubkey,
@@ -924,16 +937,16 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               pickable: false,
               iconAtlas: coerceIconAtlasTexture(page.iconAtlas),
               iconMapping: page.iconMapping,
-              sizeUnits: 'pixels' as const,
+              sizeUnits: 'common' as const,
               getPosition: (node: GraphRenderNode) => node.position,
               getSize: (node: GraphRenderNode) =>
-                getScreenRadius(node.pubkey, node.radius) * 2,
+                getWorldSize(node.pubkey, node.radius),
               // En modo prepacked, `getIcon` devuelve solo la key del mapping estable que
               // arma nuestro atlas controlado base. Evitamos el auto-packing opaco de deck.gl.
               getIcon: (node: GraphRenderNode) =>
                 baseReadyImagesByPubkey[node.pubkey].key,
               updateTriggers: {
-                getSize: [nodeScreenRadii, nodeSizeFactor],
+                getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
                 getIcon: [baseReadyImageSignature, page.revision, page.key],
               },
             }
@@ -987,14 +1000,14 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               pickable: false,
               iconAtlas: coerceIconAtlasTexture(page.iconAtlas),
               iconMapping: page.iconMapping,
-              sizeUnits: 'pixels',
+              sizeUnits: 'common',
               getPosition: (node: GraphRenderNode) => node.position,
               getSize: (node: GraphRenderNode) =>
-                getScreenRadius(node.pubkey, node.radius) * 2,
+                getWorldSize(node.pubkey, node.radius),
               getIcon: (node: GraphRenderNode) =>
                 hdReadyImagesByPubkey[node.pubkey].key,
               updateTriggers: {
-                getSize: [nodeScreenRadii, nodeSizeFactor],
+                getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
                 getIcon: [hdReadyImageSignature, page.revision, page.key],
               },
               explicitFailedPubkeys: [],
@@ -1011,7 +1024,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         id: `${this.props.id}-edges`,
         data: segments,
         pickable: hoverPickingEnabled,
-        widthUnits: 'pixels',
+        widthUnits: 'common',
         getSourcePosition: (segment) => getSegmentPositions(segment).sourcePosition,
         getTargetPosition: (segment) => getSegmentPositions(segment).targetPosition,
         getColor: (segment) => {
@@ -1039,7 +1052,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           return [baseColor[0], baseColor[1], baseColor[2], fadedAlpha]
         },
           getWidth: (segment) =>
-            getEdgeWidth(
+            (getEdgeWidth(
               segment,
               maxZapWeight,
               hoveredNodePubkey,
@@ -1047,7 +1060,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               selectedNodePubkey,
               model.activeLayer,
               hasPathHighlight,
-            ) * edgeThickness,
+            ) * edgeThickness) / viewScale,
         updateTriggers: {
           getColor: [
             hoveredNodePubkey,
@@ -1062,6 +1075,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             selectedNodePubkey,
             model.activeLayer,
             hasPathHighlight,
+            viewState.zoom,
           ],
         },
       }),
@@ -1071,7 +1085,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               id: `${this.props.id}-arrows`,
               data: visibleArrowData,
               pickable: false,
-              sizeUnits: 'pixels',
+              sizeUnits: 'common',
               getPosition: (segment) =>
                 getVisibleArrowPlacement({
                   segment,
@@ -1096,7 +1110,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 return [color[0], color[1], color[2], 200]
               },
               getSize: (segment) =>
-                getEdgeWidth(
+                (getEdgeWidth(
                   segment,
                   maxZapWeight,
                   hoveredNodePubkey,
@@ -1107,7 +1121,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                 ) *
                   edgeThickness *
                   6 +
-                4,
+                4) / viewScale,
               getTextAnchor: 'end',
               getAlignmentBaseline: 'center',
               fontFamily: 'system-ui, sans-serif',
@@ -1126,6 +1140,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
                   selectedNodePubkey,
                   model.activeLayer,
                   hasPathHighlight,
+                  viewState.zoom,
                 ],
               },
             }),
@@ -1139,19 +1154,20 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               pickable: false,
               stroked: true,
               filled: true,
-              radiusUnits: 'pixels',
-              lineWidthUnits: 'pixels',
+              radiusUnits: 'common',
+              lineWidthUnits: 'common',
               getPosition: (node) => node.position,
               getRadius: (node) =>
-                getScreenRadius(node.pubkey, node.radius) *
+                getWorldRadius(node.pubkey, node.radius) *
                 (node.isPathEndpoint ? 1.78 : 1.38),
               getFillColor: (node) =>
                 node.isPathEndpoint ? [167, 243, 208, 74] : [56, 189, 248, 34],
               getLineColor: (node) =>
                 node.isPathEndpoint ? [167, 243, 208, 220] : [125, 211, 252, 172],
-              getLineWidth: (node) => (node.isPathEndpoint ? 3.2 : 2),
+              getLineWidth: (node) => (node.isPathEndpoint ? 3.2 : 2) / viewScale,
               updateTriggers: {
-                getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes],
+                getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
+                getLineWidth: [viewState.zoom],
               },
             }),
           ]
@@ -1162,11 +1178,11 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         pickable: false,
         stroked: true,
         filled: true,
-        radiusUnits: 'pixels',
-        lineWidthUnits: 'pixels',
+        radiusUnits: 'common',
+        lineWidthUnits: 'common',
         getPosition: (node) => node.position,
         getRadius: (node) =>
-          getScreenRadius(node.pubkey, node.radius) *
+          getWorldRadius(node.pubkey, node.radius) *
           (node.isSelected || hoveredEdgePubkeys.includes(node.pubkey)
             ? 2
             : node.pubkey === hoveredNodePubkey
@@ -1181,14 +1197,16 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             ? HOVER_RING_COLOR
             : EXPANDED_RING_COLOR,
         getLineWidth: (node) =>
-          hoveredEdgePubkeys.includes(node.pubkey) ? 2.6 : 2,
+          (hoveredEdgePubkeys.includes(node.pubkey) ? 2.6 : 2) / viewScale,
         updateTriggers: {
           getRadius: [
             nodeScreenRadii,
             nodeSizeFactor,
             hoveredNodePubkey,
             hoveredEdgePubkeys.join(','),
+            viewState.zoom,
           ],
+          getLineWidth: [viewState.zoom],
         },
       }),
       ...(renderConfig.showSharedEmphasis === true
@@ -1199,17 +1217,18 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               pickable: false,
               stroked: true,
               filled: false,
-              radiusUnits: 'pixels',
-              lineWidthUnits: 'pixels',
+              radiusUnits: 'common',
+              lineWidthUnits: 'common',
               getPosition: (node) => node.position,
               getRadius: (node) =>
-                getScreenRadius(node.pubkey, node.radius) *
+                getWorldRadius(node.pubkey, node.radius) *
                 getSharedRingScale(node.sharedByExpandedCount),
               getLineColor: () => SHARED_RING_COLOR,
               getLineWidth: (node) =>
-                getSharedRingWidth(node.sharedByExpandedCount),
+                getSharedRingWidth(node.sharedByExpandedCount) / viewScale,
               updateTriggers: {
-                getRadius: [nodeScreenRadii, nodeSizeFactor],
+                getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
+                getLineWidth: [viewState.zoom],
               },
             }),
           ]
@@ -1220,15 +1239,16 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         pickable: false,
         stroked: true,
         filled: true,
-        radiusUnits: 'pixels',
-        lineWidthUnits: 'pixels',
+        radiusUnits: 'common',
+        lineWidthUnits: 'common',
         getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 1.2,
+        getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 1.2,
         getFillColor: () => [167, 243, 208, 100],
         getLineColor: () => [167, 243, 208, 220],
-        getLineWidth: 3,
+        getLineWidth: 3 / viewScale,
         updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes],
+          getRadius: [nodeScreenRadii, nodeSizeFactor, model.nodes, viewState.zoom],
+          getLineWidth: [viewState.zoom],
         },
       }),
       new ScatterplotLayer<GraphRenderNode>({
@@ -1237,9 +1257,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         pickable: false,
         stroked: false,
         filled: true,
-        radiusUnits: 'pixels',
+        radiusUnits: 'common',
         getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 1.14,
+        getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 1.14,
         getFillColor: (node) =>
           getNodeGlassHaloColor(
             node,
@@ -1249,7 +1269,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             hasPathHighlight,
           ),
         updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor],
+          getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
@@ -1263,10 +1283,10 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         pickable: true,
         stroked: true,
         filled: true,
-        radiusUnits: 'pixels',
-        lineWidthUnits: 'pixels',
+        radiusUnits: 'common',
+        lineWidthUnits: 'common',
         getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius),
+        getRadius: (node) => getWorldRadius(node.pubkey, node.radius),
         getFillColor: (node) =>
           getNodeGlassFillColor(
             node,
@@ -1278,20 +1298,20 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         getLineColor: (node) =>
           getNodeGlassLineColor(node, paintedAvatarPubkeySet, model),
         getLineWidth: (node) =>
-          node.isRoot
+          (node.isRoot
             ? 2.2
             : paintedAvatarPubkeySet.has(node.pubkey)
               ? 1.35
-              : 1.15,
+              : 1.15) / viewScale,
         updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor],
+          getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
             hasPathHighlight,
           ],
           getLineColor: [imageFrame.paintedPubkeys.join(','), model.activeLayer],
-          getLineWidth: [imageFrame.paintedPubkeys.join(',')],
+          getLineWidth: [imageFrame.paintedPubkeys.join(','), viewState.zoom],
         },
       }),
       new ScatterplotLayer<GraphRenderNode>({
@@ -1300,9 +1320,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         pickable: false,
         stroked: false,
         filled: true,
-        radiusUnits: 'pixels',
+        radiusUnits: 'common',
         getPosition: (node) => node.position,
-        getRadius: (node) => getScreenRadius(node.pubkey, node.radius) * 0.72,
+        getRadius: (node) => getWorldRadius(node.pubkey, node.radius) * 0.72,
         getFillColor: (node) =>
           getNodeGlassHighlightColor(
             node,
@@ -1312,7 +1332,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
             hasPathHighlight,
           ),
         updateTriggers: {
-          getRadius: [nodeScreenRadii, nodeSizeFactor],
+          getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
           getFillColor: [
             imageFrame.paintedPubkeys.join(','),
             model.activeLayer,
@@ -1324,9 +1344,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         id: `${this.props.id}-fallback-avatars`,
         data: fallbackAvatarNodes,
         pickable: false,
-        sizeUnits: 'pixels',
+        sizeUnits: 'common',
         getPosition: (node) => node.position,
-        getSize: (node) => getScreenRadius(node.pubkey, node.radius) * 2,
+        getSize: (node) => getWorldSize(node.pubkey, node.radius),
         getIcon: () => ({
           id: 'fallback-avatar',
           url: fallbackAvatarUrl,
@@ -1335,7 +1355,7 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
           mask: false,
         }),
         updateTriggers: {
-          getSize: [nodeScreenRadii, nodeSizeFactor],
+          getSize: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
         },
       }),
       ...avatarLayers,
@@ -1348,13 +1368,13 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
               pickable: false,
               stroked: false,
               filled: true,
-              radiusUnits: 'pixels',
+              radiusUnits: 'common',
               getPosition: (node) => node.position,
               getRadius: (node) =>
-                getScreenRadius(node.pubkey, node.radius) * 0.98,
+                getWorldRadius(node.pubkey, node.radius) * 0.98,
               getFillColor: () => [148, 163, 184, 132],
               updateTriggers: {
-                getRadius: [nodeScreenRadii, nodeSizeFactor],
+                getRadius: [nodeScreenRadii, nodeSizeFactor, viewState.zoom],
               },
             }),
           ]
@@ -1382,6 +1402,9 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         backgroundPadding: [6, 3],
         fontFamily: 'Space Grotesk, ui-sans-serif, system-ui, sans-serif',
         characterSet: 'auto',
+        updateTriggers: {
+          getPixelOffset: [nodeScreenRadii, nodeSizeFactor],
+        },
       }),
     ]
   }

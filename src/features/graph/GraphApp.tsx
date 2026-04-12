@@ -988,17 +988,7 @@ function App({ rootLoader = browserAppKernel }: AppProps) {
 
         <header className="workspace-topbar">
           <div className="workspace-topbar__actions">
-            <button
-              aria-expanded={isPathfindingOpen}
-              aria-label="Abrir pathfinding"
-              className={`workspace-icon-btn${
-                isPathfindingOpen ? ' workspace-icon-btn--active' : ''
-              }`}
-              onClick={handleTogglePathfinding}
-              type="button"
-            >
-              <PathIcon />
-            </button>
+
             <button
               aria-expanded={shouldShowRootEntry}
               aria-label={rootEntryButtonLabel}
