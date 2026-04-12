@@ -847,13 +847,28 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         nodeSizeFactor,
       })
     // Convert screen-pixel radius to world-space units for deck.gl 'common' sizing.
-    // dampingFactor controls how much the screen-pixel size compensates for zoom:
-    //   1.0 = full compensation → nodes stay same screen size (cancels out, broken)
-    //   0.0 = no compensation  → nodes scale 1:1 with zoom (too aggressive)
-    //   0.5 = partial           → nodes grow at sqrt of zoom rate (natural)
-    // Net screen size at zoom z = screenRadius × viewScale^(1 - dampingFactor)
-    const NODE_ZOOM_DAMPING = 0.5
-    const worldDivisor = Math.pow(viewScale, NODE_ZOOM_DAMPING)
+    //
+    // Adaptive damping: the damping factor varies with zoom level so nodes feel
+    // naturally sized at every zoom distance.
+    //
+    //   At default/fitted zoom (~0–1): damping is high (0.65) — nodes stay compact
+    //     and don't overwhelm the overview.
+    //   As the user zooms in (2–6+): damping smoothly drops toward 0.25 — nodes
+    //     grow to fill the increasing gap between them, making exploration natural.
+    //
+    // Net screen size at zoom z ≈ screenRadius × viewScale^(1 - damping(z))
+    //
+    // The sigmoid-like curve ensures a smooth, continuous transition with no
+    // jarring size jumps at any zoom level.
+    const DAMPING_AT_OVERVIEW = 0.65   // high damping → compact nodes at overview
+    const DAMPING_AT_CLOSEUP = 0.25    // low damping  → larger nodes when zoomed in
+    const DAMPING_TRANSITION_CENTER = 2.5  // zoom level at the midpoint of transition
+    const DAMPING_TRANSITION_RATE = 1.2    // how quickly damping transitions
+    const adaptiveDamping =
+      DAMPING_AT_CLOSEUP +
+      (DAMPING_AT_OVERVIEW - DAMPING_AT_CLOSEUP) /
+        (1 + Math.exp((viewState.zoom - DAMPING_TRANSITION_CENTER) * DAMPING_TRANSITION_RATE))
+    const worldDivisor = Math.pow(viewScale, adaptiveDamping)
     const getWorldRadius = (pubkey: string, fallbackRadius: number) =>
       getScreenRadius(pubkey, fallbackRadius) / worldDivisor
     const getWorldSize = (pubkey: string, fallbackRadius: number) =>
