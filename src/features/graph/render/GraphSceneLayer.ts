@@ -109,7 +109,9 @@ const getEdgeColor = (
   }
 
   if (activeLayer === 'connections') {
-    return edge.relation === 'follow' ? CONNECTIONS_FOLLOW_COLOR : CONNECTIONS_INBOUND_COLOR
+    const baseColor =
+      edge.relation === 'follow' ? CONNECTIONS_FOLLOW_COLOR : CONNECTIONS_INBOUND_COLOR
+    return [baseColor[0], baseColor[1], baseColor[2], 188] as const
   }
 
   if (edge.relation === 'follow') {
@@ -177,7 +179,9 @@ const getEdgeWidth = (
   }
 
   let baseWidth = 1
-  if (edge.relation !== 'zap') {
+  if (activeLayer === 'connections') {
+    baseWidth = 2.2
+  } else if (edge.relation !== 'zap') {
     baseWidth = 1.4
   } else {
     const normalizedWeight =
@@ -997,15 +1001,20 @@ export class GraphSceneLayer extends CompositeLayer<GraphSceneLayerProps> {
         getSourcePosition: (segment) => segment.sourcePosition,
         getTargetPosition: (segment) => segment.targetPosition,
         getColor: (segment) => {
-                const baseColor = getEdgeColor(
-                  segment,
-                  maxZapWeight,
-                  hoveredNodePubkey,
-                  hoveredEdgeId,
-                  selectedNodePubkey,
-                  model.activeLayer,
-                  hasPathHighlight,
-                )
+          const baseColor = getEdgeColor(
+            segment,
+            maxZapWeight,
+            hoveredNodePubkey,
+            hoveredEdgeId,
+            selectedNodePubkey,
+            model.activeLayer,
+            hasPathHighlight,
+          )
+
+          if (model.activeLayer === 'connections') {
+            return baseColor
+          }
+
           const progress =
             ((segment.progressStart ?? 1) + (segment.progressEnd ?? 1)) / 2
           const fadedAlpha = Math.max(

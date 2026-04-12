@@ -67,6 +67,7 @@ const GRAPH_FORCE_SETTINGS = {
   chargeTheta: 1.2,
   chargeDistanceMax: 800,
   collisionPadding: 10,
+  connectionsCollisionPadding: 16,
   ticks: 90,
   velocityDecay: 0.35,
   linkStrength: 0.28,
@@ -74,6 +75,7 @@ const GRAPH_FORCE_SETTINGS = {
   sharedLinkStrengthCap: 0.52,
   rootLinkDistance: 110,
   siblingLinkDistance: 56,
+  connectionsLinkDistance: 92,
   sharedLinkDistanceReductionPerLog2: 10,
   sharedLinkDistanceReductionCap: 18,
 } as const
@@ -382,6 +384,32 @@ const resolveConnectionsVisiblePubkeys = ({
   }
 
   return removeRootPubkey(new Set(currentGraphNodePubkeys))
+}
+
+const createVisiblePubkeysFromLinks = (
+  links: readonly VisibleLink[],
+) => {
+  const visiblePubkeys = new Set<string>()
+
+  for (const link of links) {
+    visiblePubkeys.add(link.source)
+    visiblePubkeys.add(link.target)
+  }
+
+  return visiblePubkeys
+}
+
+const createVisiblePubkeysFromRenderEdges = (
+  edges: readonly GraphRenderEdge[],
+) => {
+  const visiblePubkeys = new Set<string>()
+
+  for (const edge of edges) {
+    visiblePubkeys.add(edge.source)
+    visiblePubkeys.add(edge.target)
+  }
+
+  return visiblePubkeys
 }
 
 const buildVisiblePubkeysForLayer = ({
@@ -775,17 +803,24 @@ const resolveLinkDistance = ({
   rootNodePubkey,
   sharedByExpandedCount,
   renderConfig,
+  activeLayer,
 }: {
   link: ForceLayoutLink
   rootNodePubkey: string | null
   sharedByExpandedCount: ReadonlyMap<string, number>
   renderConfig: BuildGraphRenderModelInput['renderConfig']
+  activeLayer: BuildGraphRenderModelInput['activeLayer']
 }) => {
   const sourceNode = link.source as ForceLayoutNode
   const targetNode = link.target as ForceLayoutNode
-  const minimumDistance = sourceNode.radius + targetNode.radius + 20
+  const minimumDistance =
+    sourceNode.radius +
+    targetNode.radius +
+    (activeLayer === 'connections' ? 32 : 20)
   const baseDistance =
-    sourceNode.pubkey === rootNodePubkey || targetNode.pubkey === rootNodePubkey
+    activeLayer === 'connections'
+      ? GRAPH_FORCE_SETTINGS.connectionsLinkDistance
+      : sourceNode.pubkey === rootNodePubkey || targetNode.pubkey === rootNodePubkey
       ? GRAPH_FORCE_SETTINGS.rootLinkDistance
       : GRAPH_FORCE_SETTINGS.siblingLinkDistance
   const resolvedBaseDistance = Math.max(
@@ -793,7 +828,7 @@ const resolveLinkDistance = ({
     minimumDistance,
   )
 
-  if (link.relation !== 'follow') {
+  if (activeLayer === 'connections' || link.relation !== 'follow') {
     return resolvedBaseDistance
   }
 
@@ -817,6 +852,7 @@ const runLayoutSimulation = ({
   rootNodePubkey,
   sharedByExpandedCount,
   renderConfig,
+  activeLayer,
   ticks = GRAPH_FORCE_SETTINGS.ticks,
 }: {
   nodes: ForceLayoutNode[]
@@ -824,6 +860,7 @@ const runLayoutSimulation = ({
   rootNodePubkey: string | null
   sharedByExpandedCount: ReadonlyMap<string, number>
   renderConfig: BuildGraphRenderModelInput['renderConfig']
+  activeLayer: BuildGraphRenderModelInput['activeLayer']
   ticks?: number
 }) => {
   const simulation = forceSimulation(nodes)
@@ -845,7 +882,12 @@ const runLayoutSimulation = ({
     .force(
       'collision',
       forceCollide<ForceLayoutNode>()
-        .radius((node) => node.radius + GRAPH_FORCE_SETTINGS.collisionPadding)
+        .radius((node) =>
+          node.radius +
+          (activeLayer === 'connections'
+            ? GRAPH_FORCE_SETTINGS.connectionsCollisionPadding
+            : GRAPH_FORCE_SETTINGS.collisionPadding),
+        )
         .strength(0.9)
         .iterations(2),
     )
@@ -859,6 +901,7 @@ const runLayoutSimulation = ({
             rootNodePubkey,
             sharedByExpandedCount,
             renderConfig,
+            activeLayer,
           }),
         )
         .strength((link: ForceLayoutLink) =>
@@ -1440,7 +1483,7 @@ export const buildGraphRenderModel = ({
           : graphLayerLinks
   const visiblePubkeys =
     activeLayer === 'connections'
-      ? connectionsVisiblePubkeys
+      ? createVisiblePubkeysFromLinks(internalConnectionLayerLinks)
       : buildVisiblePubkeysForLayer({
           layer: activeLayer,
           layerLinks: renderedLinks,
@@ -1603,6 +1646,7 @@ export const buildGraphRenderModel = ({
       rootNodePubkey,
       sharedByExpandedCount,
       renderConfig,
+      activeLayer,
       ticks: isWarmStart
         ? effectiveGraphCaps.warmStartLayoutTicks
         : effectiveGraphCaps.coldStartLayoutTicks,
@@ -1748,12 +1792,20 @@ export const buildGraphRenderModel = ({
     rootNodePubkey,
     selectedNodePubkey,
   })
+  const displayedNodePubkeys =
+    activeLayer === 'connections'
+      ? createVisiblePubkeysFromRenderEdges(edges)
+      : null
+  const displayedNodes =
+    displayedNodePubkeys === null
+      ? renderNodes
+      : renderNodes.filter((node) => displayedNodePubkeys.has(node.pubkey))
   const labelsSuppressedByBudget = renderNodes.length > GRAPH_LABEL_NODE_BUDGET
   const degradedReasons = [
     ...(edgesThinned ? (['edge-thinning'] as const) : []),
     ...(labelsSuppressedByBudget ? (['labels-suppressed'] as const) : []),
   ]
-  const labels: GraphRenderLabel[] = renderNodes.map((node) => ({
+  const labels: GraphRenderLabel[] = displayedNodes.map((node) => ({
     id: `${node.id}:label`,
     pubkey: node.pubkey,
     text: node.displayLabel,
@@ -1762,7 +1814,7 @@ export const buildGraphRenderModel = ({
     isRoot: node.isRoot,
     isSelected: node.isSelected,
   }))
-  const accessibleNodes: AccessibleNodeSummary[] = renderNodes.map((node) => ({
+  const accessibleNodes: AccessibleNodeSummary[] = displayedNodes.map((node) => ({
     id: node.id,
     pubkey: node.pubkey,
     displayLabel: node.displayLabel,
@@ -1771,12 +1823,12 @@ export const buildGraphRenderModel = ({
   }))
 
   return {
-    nodes: renderNodes,
+    nodes: displayedNodes,
     edges,
     labels,
     accessibleNodes,
-    bounds: resolveGraphBounds(renderNodes),
-    topologySignature: createTopologySignature(renderNodes, edges, activeLayer),
+    bounds: resolveGraphBounds(displayedNodes),
+    topologySignature: createTopologySignature(displayedNodes, edges, activeLayer),
     layoutKey,
     lod: {
       labelPolicy: labelsSuppressedByBudget
@@ -1787,7 +1839,7 @@ export const buildGraphRenderModel = ({
       thinnedEdgeCount,
       candidateEdgeCount: candidateEdges.length,
       visibleEdgeCount: edges.length,
-      visibleNodeCount: renderNodes.length,
+      visibleNodeCount: displayedNodes.length,
       degradedReasons: [...degradedReasons],
     },
     analysisOverlay,
