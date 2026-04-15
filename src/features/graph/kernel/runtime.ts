@@ -115,6 +115,7 @@ export {
 } from '@/features/graph/kernel/modules/helpers'
 
 const browserDatabase = createNostrGraphDatabase()
+export const browserAppStore = appStore
 
 class LazyGraphWorkerGateway implements WorkerClient<GraphWorkerActionMap> {
   private activeWorker: WorkerClient<GraphWorkerActionMap> | null = null
@@ -141,7 +142,7 @@ class LazyGraphWorkerGateway implements WorkerClient<GraphWorkerActionMap> {
 }
 
 export const browserAppKernel: KernelFacade & RootLoader = createKernelFacade({
-  store: appStore,
+  store: browserAppStore,
   repositories: createRepositories(browserDatabase),
   eventsWorker: createEventsWorkerGateway(),
   graphWorker: new LazyGraphWorkerGateway(),

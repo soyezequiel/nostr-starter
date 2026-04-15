@@ -25,6 +25,18 @@ const navItems = [
     ),
   },
   {
+    href: '/labs/sigma',
+    label: 'Sigma Lab',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7 5h10" />
+        <path d="M7 19h10" />
+        <path d="M8 5l8 14" />
+        <path d="M16 5l-8 14" />
+      </svg>
+    ),
+  },
+  {
     href: '/profile',
     label: 'Profile',
     icon: (

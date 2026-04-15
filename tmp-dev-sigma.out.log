@@ -1,0 +1,49 @@
+
+> nostr-starter@0.1.0 predev
+> npm run workers:build
+
+
+> nostr-starter@0.1.0 workers:build
+> node scripts/build-graph-workers.mjs
+
+
+> nostr-starter@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.2 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.17.176.1:3000
+✓ Ready in 469ms
+
+ GET /labs/sigma 200 in 337ms (next.js: 161ms, application-code: 176ms)
+ GET / 200 in 70ms (next.js: 24ms, application-code: 45ms)
+✓ Compiled in 146ms
+ GET /labs/sigma 200 in 45ms (next.js: 4ms, application-code: 42ms)
+ GET /labs/sigma 200 in 43ms (next.js: 4ms, application-code: 39ms)
+✓ Compiled in 214ms
+ GET /labs/sigma 200 in 133ms (next.js: 42ms, application-code: 91ms)
+✓ Compiled in 49ms
+✓ Compiled in 55ms
+ GET /labs/sigma 200 in 118ms (next.js: 41ms, application-code: 77ms)
+✓ Compiled in 48ms
+ GET /labs/sigma 200 in 45ms (next.js: 4ms, application-code: 41ms)
+ GET / 200 in 40ms (next.js: 4ms, application-code: 36ms)
+ GET /labs/sigma 200 in 44ms (next.js: 3ms, application-code: 41ms)
+ GET /labs/sigma 200 in 48ms (next.js: 3ms, application-code: 45ms)
+ GET /labs/sigma 200 in 41ms (next.js: 3ms, application-code: 38ms)
+ GET /labs/sigma 200 in 50ms (next.js: 4ms, application-code: 47ms)
+ GET /labs/sigma 200 in 50ms (next.js: 3ms, application-code: 47ms)
+ GET /labs/sigma 200 in 43ms (next.js: 3ms, application-code: 41ms)
+ GET /labs/sigma 200 in 42ms (next.js: 2ms, application-code: 40ms)
+ GET /labs/sigma 200 in 45ms (next.js: 3ms, application-code: 43ms)
+ GET /labs/sigma 200 in 43ms (next.js: 4ms, application-code: 39ms)
+ GET /labs/sigma 200 in 40ms (next.js: 3ms, application-code: 37ms)
+ GET /labs/sigma 200 in 43ms (next.js: 3ms, application-code: 40ms)
+ GET /labs/sigma 200 in 42ms (next.js: 2ms, application-code: 39ms)
+ GET /labs/sigma 200 in 42ms (next.js: 3ms, application-code: 40ms)
+ GET /labs/sigma 200 in 44ms (next.js: 2ms, application-code: 42ms)
+ GET /labs/sigma 200 in 43ms (next.js: 3ms, application-code: 40ms)
+ GET /labs/sigma 200 in 67ms (next.js: 3ms, application-code: 64ms)
+✓ Compiled in 64ms
+�Desea terminar el trabajo por lotes (S/N)? 
+[?25h

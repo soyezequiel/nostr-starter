@@ -40,6 +40,26 @@ Notas:
 - `GraphClient.tsx` carga la app del grafo con `ssr: false`
 - esta ruta es la superficie principal del producto
 
+### `/labs/sigma`
+
+Puntos de entrada:
+
+- `src/app/labs/sigma/page.tsx`
+- `src/features/graph-v2/GraphClientV2.tsx`
+- `src/features/graph-v2/ui/GraphAppV2.tsx`
+
+Objetivo:
+
+- validar la migracion a Sigma.js + Graphology + ForceAtlas2
+- sostener un dominio canonico separado del renderer
+- usar el kernel/store legacy solo como bridge temporal
+- mantener separados `visibleEdges` y `forceEdges` desde el contrato de escena
+
+Notas:
+
+- `GraphClientV2.tsx` carga la app del lab con `ssr: false`
+- `graph-v2/` encapsula dominio, bridge, proyecciones y renderer nuevo
+
 ### `/profile`
 
 Puntos de entrada:
@@ -72,6 +92,7 @@ Objetivo:
 Navegacion compartida entre:
 
 - grafo
+- sigma lab
 - profile
 - badges
 

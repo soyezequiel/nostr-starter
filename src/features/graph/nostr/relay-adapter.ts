@@ -31,6 +31,10 @@ const INTERACTIVE_FLUSH_DELAY_MS = 32
 const BACKGROUND_FLUSH_DELAY_MS = 120
 const HEALTH_PUBLISH_DELAY_MS = 100
 
+const sharedRelayHealth = new Map<string, RelayHealthSnapshot>()
+const sharedHealthListeners = new Set<() => void>()
+let sharedHealthPublishHandle: ReturnType<typeof setTimeout> | null = null
+
 type TerminalKind = 'eose' | 'timeout' | 'closed' | 'cancelled'
 
 interface ActiveRelayAttempt {
@@ -60,11 +64,6 @@ export class RelayPoolAdapter {
   private readonly stragglerGraceMs: number
   private readonly maxAuthorsPerFilter: number
   private readonly connections = new Map<string, ConnectionEntry>()
-  private readonly relayHealth = new Map<string, RelayHealthSnapshot>()
-  private readonly healthListeners = new Set<
-    (snapshot: Record<string, RelayHealthSnapshot>) => void
-  >()
-  private healthPublishHandle: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: RelayAdapterOptions) {
     this.transport = options.transport ?? new NostrToolsRelayTransport()
@@ -90,14 +89,7 @@ export class RelayPoolAdapter {
       options.maxAuthorsPerFilter ?? DEFAULT_MAX_AUTHORS_PER_FILTER
 
     for (const url of this.relayUrls) {
-      this.relayHealth.set(url, {
-        url,
-        status: 'idle',
-        attempt: 0,
-        activeSubscriptions: 0,
-        consecutiveFailures: 0,
-        lastChangeMs: this.clock.now(),
-      })
+      ensureSharedRelayHealth(url, this.clock.now())
     }
   }
 
@@ -137,32 +129,20 @@ export class RelayPoolAdapter {
   subscribeToRelayHealth(
     listener: (snapshot: Record<string, RelayHealthSnapshot>) => void,
   ): () => void {
-    this.healthListeners.add(listener)
     listener(this.snapshotRelayHealth())
+    const wrappedListener = () => {
+      listener(this.snapshotRelayHealth())
+    }
+    sharedHealthListeners.add(wrappedListener)
 
     return () => {
-      this.healthListeners.delete(listener)
-      if (
-        this.healthListeners.size === 0 &&
-        this.healthPublishHandle !== null
-      ) {
-        this.clock.clearTimeout(this.healthPublishHandle)
-        this.healthPublishHandle = null
-      }
+      sharedHealthListeners.delete(wrappedListener)
     }
   }
 
   close(): void {
     for (const url of this.relayUrls) {
       this.evictConnection(url)
-      this.updateRelayHealth(url, (current) => ({
-        ...current,
-        status: 'idle',
-        attempt: 0,
-        activeSubscriptions: 0,
-        lastCloseReason: undefined,
-        lastErrorCode: undefined,
-      }))
     }
   }
 
@@ -172,7 +152,7 @@ export class RelayPoolAdapter {
     options: { timeoutMs: number; id: string },
   ): Promise<RelayCountResult> {
     const startedAtMs = this.clock.now()
-    const health = this.relayHealth.get(url)
+    const health = sharedRelayHealth.get(url)
 
     // Circuit breaker: stop hammering relays that have recently failed.
     if (health) {
@@ -454,7 +434,7 @@ export class RelayPoolAdapter {
       }
 
       if (
-        (this.relayHealth.get(attempt.url)?.activeSubscriptions ?? 0) === 0
+        (sharedRelayHealth.get(attempt.url)?.activeSubscriptions ?? 0) === 0
       ) {
         this.evictConnection(attempt.url)
       }
@@ -463,7 +443,7 @@ export class RelayPoolAdapter {
     }
 
     const startRelay = async (url: string, attemptNumber: number) => {
-      const health = this.relayHealth.get(url)
+      const health = sharedRelayHealth.get(url)
       if (health) {
         const timeSinceChange = this.clock.now() - health.lastChangeMs
         // Circuit breaker: hold off retrying dead relays for 60s
@@ -871,7 +851,7 @@ export class RelayPoolAdapter {
   // PERF: fast path for accepted events. This skips snapshot allocation when
   // the relay is already healthy because it runs on every accepted event.
   private acceptRelayEvent(url: string): void {
-    const current = this.relayHealth.get(url)
+    const current = sharedRelayHealth.get(url)
     if (
       current &&
       current.status === 'healthy' &&
@@ -898,55 +878,11 @@ export class RelayPoolAdapter {
     url: string,
     updater: (current: RelayHealthSnapshot) => RelayHealthSnapshot,
   ): void {
-    const now = this.clock.now()
-    const current =
-      this.relayHealth.get(url) ??
-      ({
-        url,
-        status: 'idle',
-        attempt: 0,
-        activeSubscriptions: 0,
-        consecutiveFailures: 0,
-        lastChangeMs: now,
-      } satisfies RelayHealthSnapshot)
-
-    const next = {
-      ...updater(current),
-      lastChangeMs: now,
-    }
-
-    this.relayHealth.set(url, next)
-    this.publishHealth()
+    updateSharedRelayHealth(url, updater, this.clock.now())
   }
 
   private snapshotRelayHealth(): Record<string, RelayHealthSnapshot> {
-    return Object.fromEntries(
-      [...this.relayHealth.entries()].map(([url, snapshot]) => [
-        url,
-        { ...snapshot },
-      ]),
-    )
-  }
-
-  private publishHealth(): void {
-    if (
-      this.healthListeners.size === 0 ||
-      this.healthPublishHandle !== null
-    ) {
-      return
-    }
-
-    // PERF: relay events arrive as separate WebSocket tasks, so microtask
-    // coalescing would still allow near per-event UI updates. A short timer
-    // keeps relay health fresh without forcing React to re-render on every
-    // accepted event.
-    this.healthPublishHandle = this.clock.setTimeout(() => {
-      this.healthPublishHandle = null
-      const snapshot = this.snapshotRelayHealth()
-      for (const listener of this.healthListeners) {
-        listener(snapshot)
-      }
-    }, HEALTH_PUBLISH_DELAY_MS)
+    return snapshotSharedRelayHealth(this.relayUrls)
   }
 }
 
@@ -958,6 +894,82 @@ export function createRelayPoolAdapter(
 
 function dedupeRelayUrls(relayUrls: string[]): string[] {
   return [...new Set(relayUrls)]
+}
+
+function ensureSharedRelayHealth(url: string, now: number): void {
+  if (sharedRelayHealth.has(url)) {
+    return
+  }
+
+  sharedRelayHealth.set(url, {
+    url,
+    status: 'idle',
+    attempt: 0,
+    activeSubscriptions: 0,
+    consecutiveFailures: 0,
+    lastChangeMs: now,
+  })
+}
+
+function updateSharedRelayHealth(
+  url: string,
+  updater: (current: RelayHealthSnapshot) => RelayHealthSnapshot,
+  now: number,
+): void {
+  ensureSharedRelayHealth(url, now)
+  const current = sharedRelayHealth.get(url)
+
+  if (!current) {
+    return
+  }
+
+  const next = {
+    ...updater(current),
+    lastChangeMs: now,
+  }
+
+  sharedRelayHealth.set(url, next)
+  publishSharedHealth()
+}
+
+function snapshotSharedRelayHealth(relayUrls: readonly string[]) {
+  const entries = relayUrls.map((url) => {
+    const snapshot = sharedRelayHealth.get(url)
+
+    if (snapshot) {
+      return [url, { ...snapshot }] as const
+    }
+
+    return [
+      url,
+      {
+        url,
+        status: 'idle',
+        attempt: 0,
+        activeSubscriptions: 0,
+        consecutiveFailures: 0,
+        lastChangeMs: Date.now(),
+      } satisfies RelayHealthSnapshot,
+    ] as const
+  })
+
+  return Object.fromEntries(entries)
+}
+
+function publishSharedHealth(): void {
+  if (
+    sharedHealthListeners.size === 0 ||
+    sharedHealthPublishHandle !== null
+  ) {
+    return
+  }
+
+  sharedHealthPublishHandle = setTimeout(() => {
+    sharedHealthPublishHandle = null
+    for (const listener of sharedHealthListeners) {
+      listener()
+    }
+  }, HEALTH_PUBLISH_DELAY_MS)
 }
 
 function batchFilters(filters: Filter[], maxAuthorsPerFilter: number): Filter[] {

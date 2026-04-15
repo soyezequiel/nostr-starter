@@ -1,0 +1,467 @@
+'use client'
+/* eslint-disable @next/next/no-img-element */
+
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+
+import AvatarFallback from '@/components/AvatarFallback'
+import { NpubInput } from '@/features/graph/components/NpubInput'
+import { GraphInteractionController } from '@/features/graph-v2/application/InteractionController'
+import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
+import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
+import { buildGraphSceneSnapshot } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
+import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
+import { SigmaCanvasHost } from '@/features/graph-v2/ui/SigmaCanvasHost'
+
+const LAYER_LABELS: Record<(typeof GRAPH_V2_LAYERS)[number], string> = {
+  graph: 'Graph',
+  connections: 'Connections',
+  following: 'Following',
+  followers: 'Followers',
+  mutuals: 'Mutuals',
+  'following-non-followers': 'Following / Non Followers',
+  'nonreciprocal-followers': 'Followers / Non Reciprocal',
+}
+
+const getInitials = (value: string | null) => {
+  if (!value) {
+    return 'N'
+  }
+
+  return (
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((chunk) => chunk[0]?.toUpperCase() ?? '')
+      .join('') || 'N'
+  )
+}
+
+function RelayEditor({
+  relayUrls,
+  overrideStatus,
+  isGraphStale,
+  onApply,
+  onRevert,
+}: {
+  relayUrls: readonly string[]
+  overrideStatus: string
+  isGraphStale: boolean
+  onApply: (relayUrls: string[]) => Promise<void>
+  onRevert: () => Promise<void>
+}) {
+  const [draft, setDraft] = useState(relayUrls.join('\n'))
+  const [message, setMessage] = useState<string | null>(null)
+  const relaySignature = relayUrls.join('\n')
+
+  useEffect(() => {
+    setDraft(relaySignature)
+  }, [relaySignature])
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Relays</p>
+          <h2 className="mt-1 text-sm font-semibold text-white">
+            Override del bridge
+          </h2>
+        </div>
+        <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/60">
+          {overrideStatus} / {isGraphStale ? 'stale' : 'live'}
+        </span>
+      </div>
+
+      <textarea
+        className="mt-3 h-32 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="wss://relay.example"
+        spellCheck={false}
+        value={draft}
+      />
+
+      <div className="mt-3 flex gap-2">
+        <button
+          className="rounded-xl bg-[#7dd3a7] px-3 py-2 text-sm font-medium text-black"
+          onClick={() => {
+            const nextRelayUrls = draft
+              .split(/\s+/)
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+
+            startTransition(() => {
+              void onApply(nextRelayUrls)
+                .then(() => {
+                  setMessage(`Aplicados ${nextRelayUrls.length} relays.`)
+                })
+                .catch((error) => {
+                  setMessage(
+                    error instanceof Error
+                      ? error.message
+                      : 'No se pudieron aplicar los relays.',
+                  )
+                })
+            })
+          }}
+          type="button"
+        >
+          Aplicar
+        </button>
+        <button
+          className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/80"
+          onClick={() => {
+            startTransition(() => {
+              void onRevert()
+                .then(() => {
+                  setMessage('Se revirtio el override de relays.')
+                })
+                .catch((error) => {
+                  setMessage(
+                    error instanceof Error
+                      ? error.message
+                      : 'No se pudo revertir el override.',
+                  )
+                })
+            })
+          }}
+          type="button"
+        >
+          Revertir
+        </button>
+      </div>
+
+      {message ? <p className="mt-3 text-xs text-white/60">{message}</p> : null}
+    </section>
+  )
+}
+
+export default function GraphAppV2() {
+  const [bridge] = useState(() => new LegacyKernelBridge())
+  const [validationFeedback, setValidationFeedback] = useState<string | null>(null)
+  const [loadFeedback, setLoadFeedback] = useState<string | null>(null)
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null)
+  const domainState = useSyncExternalStore(
+    bridge.subscribe,
+    bridge.getState,
+    bridge.getState,
+  )
+
+  useEffect(() => {
+    bridge.connect()
+
+    return () => bridge.dispose()
+  }, [bridge])
+
+  const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
+  const scene = useMemo(() => buildGraphSceneSnapshot(domainState), [domainState])
+  const deferredScene = useDeferredValue(scene)
+  const detail = useMemo(() => buildNodeDetailProjection(domainState), [domainState])
+  const rootLoadMessage = domainState.discoveryState.rootLoad.message
+  const visibleLoadFeedback =
+    loadFeedback === 'Cargando root...' && rootLoadMessage
+      ? rootLoadMessage
+      : loadFeedback ?? rootLoadMessage
+
+  return (
+    <main className="min-h-screen bg-[#0b0d0f] pt-16 text-white">
+      <div className="mx-auto h-[calc(100vh-4rem)] max-w-[1600px] p-4">
+        <div className="grid h-full gap-4 lg:grid-cols-[320px_minmax(0,1fr)_320px]">
+          <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-4">
+            <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Graph V2</p>
+              <h1 className="mt-1 text-xl font-semibold">Sigma Lab</h1>
+              <p className="mt-2 text-sm text-white/60">
+                Dominio canonico, proyecciones explicitas y renderer intercambiable en ruta paralela.
+              </p>
+              <div className="mt-4">
+                <NpubInput
+                  onInvalidRoot={(payload) => {
+                    setValidationFeedback(payload.message)
+                  }}
+                  onValidRoot={({ pubkey, relays }) => {
+                    setValidationFeedback(null)
+                    setLoadFeedback('Cargando root...')
+                    startTransition(() => {
+                      void bridge
+                        .loadRoot(pubkey, {
+                          bootstrapRelayUrls: relays,
+                        })
+                        .then((result) => {
+                          setLoadFeedback(result.message)
+                        })
+                        .catch((error) => {
+                          setLoadFeedback(
+                            error instanceof Error
+                              ? error.message
+                              : 'No se pudo cargar el root.',
+                          )
+                        })
+                    })
+                  }}
+                />
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-white/40">Root</dt>
+                  <dd className="mt-1 font-mono text-[11px] text-white/80">
+                    {domainState.rootPubkey ?? 'sin root'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-white/40">Load</dt>
+                  <dd className="mt-1 text-white/80">
+                    {domainState.discoveryState.rootLoad.status}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-white/40">Nodos</dt>
+                  <dd className="mt-1 text-white/80">
+                    {scene.diagnostics.nodeCount}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-white/40">Force edges</dt>
+                  <dd className="mt-1 text-white/80">
+                    {scene.diagnostics.forceEdgeCount}
+                  </dd>
+                </div>
+              </dl>
+              {visibleLoadFeedback ? (
+                <p className="mt-3 text-xs text-white/60">{visibleLoadFeedback}</p>
+              ) : null}
+              {validationFeedback ? (
+                <p className="mt-3 text-xs text-white/60">{validationFeedback}</p>
+              ) : null}
+              {actionFeedback ? (
+                <p className="mt-3 text-xs text-white/60">{actionFeedback}</p>
+              ) : null}
+            </section>
+
+            <RelayEditor
+              isGraphStale={domainState.relayState.isGraphStale}
+              onApply={async (relayUrls) => {
+                const result = await bridge.setRelays(relayUrls)
+                setActionFeedback(result.message)
+              }}
+              onRevert={async () => {
+                const result = await bridge.revertRelays()
+                setActionFeedback(
+                  result?.message ?? 'No habia override activo para revertir.',
+                )
+              }}
+              overrideStatus={domainState.relayState.overrideStatus}
+              relayUrls={domainState.relayState.urls}
+            />
+
+            <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/50">Layers</p>
+                  <h2 className="mt-1 text-sm font-semibold text-white">
+                    Proyeccion activa
+                  </h2>
+                </div>
+                <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/60">
+                  {domainState.activeLayer}
+                </span>
+              </div>
+
+              <div className="mt-3 grid gap-2">
+                {GRAPH_V2_LAYERS.map((layer) => {
+                  const isActive = layer === domainState.activeLayer
+                  return (
+                    <button
+                      className={`rounded-xl border px-3 py-2 text-left text-sm transition ${
+                        isActive
+                          ? 'border-[#7dd3a7] bg-[#7dd3a7]/15 text-[#7dd3a7]'
+                          : 'border-white/10 bg-black/10 text-white/80 hover:border-white/20'
+                      }`}
+                      key={layer}
+                      onClick={() => {
+                        bridge.toggleLayer(layer)
+                      }}
+                      type="button"
+                    >
+                      {LAYER_LABELS[layer]}
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          </aside>
+
+          <section className="min-h-0 overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(125,211,167,0.08),rgba(7,10,12,0.96)_45%)]">
+            <div className="flex h-full flex-col">
+              <header className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-white/50">Renderer</p>
+                  <h2 className="mt-1 text-sm font-semibold text-white">
+                    Sigma + Graphology + ForceAtlas2
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-white/50">
+                  <span>{deferredScene.diagnostics.visibleEdgeCount} visibles</span>
+                  <span>{deferredScene.diagnostics.forceEdgeCount} fuerza</span>
+                </div>
+              </header>
+              <div className="min-h-0 flex-1">
+                <SigmaCanvasHost
+                  callbacks={controller.callbacks}
+                  scene={deferredScene}
+                />
+              </div>
+            </div>
+          </section>
+
+          <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-4">
+            <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/50">Node Detail</p>
+              {detail.node ? (
+                <>
+                  <div className="mt-4 flex items-start gap-3">
+                    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                      {detail.pictureUrl ? (
+                        <img
+                          alt=""
+                          className="h-full w-full object-cover"
+                          src={detail.pictureUrl}
+                        />
+                      ) : (
+                        <AvatarFallback
+                          initials={getInitials(detail.displayName)}
+                          labelClassName="text-lg font-semibold"
+                        />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="truncate text-lg font-semibold text-white">
+                        {detail.displayName}
+                      </h2>
+                      <p className="mt-1 font-mono text-[11px] text-white/50">
+                        {detail.pubkey}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-sm leading-6 text-white/70">
+                    {detail.about?.trim() || 'Sin bio conocida.'}
+                  </p>
+
+                  <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <dt className="text-white/40">Following</dt>
+                      <dd className="mt-1 text-white/80">{detail.followingCount}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/40">Followers</dt>
+                      <dd className="mt-1 text-white/80">{detail.followerCount}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/40">Mutuals</dt>
+                      <dd className="mt-1 text-white/80">{detail.mutualCount}</dd>
+                    </div>
+                  </dl>
+
+                  <div className="mt-4 grid gap-2">
+                    <button
+                      className="rounded-xl bg-[#7dd3a7] px-3 py-2 text-sm font-medium text-black"
+                      onClick={() => {
+                        const selectedPubkey = detail.pubkey
+
+                        if (!selectedPubkey) {
+                          return
+                        }
+
+                        startTransition(() => {
+                          void bridge.expandNode(selectedPubkey).then((result) => {
+                            setActionFeedback(result.message)
+                          })
+                        })
+                      }}
+                      type="button"
+                    >
+                      {detail.isExpanded ? 'Nodo expandido' : 'Expandir nodo'}
+                    </button>
+                    <button
+                      className={`rounded-xl border px-3 py-2 text-sm ${
+                        detail.isPinned
+                          ? 'border-[#ffb25b] bg-[#ffb25b]/15 text-[#ffb25b]'
+                          : 'border-white/10 text-white/80'
+                      }`}
+                      onClick={() => {
+                        const selectedPubkey = detail.pubkey
+
+                        if (!selectedPubkey) {
+                          return
+                        }
+
+                        bridge.togglePinnedNode(selectedPubkey)
+                      }}
+                      type="button"
+                    >
+                      {detail.isPinned ? 'Quitar pin' : 'Fijar nodo'}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/70">
+                    <p>nip05: {detail.nip05?.trim() || 'n/a'}</p>
+                    <p className="mt-1">lud16: {detail.lud16?.trim() || 'n/a'}</p>
+                    <p className="mt-2 text-xs text-white/50">
+                      Estado de expansion:{' '}
+                      {detail.node.nodeExpansionState?.status ?? 'idle'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/20 p-4 text-sm text-white/50">
+                  Selecciona un nodo en Sigma para inspeccionar el detalle y ejecutar acciones del bridge.
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/70">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/50">
+                Diagnostics
+              </p>
+              <dl className="mt-3 grid gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-white/40">Topologia</dt>
+                  <dd className="max-w-[11rem] truncate text-white/70">
+                    {deferredScene.diagnostics.topologySignature}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-white/40">Relays</dt>
+                  <dd className="text-white/70">
+                    {deferredScene.diagnostics.relayCount}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-white/40">Pinned</dt>
+                  <dd className="text-white/70">
+                    {domainState.pinnedNodePubkeys.size}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-white/40">Viewport</dt>
+                  <dd className="text-white/70">
+                    {controller.getLastViewport()
+                      ? `${controller.getLastViewport()?.ratio.toFixed(2)}x`
+                      : 'idle'}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </main>
+  )
+}
