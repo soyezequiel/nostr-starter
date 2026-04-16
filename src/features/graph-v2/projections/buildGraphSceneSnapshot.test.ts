@@ -182,16 +182,32 @@ test('dims nodes outside the selected depth-1 neighborhood and highlights direct
   const focusByPubkey = Object.fromEntries(
     scene.nodes.map((node) => [node.pubkey, node.focusState]),
   )
+  const nodesByPubkey = Object.fromEntries(
+    scene.nodes.map((node) => [node.pubkey, node]),
+  )
   assert.equal(focusByPubkey.alice, 'selected')
   assert.equal(focusByPubkey.root, 'root')
   assert.equal(focusByPubkey.bob, 'neighbor')
+  assert.equal(nodesByPubkey.alice?.color, '#ffb25b')
+  assert.equal(nodesByPubkey.alice?.size, 17)
+  assert.equal(nodesByPubkey.bob?.color, '#f8f2a2')
+  assert.equal(nodesByPubkey.bob?.size, 13)
 
   const edgeFocusById = Object.fromEntries(
     scene.forceEdges.map((edge) => [edge.id, edge.touchesFocus]),
   )
+  const edgesById = Object.fromEntries(
+    scene.forceEdges.map((edge) => [edge.id, edge]),
+  )
   assert.equal(edgeFocusById['root->alice:follow'], true)
   assert.equal(edgeFocusById['alice->bob:follow'], true)
   assert.equal(edgeFocusById['root->bob:follow'], false)
+  assert.equal(edgesById['alice->bob:follow']?.hidden, false)
+  assert.equal(edgesById['alice->bob:follow']?.color, '#f4fbff')
+  assert.equal(edgesById['alice->bob:follow']?.size, 2.7)
+  assert.equal(edgesById['root->bob:follow']?.isDimmed, true)
+  assert.equal(edgesById['root->bob:follow']?.color, '#10171f')
+  assert.equal(edgesById['root->bob:follow']?.size, 0.25)
 })
 
 test('keeps root as the root focus state even when it is a depth-1 neighbor of the selection', () => {

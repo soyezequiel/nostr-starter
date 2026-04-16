@@ -111,3 +111,47 @@ test('translates node positions without changing their fixed state', () => {
   assert.deepEqual(store.getNodePosition('A'), { x: 7, y: -2 })
   assert.equal(store.isNodeFixed('A'), true)
 })
+
+test('projects selected neighborhoods into prominent sigma attributes', () => {
+  const store = new GraphologyProjectionStore()
+  const scene = createScene('follow:A:B')
+  scene.nodes = scene.nodes.map((node) =>
+    node.pubkey === 'A'
+      ? {
+          ...node,
+          color: '#ffb25b',
+          size: 18,
+          isSelected: true,
+          focusState: 'selected',
+        }
+      : {
+          ...node,
+          color: '#f8f2a2',
+          size: 13,
+          isNeighbor: true,
+          focusState: 'neighbor',
+        },
+  )
+  scene.visibleEdges = scene.visibleEdges.map((edge) => ({
+    ...edge,
+    color: '#f4fbff',
+    size: 2.7,
+    touchesFocus: true,
+  }))
+
+  store.applyScene(scene)
+
+  const graph = store.getGraph()
+  const selected = graph.getNodeAttributes('A')
+  const neighbor = graph.getNodeAttributes('B')
+  const edge = graph.getEdgeAttributes('follow:A:B')
+
+  assert.equal(selected.highlighted, true)
+  assert.equal(selected.forceLabel, true)
+  assert.equal(selected.zIndex, 8)
+  assert.equal(neighbor.highlighted, true)
+  assert.equal(neighbor.forceLabel, true)
+  assert.equal(neighbor.zIndex, 5)
+  assert.equal(edge.touchesFocus, true)
+  assert.equal(edge.zIndex, 6)
+})

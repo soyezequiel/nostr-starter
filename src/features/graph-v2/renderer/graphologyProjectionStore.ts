@@ -148,15 +148,15 @@ export class GraphologyProjectionStore {
       const seedPosition =
         existingPosition ?? createSeedPosition(index, scene.nodes.length)
       const zIndex = node.isSelected
-        ? 4
+        ? 8
         : node.isRoot
-          ? 3
+          ? 6
           : node.isNeighbor
-            ? 2
+            ? 5
             : node.isPinned
-              ? 1
+              ? 4
               : node.isDimmed
-                ? -1
+                ? -2
                 : 0
       const attributes: SigmaNodeAttributes = {
         x: seedPosition.x,
@@ -165,7 +165,7 @@ export class GraphologyProjectionStore {
         color: node.color,
         label: node.label,
         hidden: false,
-        highlighted: node.isSelected,
+        highlighted: node.isSelected || node.isNeighbor,
         forceLabel:
           node.isRoot || node.isSelected || node.isPinned || node.isNeighbor,
         fixed: node.isPinned,
@@ -197,7 +197,7 @@ export class GraphologyProjectionStore {
         weight: edge.weight,
         isDimmed: edge.isDimmed,
         touchesFocus: edge.touchesFocus,
-        zIndex: edge.touchesFocus ? 2 : edge.isDimmed ? -1 : 1,
+        zIndex: edge.touchesFocus ? 6 : edge.isDimmed ? -2 : 1,
       }
 
       if (this.graph.hasEdge(edge.id)) {

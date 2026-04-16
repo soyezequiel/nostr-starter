@@ -25,19 +25,20 @@ const edgeColorByRelation: Record<CanonicalEdge['relation'], string> = {
   zap: '#f2994a',
 }
 
-const DIM_NODE_COLOR = '#334252'
-const DIM_EDGE_COLOR = '#1f2932'
+const DIM_NODE_COLOR = '#121a22'
+const DIM_EDGE_COLOR = '#10171f'
 const SELECTED_COLOR = '#ffb25b'
+const NEIGHBOR_COLOR = '#f8f2a2'
 const PINNED_COLOR = '#ffb25b'
 const ROOT_COLOR = '#7dd3a7'
-const NEIGHBOR_EDGE_BRIGHT = '#d7e5ff'
+const NEIGHBOR_EDGE_BRIGHT = '#f4fbff'
 
 const SIZE_ROOT = 18
 const SIZE_PINNED = 12
 const SIZE_DEFAULT = 9
-const SIZE_SELECTED_BOOST = 4
-const SIZE_NEIGHBOR_BOOST = 1
-const SIZE_DIMMED = 7
+const SIZE_SELECTED_BOOST = 8
+const SIZE_NEIGHBOR_BOOST = 4
+const SIZE_DIMMED = 5
 
 const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
   relation === 'follow' ? 1.1 : 0.9
@@ -94,6 +95,7 @@ const resolveNodeColor = (
     case 'dim':
       return DIM_NODE_COLOR
     case 'neighbor':
+      return NEIGHBOR_COLOR
     case 'idle':
     default:
       return baseColor
@@ -135,7 +137,7 @@ const mapSceneEdge = (
     : focusState.touchesFocus
       ? NEIGHBOR_EDGE_BRIGHT
       : DIM_EDGE_COLOR
-  const size = focusState.touchesFocus ? base + 0.4 : isDimmed ? 0.5 : base
+  const size = focusState.touchesFocus ? base + 1.6 : isDimmed ? 0.25 : base
 
   return {
     id: edge.id,
@@ -241,12 +243,18 @@ export const buildGraphSceneSnapshot = (
       touchesFocus: touchesFocus(edge),
     }),
   )
-  const sceneForceEdges = forceEdges.map((edge) =>
-    mapSceneEdge(edge, !visibleEdgeIds.has(edge.id), {
-      hasSelection,
-      touchesFocus: touchesFocus(edge),
-    }),
-  )
+  const sceneForceEdges = forceEdges.map((edge) => {
+    const edgeTouchesFocus = touchesFocus(edge)
+
+    return mapSceneEdge(
+      edge,
+      !visibleEdgeIds.has(edge.id) && !(hasSelection && edgeTouchesFocus),
+      {
+        hasSelection,
+        touchesFocus: edgeTouchesFocus,
+      },
+    )
+  })
 
   return {
     nodes,

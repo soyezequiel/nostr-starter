@@ -40,8 +40,11 @@ import type {
   DebugNodePosition,
 } from '@/features/graph-v2/testing/browserDebug'
 
-const HOVER_LABEL_BOOST = 1.25
-const HOVER_EDGE_BRIGHT_COLOR = '#e2ebff'
+const HOVER_SELECTED_NODE_COLOR = '#ffb25b'
+const HOVER_NEIGHBOR_NODE_COLOR = '#f8f2a2'
+const HOVER_DIM_NODE_COLOR = '#121a22'
+const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
+const HOVER_DIM_EDGE_COLOR = '#10171f'
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 
 export class SigmaRendererAdapter implements RendererAdapter {
@@ -623,25 +626,37 @@ export class SigmaRendererAdapter implements RendererAdapter {
     node: string,
     data: SigmaNodeAttributes,
   ) => {
+    if (!this.hoveredNodePubkey) {
+      return data
+    }
+
     if (node === this.hoveredNodePubkey) {
       return {
         ...data,
+        color: HOVER_SELECTED_NODE_COLOR,
         forceLabel: true,
         highlighted: true,
-        size: data.size * HOVER_LABEL_BOOST,
-        zIndex: 5,
+        zIndex: Math.max(data.zIndex, 10),
       }
     }
 
-    if (this.hoveredNodePubkey && this.hoveredNeighbors.has(node)) {
+    if (this.hoveredNeighbors.has(node)) {
       return {
         ...data,
+        color: HOVER_NEIGHBOR_NODE_COLOR,
         forceLabel: true,
-        zIndex: Math.max(data.zIndex, 2),
+        highlighted: true,
+        zIndex: Math.max(data.zIndex, 8),
       }
     }
 
-    return data
+    return {
+      ...data,
+      color: HOVER_DIM_NODE_COLOR,
+      forceLabel: false,
+      highlighted: false,
+      zIndex: Math.min(data.zIndex, -3),
+    }
   }
 
   private readonly edgeReducer = (
@@ -660,14 +675,20 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const source = graph.source(edge)
     const target = graph.target(edge)
     if (source !== this.hoveredNodePubkey && target !== this.hoveredNodePubkey) {
-      return data
+      return {
+        ...data,
+        color: HOVER_DIM_EDGE_COLOR,
+        size: 0.2,
+        zIndex: Math.min(data.zIndex, -3),
+      }
     }
 
     return {
       ...data,
       color: HOVER_EDGE_BRIGHT_COLOR,
-      size: Math.max(data.size + 0.4, 1.2),
-      zIndex: 3,
+      hidden: false,
+      size: Math.max(data.size + 1.6, 2.8),
+      zIndex: Math.max(data.zIndex, 9),
     }
   }
 
