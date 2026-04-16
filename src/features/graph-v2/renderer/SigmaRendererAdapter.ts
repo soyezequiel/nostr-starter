@@ -15,8 +15,11 @@ import {
   DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
 } from '@/features/graph-v2/renderer/dragNeighborhood'
 import {
-  applyDragNeighborhoodInfluence,
+  createDragNeighborhoodInfluenceState,
+  DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
   releaseDraggedNode,
+  stepDragNeighborhoodInfluence,
+  type DragNeighborhoodInfluenceState,
 } from '@/features/graph-v2/renderer/dragInfluence'
 import {
   createDragReleaseSettlingState,
@@ -41,7 +44,6 @@ import type {
   DebugNodePosition,
 } from '@/features/graph-v2/testing/browserDebug'
 
-const DRAG_RELEASE_SETTLING_NEIGHBORHOOD_WEIGHT_SCALE = 0.55
 const DRAG_VELOCITY_EMA_ALPHA = 0.45
 const HOVER_LABEL_BOOST = 1.25
 const HOVER_EDGE_BRIGHT_COLOR = '#e2ebff'
@@ -73,6 +75,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private dragNeighborhoodWeights = new Map<string, number>()
 
+  private dragInfluenceState: DragNeighborhoodInfluenceState | null = null
+
   private lastDragGraphPosition: { x: number; y: number } | null = null
 
   private lastDragFlushTimestamp: number | null = null
@@ -98,6 +102,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private hoveredNeighbors: Set<string> = new Set()
 
   private hasMountedCamera = false
+
+  private isCameraLocked = false
+
+  private isGraphBoundsLocked = false
 
   public getNodePosition(pubkey: string): DebugNodePosition | null {
     return this.projectionStore?.getNodePosition(pubkey) ?? null
@@ -230,39 +238,33 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const previousPosition =
       this.lastDragGraphPosition ??
       this.projectionStore.getNodePosition(draggedNodePubkey)
+    const now = performance.now()
+    const previousTimestamp = this.lastDragFlushTimestamp
+    const deltaMs =
+      previousTimestamp === null ? 16 : Math.max(now - previousTimestamp, 1)
 
     if (previousPosition) {
       const dx = graphPosition.x - previousPosition.x
       const dy = graphPosition.y - previousPosition.y
 
       if (dx !== 0 || dy !== 0) {
-        const now = performance.now()
-        const previousTimestamp = this.lastDragFlushTimestamp
-        const deltaMs =
-          previousTimestamp === null ? 0 : Math.max(now - previousTimestamp, 1)
+        const nextVelocityX = dx / deltaMs
+        const nextVelocityY = dy / deltaMs
+        const previousVelocity = this.dragReleaseVelocity
 
-        if (deltaMs > 0) {
-          const nextVelocityX = dx / deltaMs
-          const nextVelocityY = dy / deltaMs
-          const previousVelocity = this.dragReleaseVelocity
-
-          this.dragReleaseVelocity = previousVelocity
-            ? {
-                x:
-                  previousVelocity.x * (1 - DRAG_VELOCITY_EMA_ALPHA) +
-                  nextVelocityX * DRAG_VELOCITY_EMA_ALPHA,
-                y:
-                  previousVelocity.y * (1 - DRAG_VELOCITY_EMA_ALPHA) +
-                  nextVelocityY * DRAG_VELOCITY_EMA_ALPHA,
-              }
-            : {
-                x: nextVelocityX,
-                y: nextVelocityY,
-              }
-        }
-
-        this.applyDragNeighborhoodInfluence(draggedNodePubkey, dx, dy)
-        this.lastDragFlushTimestamp = now
+        this.dragReleaseVelocity = previousVelocity
+          ? {
+              x:
+                previousVelocity.x * (1 - DRAG_VELOCITY_EMA_ALPHA) +
+                nextVelocityX * DRAG_VELOCITY_EMA_ALPHA,
+              y:
+                previousVelocity.y * (1 - DRAG_VELOCITY_EMA_ALPHA) +
+                nextVelocityY * DRAG_VELOCITY_EMA_ALPHA,
+            }
+          : {
+              x: nextVelocityX,
+              y: nextVelocityY,
+            }
       }
     }
 
@@ -274,6 +276,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )
     this.lastDragGraphPosition = graphPosition
     this.lastFlushedGraphPosition = graphPosition
+    if (this.dragInfluenceState) {
+      stepDragNeighborhoodInfluence(
+        this.projectionStore,
+        draggedNodePubkey,
+        this.dragInfluenceState,
+        deltaMs,
+        DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
+      )
+    }
+    this.lastDragFlushTimestamp = now
     this.sigma.refresh()
     this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
   }
@@ -324,6 +336,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     if (!this.projectionStore) {
       this.clearReleaseSettling(false)
       this.dragNeighborhoodWeights = new Map()
+      this.dragInfluenceState = null
       this.lastDragGraphPosition = null
       this.dragReleaseVelocity = null
       return
@@ -336,9 +349,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )
     this.clearReleaseSettling(false)
     this.dragNeighborhoodWeights = new Map()
+    this.dragInfluenceState = null
     this.lastDragGraphPosition = null
     this.dragReleaseVelocity = null
     this.forceRuntime?.resume()
+    this.setCameraLocked(false)
+    this.setGraphBoundsLocked(false)
     this.sigma?.refresh()
   }
 
@@ -363,6 +379,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       DEFAULT_DRAG_RELEASE_SETTLING_CONFIG,
     )
     const position = this.projectionStore.getNodePosition(pubkey)
+    let translatedSomething = false
 
     this.lastSettlingTimestamp = timestamp
     this.settlingState = result.nextState
@@ -373,19 +390,30 @@ export class SigmaRendererAdapter implements RendererAdapter {
         y: position.y + result.translationY,
       }
 
-      this.applySettlingNeighborhoodInfluence(
-        pubkey,
-        result.translationX,
-        result.translationY,
-      )
       this.projectionStore.setNodePosition(pubkey, nextPosition.x, nextPosition.y, true)
       this.lastDragGraphPosition = nextPosition
       this.lastFlushedGraphPosition = nextPosition
       this.callbacks?.onNodeDragMove(pubkey, nextPosition)
+      translatedSomething = true
+    }
+
+    const influenceResult = this.dragInfluenceState
+      ? stepDragNeighborhoodInfluence(
+          this.projectionStore,
+          pubkey,
+          this.dragInfluenceState,
+          deltaMs,
+          DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
+        )
+      : { active: false, translated: false }
+
+    translatedSomething ||= influenceResult.translated
+
+    if (translatedSomething) {
       this.sigma.refresh()
     }
 
-    if (result.done) {
+    if (result.done && !influenceResult.active) {
       this.finishReleaseSettling(pubkey)
       return
     }
@@ -407,7 +435,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     if (
       getSettlingSpeedMagnitude(this.settlingState) <=
-      DEFAULT_DRAG_RELEASE_SETTLING_CONFIG.stopSpeedThreshold
+        DEFAULT_DRAG_RELEASE_SETTLING_CONFIG.stopSpeedThreshold &&
+      !this.dragInfluenceState
     ) {
       this.finishReleaseSettling(pubkey)
       return
@@ -428,11 +457,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
       pubkey,
       DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
     )
+    this.dragInfluenceState = createDragNeighborhoodInfluenceState(
+      this.projectionStore,
+      pubkey,
+      this.dragNeighborhoodWeights,
+    )
     this.lastDragGraphPosition = this.projectionStore.getNodePosition(pubkey)
     this.lastDragFlushTimestamp = null
     this.dragReleaseVelocity = null
     this.cancelPendingDragFrame()
     this.projectionStore.setNodeFixed(pubkey, true)
+    this.setGraphBoundsLocked(true)
     this.forceRuntime?.suspend()
     this.callbacks.onNodeDragStart(pubkey)
   }
@@ -441,8 +476,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingDragGesture = null
 
     if (!this.draggedNodePubkey || !this.projectionStore || !this.callbacks) {
+      this.setCameraLocked(false)
+      this.setGraphBoundsLocked(false)
       this.cancelPendingDragFrame()
       this.dragNeighborhoodWeights = new Map()
+      this.dragInfluenceState = null
       this.lastDragGraphPosition = null
       return
     }
@@ -458,9 +496,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
         this.scene.pins.pubkeys,
       )
       this.dragNeighborhoodWeights = new Map()
+      this.dragInfluenceState = null
       this.lastDragGraphPosition = null
       this.dragReleaseVelocity = null
       this.forceRuntime?.resume()
+      this.setCameraLocked(false)
+      this.setGraphBoundsLocked(false)
       this.sigma?.refresh()
     } else {
       this.scheduleSettledNodeRelease(draggedNodePubkey)
@@ -543,8 +584,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
         activeInteractionPubkey,
         DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
       )
+      this.dragInfluenceState = createDragNeighborhoodInfluenceState(
+        this.projectionStore,
+        activeInteractionPubkey,
+        this.dragNeighborhoodWeights,
+        this.dragInfluenceState,
+      )
     } else {
       this.dragNeighborhoodWeights = new Map()
+      this.dragInfluenceState = null
     }
 
     if (draggedNodePubkey && draggedNodePosition) {
@@ -587,6 +635,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.releaseDrag()
     this.cancelPendingDragFrame()
     this.clearReleaseSettling(false)
+    this.setCameraLocked(false)
+    this.setGraphBoundsLocked(false)
     this.forceRuntime?.dispose()
     this.forceRuntime = null
     this.sigma?.kill()
@@ -628,6 +678,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     sigma.on('downNode', ({ node, event }) => {
+      this.setCameraLocked(true)
       this.pendingDragGesture = createPendingNodeDragGesture(node, {
         x: event.x,
         y: event.y,
@@ -645,6 +696,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
       if (!this.draggedNodePubkey && !pendingDragGesture) {
         return
       }
+
+      preventSigmaDefault()
 
       if (!this.draggedNodePubkey) {
         if (
@@ -665,8 +718,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
       if (!draggedNodePubkey) {
         return
       }
-
-      preventSigmaDefault()
       this.scheduleDragFrame(
         sigma.viewportToGraph({
           x: event.x,
@@ -760,41 +811,38 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.sigma?.refresh()
   }
 
-  private applyDragNeighborhoodInfluence(
-    draggedNodePubkey: string,
-    dx: number,
-    dy: number,
-  ) {
-    if (!this.projectionStore) {
+  private readonly setCameraLocked = (locked: boolean) => {
+    if (!this.sigma || this.isCameraLocked === locked) {
       return
     }
 
-    applyDragNeighborhoodInfluence(
-      this.projectionStore,
-      draggedNodePubkey,
-      this.dragNeighborhoodWeights,
-      dx,
-      dy,
-    )
+    if (locked) {
+      this.sigma.getCamera().disable()
+      this.isCameraLocked = true
+      return
+    }
+
+    this.sigma.getCamera().enable()
+    this.isCameraLocked = false
   }
 
-  private applySettlingNeighborhoodInfluence(
-    draggedNodePubkey: string,
-    dx: number,
-    dy: number,
-  ) {
-    if (!this.projectionStore) {
+  private readonly setGraphBoundsLocked = (locked: boolean) => {
+    if (!this.sigma || this.isGraphBoundsLocked === locked) {
       return
     }
 
-    applyDragNeighborhoodInfluence(
-      this.projectionStore,
-      draggedNodePubkey,
-      this.dragNeighborhoodWeights,
-      dx,
-      dy,
-      DRAG_RELEASE_SETTLING_NEIGHBORHOOD_WEIGHT_SCALE,
-    )
+    if (locked) {
+      const bbox = this.sigma.getBBox()
+      this.sigma.setCustomBBox({
+        x: [...bbox.x] as [number, number],
+        y: [...bbox.y] as [number, number],
+      })
+      this.isGraphBoundsLocked = true
+      return
+    }
+
+    this.sigma.setCustomBBox(null)
+    this.isGraphBoundsLocked = false
   }
 
   public isNodeFixed(pubkey: string) {

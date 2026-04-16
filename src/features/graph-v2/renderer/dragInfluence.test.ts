@@ -3,8 +3,11 @@ import test from 'node:test'
 
 import type { GraphSceneSnapshot } from '@/features/graph-v2/renderer/contracts'
 import {
-  applyDragNeighborhoodInfluence,
+  clampInfluenceDelta,
+  createDragNeighborhoodInfluenceState,
+  DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
   releaseDraggedNode,
+  stepDragNeighborhoodInfluence,
 } from '@/features/graph-v2/renderer/dragInfluence'
 import { GraphologyProjectionStore } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 
@@ -144,9 +147,23 @@ const createStore = () => {
   return store
 }
 
-test('applies less movement to second-hop neighbors and ignores nodes outside the radius', () => {
-  const store = createStore()
+test('clamps oversized influence deltas', () => {
+  assert.equal(clampInfluenceDelta(40, 1), 12)
+  assert.equal(clampInfluenceDelta(-40, 1), -12)
+  assert.equal(clampInfluenceDelta(10, 0.2), 2)
+})
 
+test('depth-1 neighbors converge faster than depth-2 and outside nodes stay still', () => {
+  const store = createStore()
+  const influenceState = createDragNeighborhoodInfluenceState(
+    store,
+    'A',
+    new Map([
+      ['A', 1],
+      ['B', 0.45],
+      ['C', 0.18],
+    ]),
+  )
   const beforeB = store.getNodePosition('B')
   const beforeC = store.getNodePosition('C')
   const beforeD = store.getNodePosition('D')
@@ -155,7 +172,50 @@ test('applies less movement to second-hop neighbors and ignores nodes outside th
   assert.ok(beforeC)
   assert.ok(beforeD)
 
-  applyDragNeighborhoodInfluence(
+  store.setNodePosition('A', 18, -6, true)
+
+  let firstStep = stepDragNeighborhoodInfluence(
+    store,
+    'A',
+    influenceState,
+    16,
+    DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
+  )
+
+  assert.equal(firstStep.translated, true)
+  assert.equal(firstStep.active, true)
+
+  for (let index = 0; index < 4; index += 1) {
+    firstStep = stepDragNeighborhoodInfluence(
+      store,
+      'A',
+      influenceState,
+      16,
+      DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
+    )
+  }
+
+  const afterB = store.getNodePosition('B')
+  const afterC = store.getNodePosition('C')
+  const afterD = store.getNodePosition('D')
+
+  assert.ok(afterB)
+  assert.ok(afterC)
+  assert.ok(afterD)
+
+  const bDisplacement = Math.hypot(afterB.x - beforeB.x, afterB.y - beforeB.y)
+  const cDisplacement = Math.hypot(afterC.x - beforeC.x, afterC.y - beforeC.y)
+  const dDisplacement = Math.hypot(afterD.x - beforeD.x, afterD.y - beforeD.y)
+
+  assert.ok(bDisplacement > cDisplacement * 1.45)
+  assert.ok(cDisplacement > 0)
+  assert.deepEqual(afterD, beforeD)
+  assert.equal(dDisplacement, 0)
+})
+
+test('keeps fixed neighbors untouched while other neighbors keep springing', () => {
+  const store = createStore()
+  const influenceState = createDragNeighborhoodInfluenceState(
     store,
     'A',
     new Map([
@@ -163,40 +223,22 @@ test('applies less movement to second-hop neighbors and ignores nodes outside th
       ['B', 0.45],
       ['C', 0.18],
     ]),
-    4,
-    -2,
   )
-
-  assert.deepEqual(store.getNodePosition('B'), {
-    x: beforeB.x + 1.8,
-    y: beforeB.y - 0.9,
-  })
-  assert.deepEqual(store.getNodePosition('C'), {
-    x: beforeC.x + 0.72,
-    y: beforeC.y - 0.36,
-  })
-  assert.deepEqual(store.getNodePosition('D'), beforeD)
-})
-
-test('does not drag fixed neighbors through influence', () => {
-  const store = createStore()
   const beforeB = store.getNodePosition('B')
+  const beforeC = store.getNodePosition('C')
 
   assert.ok(beforeB)
+  assert.ok(beforeC)
 
   store.setNodeFixed('B', true)
-  applyDragNeighborhoodInfluence(
-    store,
-    'A',
-    new Map([
-      ['A', 1],
-      ['B', 0.45],
-    ]),
-    3,
-    2,
-  )
+  store.setNodePosition('A', 12, 8, true)
+
+  for (let index = 0; index < 6; index += 1) {
+    stepDragNeighborhoodInfluence(store, 'A', influenceState, 16)
+  }
 
   assert.deepEqual(store.getNodePosition('B'), beforeB)
+  assert.notDeepEqual(store.getNodePosition('C'), beforeC)
   assert.equal(store.isNodeFixed('B'), true)
 })
 
