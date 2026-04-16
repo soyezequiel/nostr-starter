@@ -31,7 +31,7 @@ const CONNECTIONS_CACHE_LOOKUP_CONCURRENCY = 24
 const CONNECTIONS_FETCH_BATCH_SIZE = 25
 const CONNECTIONS_FETCH_CONCURRENCY = 3
 const CONNECTIONS_PARSE_CONCURRENCY = 8
-const CONNECTIONS_PUBLISH_THROTTLE_MS = 48
+const CONNECTIONS_PUBLISH_THROTTLE_MS = 150
 
 const compareConnectionPubkeys = (left: string, right: string) =>
   left.localeCompare(right, undefined, {

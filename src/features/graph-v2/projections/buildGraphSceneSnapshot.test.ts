@@ -152,3 +152,149 @@ test('builds connections layer without reintroducing the root node', () => {
     ['alice', 'bob'],
   )
 })
+
+test('builds a compact deterministic topology signature', () => {
+  const scene = buildGraphSceneSnapshot(createState())
+
+  assert.equal(scene.diagnostics.topologySignature, 'root::following::1::0::1::3::3')
+})
+
+test('leaves every node with idle/root focus state when there is no selection', () => {
+  const scene = buildGraphSceneSnapshot(createState())
+
+  const focusStates = scene.nodes.map((node) => [node.pubkey, node.focusState])
+  assert.deepEqual(focusStates, [
+    ['root', 'root'],
+    ['alice', 'idle'],
+    ['bob', 'idle'],
+  ])
+  assert.ok(scene.nodes.every((node) => !node.isDimmed))
+  assert.ok(scene.visibleEdges.every((edge) => !edge.isDimmed))
+})
+
+test('dims nodes outside the selected depth-1 neighborhood and highlights focus edges', () => {
+  const scene = buildGraphSceneSnapshot(
+    createState({
+      selectedNodePubkey: 'alice',
+    }),
+  )
+
+  const focusByPubkey = Object.fromEntries(
+    scene.nodes.map((node) => [node.pubkey, node.focusState]),
+  )
+  assert.equal(focusByPubkey.alice, 'selected')
+  assert.equal(focusByPubkey.root, 'root')
+  assert.equal(focusByPubkey.bob, 'neighbor')
+
+  const edgeFocusById = Object.fromEntries(
+    scene.forceEdges.map((edge) => [edge.id, edge.touchesFocus]),
+  )
+  assert.equal(edgeFocusById['root->alice:follow'], true)
+  assert.equal(edgeFocusById['alice->bob:follow'], true)
+  assert.equal(edgeFocusById['root->bob:follow'], true)
+})
+
+test('keeps root as the root focus state even when it is a depth-1 neighbor of the selection', () => {
+  const scene = buildGraphSceneSnapshot(
+    createState({
+      selectedNodePubkey: 'alice',
+    }),
+  )
+  const root = scene.nodes.find((node) => node.pubkey === 'root')
+  assert.ok(root)
+  assert.equal(root.focusState, 'root')
+})
+
+test('marks pinned nodes outside the neighborhood with pinned focus state (not dim)', () => {
+  const state = createState({
+    activeLayer: 'graph',
+    selectedNodePubkey: 'alice',
+  })
+  state.nodesByPubkey['carol'] = {
+    pubkey: 'carol',
+    label: 'Carol',
+    picture: null,
+    about: null,
+    nip05: null,
+    lud16: null,
+    source: 'follow',
+    discoveredAt: 3,
+    keywordHits: 0,
+    profileEventId: null,
+    profileFetchedAt: null,
+    profileSource: null,
+    profileState: 'ready',
+    isExpanded: false,
+    nodeExpansionState: null,
+  }
+  state.discoveryState = {
+    ...state.discoveryState,
+    expandedNodePubkeys: new Set<string>(['root', 'carol']),
+  }
+  state.pinnedNodePubkeys = new Set<string>(['carol'])
+
+  const scene = buildGraphSceneSnapshot(state)
+  const carol = scene.nodes.find((node) => node.pubkey === 'carol')
+  assert.ok(carol)
+  assert.equal(carol.isPinned, true)
+  assert.equal(carol.focusState, 'pinned')
+})
+
+test('flags edges that do not touch the focus neighborhood as dimmed', () => {
+  const state = createState({
+    activeLayer: 'graph',
+    selectedNodePubkey: 'root',
+  })
+  state.nodesByPubkey['carol'] = {
+    pubkey: 'carol',
+    label: 'Carol',
+    picture: null,
+    about: null,
+    nip05: null,
+    lud16: null,
+    source: 'follow',
+    discoveredAt: 3,
+    keywordHits: 0,
+    profileEventId: null,
+    profileFetchedAt: null,
+    profileSource: null,
+    profileState: 'ready',
+    isExpanded: false,
+    nodeExpansionState: null,
+  }
+  state.nodesByPubkey['dave'] = {
+    pubkey: 'dave',
+    label: 'Dave',
+    picture: null,
+    about: null,
+    nip05: null,
+    lud16: null,
+    source: 'follow',
+    discoveredAt: 4,
+    keywordHits: 0,
+    profileEventId: null,
+    profileFetchedAt: null,
+    profileSource: null,
+    profileState: 'ready',
+    isExpanded: false,
+    nodeExpansionState: null,
+  }
+  state.edgesById['carol->dave:follow'] = {
+    id: 'carol->dave:follow',
+    source: 'carol',
+    target: 'dave',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+  state.discoveryState = {
+    ...state.discoveryState,
+    expandedNodePubkeys: new Set<string>(['root', 'carol']),
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const dimmed = scene.forceEdges.find((edge) => edge.id === 'carol->dave:follow')
+  assert.ok(dimmed)
+  assert.equal(dimmed.isDimmed, true)
+  assert.equal(dimmed.touchesFocus, false)
+})

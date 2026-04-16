@@ -1,6 +1,14 @@
 import type { CanonicalNode } from '@/features/graph-v2/domain/types'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
 
+export type GraphSceneFocusState =
+  | 'idle'
+  | 'selected'
+  | 'neighbor'
+  | 'root'
+  | 'pinned'
+  | 'dim'
+
 export interface GraphSceneNode {
   pubkey: string
   label: string
@@ -10,6 +18,9 @@ export interface GraphSceneNode {
   isRoot: boolean
   isSelected: boolean
   isPinned: boolean
+  isNeighbor: boolean
+  isDimmed: boolean
+  focusState: GraphSceneFocusState
 }
 
 export interface GraphSceneEdge {
@@ -21,6 +32,8 @@ export interface GraphSceneEdge {
   hidden: boolean
   relation: string
   weight: number
+  isDimmed: boolean
+  touchesFocus: boolean
 }
 
 export interface GraphSceneLabel {

@@ -107,6 +107,64 @@ test('can reconnect after dispose and resume syncing store changes', () => {
   bridge.dispose()
 })
 
+test('reuses the adapted canonical snapshot when unrelated legacy UI state changes', () => {
+  const store = createAppStore()
+  const bridge = new LegacyKernelBridge({
+    runtime: createRuntimeStub(),
+    store,
+    domainStore: new GraphDomainStore(),
+  })
+
+  const firstState = bridge.getState()
+  let emits = 0
+  const unsubscribe = bridge.subscribe(() => {
+    emits += 1
+  })
+
+  store.getState().setOpenPanel('relay-config')
+
+  assert.equal(bridge.getState(), firstState)
+  assert.equal(emits, 0)
+
+  unsubscribe()
+  bridge.dispose()
+})
+
+test('rebuilds only the affected adapted slices when graph data changes', () => {
+  const store = createAppStore()
+  const bridge = new LegacyKernelBridge({
+    runtime: createRuntimeStub(),
+    store,
+    domainStore: new GraphDomainStore(),
+  })
+
+  const initialState = bridge.getState()
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+
+  const nextState = bridge.getState()
+
+  assert.notEqual(nextState, initialState)
+  assert.notEqual(nextState.nodesByPubkey, initialState.nodesByPubkey)
+  assert.equal(nextState.edgesById, initialState.edgesById)
+  assert.equal(nextState.relayState, initialState.relayState)
+  assert.notEqual(nextState.discoveryState, initialState.discoveryState)
+
+  bridge.dispose()
+})
+
 test('rejects custom runtime/store mismatches at construction time', () => {
   assert.throws(
     () =>

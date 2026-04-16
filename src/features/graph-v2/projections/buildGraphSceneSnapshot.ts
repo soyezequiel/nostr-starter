@@ -1,6 +1,11 @@
 import type { CanonicalEdge, CanonicalGraphState } from '@/features/graph-v2/domain/types'
 import { buildLayerProjection } from '@/features/graph-v2/projections/buildLayerProjection'
-import type { GraphSceneEdge, GraphSceneNode, GraphSceneSnapshot } from '@/features/graph-v2/renderer/contracts'
+import type {
+  GraphSceneEdge,
+  GraphSceneFocusState,
+  GraphSceneNode,
+  GraphSceneSnapshot,
+} from '@/features/graph-v2/renderer/contracts'
 
 const truncatePubkey = (pubkey: string) =>
   pubkey.length <= 16 ? pubkey : `${pubkey.slice(0, 8)}...${pubkey.slice(-6)}`
@@ -20,19 +25,131 @@ const edgeColorByRelation: Record<CanonicalEdge['relation'], string> = {
   zap: '#f2994a',
 }
 
+const DIM_NODE_COLOR = '#334252'
+const DIM_EDGE_COLOR = '#1f2932'
+const SELECTED_COLOR = '#ffb25b'
+const PINNED_COLOR = '#ffb25b'
+const ROOT_COLOR = '#7dd3a7'
+const NEIGHBOR_EDGE_BRIGHT = '#d7e5ff'
+
+const SIZE_ROOT = 18
+const SIZE_PINNED = 12
+const SIZE_DEFAULT = 9
+const SIZE_SELECTED_BOOST = 4
+const SIZE_NEIGHBOR_BOOST = 1
+const SIZE_DIMMED = 7
+
+const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
+  relation === 'follow' ? 1.1 : 0.9
+
+const resolveFocusState = ({
+  isRoot,
+  isSelected,
+  isPinned,
+  isNeighbor,
+  hasSelection,
+}: {
+  isRoot: boolean
+  isSelected: boolean
+  isPinned: boolean
+  isNeighbor: boolean
+  hasSelection: boolean
+}): GraphSceneFocusState => {
+  if (!hasSelection) {
+    if (isRoot) {
+      return 'root'
+    }
+    if (isPinned) {
+      return 'pinned'
+    }
+    return 'idle'
+  }
+
+  if (isSelected) {
+    return 'selected'
+  }
+  if (isRoot) {
+    return 'root'
+  }
+  if (isNeighbor) {
+    return 'neighbor'
+  }
+  if (isPinned) {
+    return 'pinned'
+  }
+  return 'dim'
+}
+
+const resolveNodeColor = (
+  focusState: GraphSceneFocusState,
+  baseColor: string,
+): string => {
+  switch (focusState) {
+    case 'selected':
+      return SELECTED_COLOR
+    case 'pinned':
+      return PINNED_COLOR
+    case 'root':
+      return ROOT_COLOR
+    case 'dim':
+      return DIM_NODE_COLOR
+    case 'neighbor':
+    case 'idle':
+    default:
+      return baseColor
+  }
+}
+
+const resolveNodeSize = (
+  focusState: GraphSceneFocusState,
+  baseSize: number,
+): number => {
+  switch (focusState) {
+    case 'selected':
+      return baseSize + SIZE_SELECTED_BOOST
+    case 'neighbor':
+      return baseSize + SIZE_NEIGHBOR_BOOST
+    case 'dim':
+      return SIZE_DIMMED
+    case 'root':
+    case 'pinned':
+    case 'idle':
+    default:
+      return baseSize
+  }
+}
+
 const mapSceneEdge = (
   edge: CanonicalEdge,
   hidden: boolean,
-): GraphSceneEdge => ({
-  id: edge.id,
-  source: edge.source,
-  target: edge.target,
-  color: edgeColorByRelation[edge.relation],
-  size: edge.relation === 'follow' ? 1.5 : 1.2,
-  hidden,
-  relation: edge.relation,
-  weight: edge.weight,
-})
+  focusState: {
+    hasSelection: boolean
+    touchesFocus: boolean
+  },
+): GraphSceneEdge => {
+  const baseColor = edgeColorByRelation[edge.relation]
+  const base = baseEdgeSize(edge.relation)
+  const isDimmed = focusState.hasSelection && !focusState.touchesFocus
+  const color = !focusState.hasSelection
+    ? baseColor
+    : focusState.touchesFocus
+      ? NEIGHBOR_EDGE_BRIGHT
+      : DIM_EDGE_COLOR
+  const size = focusState.touchesFocus ? base + 0.4 : isDimmed ? 0.5 : base
+
+  return {
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    color,
+    size,
+    hidden,
+    relation: edge.relation,
+    weight: edge.weight,
+    isDimmed,
+    touchesFocus: focusState.touchesFocus,
+  }
+}
 
 export const buildGraphSceneSnapshot = (
   state: CanonicalGraphState,
@@ -47,7 +164,24 @@ export const buildGraphSceneSnapshot = (
     )
     .sort((left, right) => left.id.localeCompare(right.id))
 
-  const nodes: GraphSceneNode[] = Array.from(visibleNodePubkeys)
+  const selectedPubkey = state.selectedNodePubkey
+  const hasSelection =
+    selectedPubkey !== null && visibleNodePubkeys.has(selectedPubkey)
+
+  const depth1Neighbors = new Set<string>()
+  if (selectedPubkey && hasSelection) {
+    for (const edge of forceEdges) {
+      if (edge.source === selectedPubkey) {
+        depth1Neighbors.add(edge.target)
+      }
+      if (edge.target === selectedPubkey) {
+        depth1Neighbors.add(edge.source)
+      }
+    }
+    depth1Neighbors.delete(selectedPubkey)
+  }
+
+  const sortedNodes = Array.from(visibleNodePubkeys)
     .map((pubkey) => state.nodesByPubkey[pubkey])
     .filter((node): node is NonNullable<typeof node> => Boolean(node))
     .sort((left, right) => {
@@ -63,24 +197,59 @@ export const buildGraphSceneSnapshot = (
         (right.discoveredAt ?? Number.MAX_SAFE_INTEGER) ||
         left.pubkey.localeCompare(right.pubkey)
     })
-    .map((node) => ({
+
+  const nodes: GraphSceneNode[] = sortedNodes.map((node) => {
+    const isRoot = node.pubkey === state.rootPubkey
+    const isSelected = node.pubkey === state.selectedNodePubkey
+    const isPinned = state.pinnedNodePubkeys.has(node.pubkey)
+    const isNeighbor = depth1Neighbors.has(node.pubkey)
+    const focusState = resolveFocusState({
+      isRoot,
+      isSelected,
+      isPinned,
+      isNeighbor,
+      hasSelection,
+    })
+    const baseColor = nodeColorBySource[node.source]
+    const baseSize = isRoot ? SIZE_ROOT : isPinned ? SIZE_PINNED : SIZE_DEFAULT
+
+    return {
       pubkey: node.pubkey,
       label: node.label?.trim() || truncatePubkey(node.pubkey),
       pictureUrl: node.picture,
-      color:
-        node.pubkey === state.selectedNodePubkey
-          ? '#ffb25b'
-          : nodeColorBySource[node.source],
-      size:
-        node.pubkey === state.rootPubkey ? 18 : state.pinnedNodePubkeys.has(node.pubkey) ? 12 : 9,
-      isRoot: node.pubkey === state.rootPubkey,
-      isSelected: node.pubkey === state.selectedNodePubkey,
-      isPinned: state.pinnedNodePubkeys.has(node.pubkey),
-    }))
+      color: resolveNodeColor(focusState, baseColor),
+      size: resolveNodeSize(focusState, baseSize),
+      isRoot,
+      isSelected,
+      isPinned,
+      isNeighbor,
+      isDimmed: focusState === 'dim',
+      focusState,
+    }
+  })
 
-  const visibleEdges = layerProjection.visibleEdges.map((edge) => mapSceneEdge(edge, false))
+  const touchesFocus = (edge: CanonicalEdge) => {
+    if (!hasSelection || !selectedPubkey) {
+      return false
+    }
+    return (
+      edge.source === selectedPubkey ||
+      edge.target === selectedPubkey ||
+      (depth1Neighbors.has(edge.source) && depth1Neighbors.has(edge.target))
+    )
+  }
+
+  const visibleEdges = layerProjection.visibleEdges.map((edge) =>
+    mapSceneEdge(edge, false, {
+      hasSelection,
+      touchesFocus: touchesFocus(edge),
+    }),
+  )
   const sceneForceEdges = forceEdges.map((edge) =>
-    mapSceneEdge(edge, !visibleEdgeIds.has(edge.id)),
+    mapSceneEdge(edge, !visibleEdgeIds.has(edge.id), {
+      hasSelection,
+      touchesFocus: touchesFocus(edge),
+    }),
   )
 
   return {
@@ -115,9 +284,9 @@ export const buildGraphSceneSnapshot = (
         state.discoveryState.graphRevision,
         state.discoveryState.inboundGraphRevision,
         state.discoveryState.connectionsLinksRevision,
-        sceneForceEdges.map((edge) => edge.id).join('|'),
+        nodes.length,
+        sceneForceEdges.length,
       ].join('::'),
     },
   }
 }
-

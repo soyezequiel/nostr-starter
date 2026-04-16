@@ -16,7 +16,7 @@ const shouldSuppressStderrLine = (line) =>
 
 const child = spawn(npmBin, args, {
   stdio: ['inherit', 'inherit', 'pipe'],
-  shell: false,
+  shell: isWin,
 })
 
 let stderrBuffer = ''

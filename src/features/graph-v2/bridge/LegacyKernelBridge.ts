@@ -7,7 +7,7 @@ import {
   type RootLoader,
 } from '@/features/graph/kernel/runtime'
 import { GraphDomainStore } from '@/features/graph-v2/application/GraphDomainStore'
-import { adaptLegacyStoreSnapshot } from '@/features/graph-v2/bridge/LegacyStoreSnapshotAdapter'
+import { LegacyStoreSnapshotAdapter } from '@/features/graph-v2/bridge/LegacyStoreSnapshotAdapter'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
 
 interface LegacyKernelBridgeOptions {
@@ -22,6 +22,8 @@ export class LegacyKernelBridge {
   private readonly runtime: RootLoader
 
   private readonly store: AppStoreApi
+
+  private readonly snapshotAdapter = new LegacyStoreSnapshotAdapter()
 
   private unsubscribe: (() => void) | null = null
 
@@ -40,7 +42,7 @@ export class LegacyKernelBridge {
     this.store = store ?? browserAppStore
     this.domainStore =
       domainStore ??
-      new GraphDomainStore(adaptLegacyStoreSnapshot(this.store.getState()))
+      new GraphDomainStore(this.snapshotAdapter.adapt(this.store.getState()))
     this.connect()
   }
 
@@ -53,9 +55,9 @@ export class LegacyKernelBridge {
       return
     }
 
-    this.domainStore.replaceState(adaptLegacyStoreSnapshot(this.store.getState()))
+    this.domainStore.replaceState(this.snapshotAdapter.adapt(this.store.getState()))
     this.unsubscribe = this.store.subscribe((state) => {
-      this.domainStore.replaceState(adaptLegacyStoreSnapshot(state))
+      this.domainStore.replaceState(this.snapshotAdapter.adapt(state))
     })
   }
 

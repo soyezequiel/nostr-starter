@@ -45,6 +45,10 @@ export class GraphDomainStore {
   public getState = () => this.state
 
   public replaceState = (nextState: CanonicalGraphState) => {
+    if (this.state === nextState) {
+      return
+    }
+
     this.state = nextState
     this.emit()
   }
@@ -63,4 +67,3 @@ export class GraphDomainStore {
     }
   }
 }
-

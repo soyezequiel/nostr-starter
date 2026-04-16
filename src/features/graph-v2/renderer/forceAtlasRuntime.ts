@@ -10,39 +10,79 @@ import type {
 
 const MINIMUM_RUNNING_NODES = 2
 
-export class ForceAtlasRuntime {
-  private layout: FA2LayoutSupervisor<SigmaNodeAttributes, SigmaEdgeAttributes> | null =
-    null
+export interface ForceAtlasLayoutController {
+  isRunning(): boolean
+  start(): void
+  stop(): void
+  kill(): void
+}
 
-  private lastTopologySignature: string | null = null
+const createSettingsKey = (graphOrder: number) =>
+  `${Math.floor(Math.log2(Math.max(graphOrder, 1)))}::${graphOrder > 2000}`
+
+export class ForceAtlasRuntime {
+  private layout: ForceAtlasLayoutController | null = null
+
+  private lastSettingsKey: string | null = null
 
   private suspended = false
 
+  private layoutEligible = false
+
   public constructor(
     private readonly graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
+    private readonly layoutFactory: (
+      graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
+    ) => ForceAtlasLayoutController = (graph) => {
+      const inferredSettings = forceAtlas2.inferSettings(graph.order)
+
+      return new FA2LayoutSupervisor(graph, {
+        settings: {
+          ...inferredSettings,
+          adjustSizes: true,
+          // Higher slowDown keeps motion gentle and Obsidian-like.
+          slowDown: 8,
+          // A small gravity holds the graph together without overpowering
+          // local structure or pinned nodes.
+          gravity: 0.12,
+          scalingRatio: 6,
+          barnesHutOptimize: graph.order > 250,
+          strongGravityMode: false,
+        },
+        getEdgeWeight: 'weight',
+      })
+    },
   ) {}
 
   public sync(scene: GraphSceneSnapshot) {
     const shouldRun =
       scene.nodes.length >= MINIMUM_RUNNING_NODES && scene.forceEdges.length > 0
+    this.layoutEligible = shouldRun
 
     if (!shouldRun) {
       this.stop()
-      this.lastTopologySignature = scene.diagnostics.topologySignature
       return
     }
 
     if (this.suspended) {
-      this.lastTopologySignature = scene.diagnostics.topologySignature
       return
     }
 
-    if (
-      this.layout === null ||
-      this.lastTopologySignature !== scene.diagnostics.topologySignature
-    ) {
-      this.reheat()
-      this.lastTopologySignature = scene.diagnostics.topologySignature
+    const settingsKey = createSettingsKey(this.graph.order)
+
+    if (this.layout === null) {
+      this.layout = this.createLayout()
+      this.lastSettingsKey = settingsKey
+      this.layout.start()
+      return
+    }
+
+    if (this.lastSettingsKey !== settingsKey) {
+      this.stop()
+      this.kill()
+      this.layout = this.createLayout()
+      this.lastSettingsKey = settingsKey
+      this.layout.start()
       return
     }
 
@@ -56,13 +96,14 @@ export class ForceAtlasRuntime {
       return
     }
 
-    if (this.graph.order < MINIMUM_RUNNING_NODES || this.graph.size === 0) {
+    if (!this.layoutEligible) {
       return
     }
 
     this.stop()
     this.kill()
     this.layout = this.createLayout()
+    this.lastSettingsKey = createSettingsKey(this.graph.order)
     this.layout.start()
   }
 
@@ -84,14 +125,34 @@ export class ForceAtlasRuntime {
 
     this.suspended = false
 
-    if (this.layout && !this.layout.isRunning()) {
+    if (!this.layoutEligible) {
+      return
+    }
+
+    if (this.layout === null) {
+      this.layout = this.createLayout()
+      this.lastSettingsKey = createSettingsKey(this.graph.order)
+      this.layout.start()
+      return
+    }
+
+    if (!this.layout.isRunning()) {
       this.layout.start()
     }
+  }
+
+  public isSuspended() {
+    return this.suspended
+  }
+
+  public isRunning() {
+    return this.layout?.isRunning() ?? false
   }
 
   public kill() {
     this.layout?.kill()
     this.layout = null
+    this.lastSettingsKey = null
   }
 
   public dispose() {
@@ -100,18 +161,6 @@ export class ForceAtlasRuntime {
   }
 
   private createLayout() {
-    const inferredSettings = forceAtlas2.inferSettings(this.graph.order)
-
-    return new FA2LayoutSupervisor(this.graph, {
-      settings: {
-        ...inferredSettings,
-        adjustSizes: true,
-        slowDown: 4,
-        gravity: 0.15,
-        scalingRatio: 4,
-        barnesHutOptimize: this.graph.order > 250,
-      },
-      getEdgeWeight: 'weight',
-    })
+    return this.layoutFactory(this.graph)
   }
 }

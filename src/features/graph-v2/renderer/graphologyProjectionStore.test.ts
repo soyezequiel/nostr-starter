@@ -15,6 +15,9 @@ const createScene = (edgeId: string): GraphSceneSnapshot => ({
       isRoot: true,
       isSelected: false,
       isPinned: false,
+      isNeighbor: false,
+      isDimmed: false,
+      focusState: 'root',
     },
     {
       pubkey: 'B',
@@ -25,6 +28,9 @@ const createScene = (edgeId: string): GraphSceneSnapshot => ({
       isRoot: false,
       isSelected: false,
       isPinned: false,
+      isNeighbor: false,
+      isDimmed: false,
+      focusState: 'idle',
     },
   ],
   visibleEdges: [
@@ -37,6 +43,8 @@ const createScene = (edgeId: string): GraphSceneSnapshot => ({
       hidden: false,
       relation: 'follow',
       weight: 1,
+      isDimmed: false,
+      touchesFocus: false,
     },
   ],
   forceEdges: [],
@@ -76,4 +84,30 @@ test('replaces an existing directed pair when the incoming edge key changes', ()
   assert.equal(graph.directedEdge('A', 'B'), 'follow:A:B')
   assert.equal(graph.hasEdge('inbound:A:B'), false)
   assert.equal(graph.hasEdge('follow:A:B'), true)
+})
+
+test('preserves node attribute object identity when scene attributes do not change', () => {
+  const store = new GraphologyProjectionStore()
+  const scene = createScene('follow:A:B')
+
+  store.applyScene(scene)
+  const graph = store.getGraph()
+  const firstNodeAttributes = graph.getNodeAttributes('A')
+  const firstEdgeAttributes = graph.getEdgeAttributes('follow:A:B')
+
+  store.applyScene(scene)
+
+  assert.equal(graph.getNodeAttributes('A'), firstNodeAttributes)
+  assert.equal(graph.getEdgeAttributes('follow:A:B'), firstEdgeAttributes)
+})
+
+test('translates node positions without changing their fixed state', () => {
+  const store = new GraphologyProjectionStore()
+  store.applyScene(createScene('follow:A:B'))
+
+  store.setNodeFixed('A', true)
+  store.translateNodePosition('A', 3, -2)
+
+  assert.deepEqual(store.getNodePosition('A'), { x: 7, y: -2 })
+  assert.equal(store.isNodeFixed('A'), true)
 })

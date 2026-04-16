@@ -13,6 +13,12 @@ export interface SigmaNodeAttributes {
   forceLabel: boolean
   fixed: boolean
   pictureUrl: string | null
+  isDimmed: boolean
+  isSelected: boolean
+  isNeighbor: boolean
+  isRoot: boolean
+  isPinned: boolean
+  zIndex: number
 }
 
 export interface SigmaEdgeAttributes {
@@ -21,7 +27,44 @@ export interface SigmaEdgeAttributes {
   hidden: boolean
   label: string | null
   weight: number
+  isDimmed: boolean
+  touchesFocus: boolean
+  zIndex: number
 }
+
+const hasNodeAttributeChanges = (
+  current: SigmaNodeAttributes,
+  next: SigmaNodeAttributes,
+) =>
+  current.x !== next.x ||
+  current.y !== next.y ||
+  current.size !== next.size ||
+  current.color !== next.color ||
+  current.label !== next.label ||
+  current.hidden !== next.hidden ||
+  current.highlighted !== next.highlighted ||
+  current.forceLabel !== next.forceLabel ||
+  current.fixed !== next.fixed ||
+  current.pictureUrl !== next.pictureUrl ||
+  current.isDimmed !== next.isDimmed ||
+  current.isSelected !== next.isSelected ||
+  current.isNeighbor !== next.isNeighbor ||
+  current.isRoot !== next.isRoot ||
+  current.isPinned !== next.isPinned ||
+  current.zIndex !== next.zIndex
+
+const hasEdgeAttributeChanges = (
+  current: SigmaEdgeAttributes,
+  next: SigmaEdgeAttributes,
+) =>
+  current.size !== next.size ||
+  current.color !== next.color ||
+  current.hidden !== next.hidden ||
+  current.label !== next.label ||
+  current.weight !== next.weight ||
+  current.isDimmed !== next.isDimmed ||
+  current.touchesFocus !== next.touchesFocus ||
+  current.zIndex !== next.zIndex
 
 const createSeedPosition = (index: number, total: number) => {
   const angle = (index / Math.max(total, 1)) * Math.PI * 2
@@ -104,6 +147,17 @@ export class GraphologyProjectionStore {
         : this.positionCache.get(node.pubkey)
       const seedPosition =
         existingPosition ?? createSeedPosition(index, scene.nodes.length)
+      const zIndex = node.isSelected
+        ? 4
+        : node.isRoot
+          ? 3
+          : node.isNeighbor
+            ? 2
+            : node.isPinned
+              ? 1
+              : node.isDimmed
+                ? -1
+                : 0
       const attributes: SigmaNodeAttributes = {
         x: seedPosition.x,
         y: seedPosition.y,
@@ -112,13 +166,23 @@ export class GraphologyProjectionStore {
         label: node.label,
         hidden: false,
         highlighted: node.isSelected,
-        forceLabel: node.isRoot || node.isSelected || node.isPinned,
+        forceLabel:
+          node.isRoot || node.isSelected || node.isPinned || node.isNeighbor,
         fixed: node.isPinned,
         pictureUrl: node.pictureUrl,
+        isDimmed: node.isDimmed,
+        isSelected: node.isSelected,
+        isNeighbor: node.isNeighbor,
+        isRoot: node.isRoot,
+        isPinned: node.isPinned,
+        zIndex,
       }
 
       if (this.graph.hasNode(node.pubkey)) {
-        this.graph.replaceNodeAttributes(node.pubkey, attributes)
+        const currentAttributes = this.graph.getNodeAttributes(node.pubkey)
+        if (hasNodeAttributeChanges(currentAttributes, attributes)) {
+          this.graph.replaceNodeAttributes(node.pubkey, attributes)
+        }
       } else {
         this.graph.addNode(node.pubkey, attributes)
       }
@@ -131,10 +195,16 @@ export class GraphologyProjectionStore {
         hidden: edge.hidden,
         label: null,
         weight: edge.weight,
+        isDimmed: edge.isDimmed,
+        touchesFocus: edge.touchesFocus,
+        zIndex: edge.touchesFocus ? 2 : edge.isDimmed ? -1 : 1,
       }
 
       if (this.graph.hasEdge(edge.id)) {
-        this.graph.replaceEdgeAttributes(edge.id, attributes)
+        const currentAttributes = this.graph.getEdgeAttributes(edge.id)
+        if (hasEdgeAttributeChanges(currentAttributes, attributes)) {
+          this.graph.replaceEdgeAttributes(edge.id, attributes)
+        }
       } else if (
         this.graph.hasNode(edge.source) &&
         this.graph.hasNode(edge.target)
@@ -164,12 +234,36 @@ export class GraphologyProjectionStore {
     this.positionCache.set(pubkey, { x, y })
   }
 
+  public translateNodePosition(pubkey: string, dx: number, dy: number) {
+    if (!this.graph.hasNode(pubkey)) {
+      return
+    }
+
+    const attributes = this.graph.getNodeAttributes(pubkey)
+    const nextX = attributes.x + dx
+    const nextY = attributes.y + dy
+
+    this.graph.mergeNodeAttributes(pubkey, {
+      x: nextX,
+      y: nextY,
+    })
+    this.positionCache.set(pubkey, { x: nextX, y: nextY })
+  }
+
   public setNodeFixed(pubkey: string, fixed: boolean) {
     if (!this.graph.hasNode(pubkey)) {
       return
     }
 
     this.graph.setNodeAttribute(pubkey, 'fixed', fixed)
+  }
+
+  public isNodeFixed(pubkey: string) {
+    if (!this.graph.hasNode(pubkey)) {
+      return false
+    }
+
+    return this.graph.getNodeAttribute(pubkey, 'fixed')
   }
 
   public getNodePosition(pubkey: string) {

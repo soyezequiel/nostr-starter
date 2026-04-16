@@ -9,14 +9,18 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 import AvatarFallback from '@/components/AvatarFallback'
 import { NpubInput } from '@/features/graph/components/NpubInput'
 import { GraphInteractionController } from '@/features/graph-v2/application/InteractionController'
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
+import type { CanonicalGraphState } from '@/features/graph-v2/domain/types'
 import { buildGraphSceneSnapshot } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
+import type { GraphInteractionCallbacks, GraphViewportState } from '@/features/graph-v2/renderer/contracts'
+import { createDragLocalFixture } from '@/features/graph-v2/testing/fixtures/dragLocalFixture'
 import { SigmaCanvasHost } from '@/features/graph-v2/ui/SigmaCanvasHost'
 
 const LAYER_LABELS: Record<(typeof GRAPH_V2_LAYERS)[number], string> = {
@@ -54,7 +58,7 @@ function RelayEditor({
   relayUrls: readonly string[]
   overrideStatus: string
   isGraphStale: boolean
-  onApply: (relayUrls: string[]) => Promise<void>
+  onApply: (relayUrls: string[]) => Promise<unknown>
   onRevert: () => Promise<void>
 }) {
   const [draft, setDraft] = useState(relayUrls.join('\n'))
@@ -143,15 +147,25 @@ function RelayEditor({
 }
 
 export default function GraphAppV2() {
+  const searchParams = useSearchParams()
+  const fixtureName = searchParams.get('fixture')
+  const isTestMode = searchParams.get('testMode') === '1'
+  const isFixtureMode = isTestMode && fixtureName === 'drag-local'
   const [bridge] = useState(() => new LegacyKernelBridge())
   const [validationFeedback, setValidationFeedback] = useState<string | null>(null)
-  const [loadFeedback, setLoadFeedback] = useState<string | null>(null)
+  const [loadFeedback, setLoadFeedback] = useState<string | null>(
+    isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
+  )
   const [actionFeedback, setActionFeedback] = useState<string | null>(null)
-  const domainState = useSyncExternalStore(
+  const liveDomainState = useSyncExternalStore(
     bridge.subscribe,
     bridge.getState,
     bridge.getState,
   )
+  const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
+    () => (isFixtureMode ? createDragLocalFixture().state : null),
+  )
+  const [lastViewportRatio, setLastViewportRatio] = useState<number | null>(null)
 
   useEffect(() => {
     bridge.connect()
@@ -159,7 +173,33 @@ export default function GraphAppV2() {
     return () => bridge.dispose()
   }, [bridge])
 
+  const domainState = fixtureState ?? liveDomainState
   const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
+  const callbacks = useMemo<GraphInteractionCallbacks>(
+    () =>
+      isFixtureMode
+        ? {
+            onNodeClick: (pubkey: string) => {
+              setFixtureState((current) =>
+                current
+                  ? {
+                      ...current,
+                      selectedNodePubkey: pubkey,
+                    }
+                  : current,
+              )
+            },
+            onNodeHover: () => {},
+            onNodeDragStart: () => {},
+            onNodeDragMove: () => {},
+            onNodeDragEnd: () => {},
+            onViewportChange: (viewport: GraphViewportState) => {
+              setLastViewportRatio(viewport.ratio)
+            },
+          }
+        : controller.callbacks,
+    [controller, isFixtureMode],
+  )
   const scene = useMemo(() => buildGraphSceneSnapshot(domainState), [domainState])
   const deferredScene = useDeferredValue(scene)
   const detail = useMemo(() => buildNodeDetailProjection(domainState), [domainState])
@@ -168,6 +208,46 @@ export default function GraphAppV2() {
     loadFeedback === 'Cargando root...' && rootLoadMessage
       ? rootLoadMessage
       : loadFeedback ?? rootLoadMessage
+
+  const updateFixtureState = (
+    updater: (current: CanonicalGraphState) => CanonicalGraphState,
+  ) => {
+    setFixtureState((current) => (current ? updater(current) : current))
+  }
+
+  const togglePinnedNode = (pubkey: string) => {
+    if (!isFixtureMode) {
+      bridge.togglePinnedNode(pubkey)
+      return
+    }
+
+    updateFixtureState((current) => {
+      const pinnedNodePubkeys = new Set(current.pinnedNodePubkeys)
+
+      if (pinnedNodePubkeys.has(pubkey)) {
+        pinnedNodePubkeys.delete(pubkey)
+      } else {
+        pinnedNodePubkeys.add(pubkey)
+      }
+
+      return {
+        ...current,
+        pinnedNodePubkeys,
+      }
+    })
+  }
+
+  const toggleLayer = (layer: (typeof GRAPH_V2_LAYERS)[number]) => {
+    if (!isFixtureMode) {
+      bridge.toggleLayer(layer)
+      return
+    }
+
+    updateFixtureState((current) => ({
+      ...current,
+      activeLayer: layer,
+    }))
+  }
 
   return (
     <main className="min-h-screen bg-[#0b0d0f] pt-16 text-white">
@@ -189,6 +269,11 @@ export default function GraphAppV2() {
                     setValidationFeedback(null)
                     setLoadFeedback('Cargando root...')
                     startTransition(() => {
+                      if (isFixtureMode) {
+                        setLoadFeedback('El fixture no admite cargar roots manuales.')
+                        return
+                      }
+
                       void bridge
                         .loadRoot(pubkey, {
                           bootstrapRelayUrls: relays,
@@ -247,10 +332,40 @@ export default function GraphAppV2() {
             <RelayEditor
               isGraphStale={domainState.relayState.isGraphStale}
               onApply={async (relayUrls) => {
+                if (isFixtureMode) {
+                  updateFixtureState((current) => ({
+                    ...current,
+                    relayState: {
+                      ...current.relayState,
+                      urls: relayUrls,
+                    },
+                  }))
+                  setActionFeedback(`Fixture actualizado con ${relayUrls.length} relays.`)
+                  return {
+                    relayUrls,
+                    overrideStatus: 'idle',
+                    isGraphStale: false,
+                    message: `Fixture actualizado con ${relayUrls.length} relays.`,
+                  }
+                }
+
                 const result = await bridge.setRelays(relayUrls)
                 setActionFeedback(result.message)
+                return result
               }}
               onRevert={async () => {
+                if (isFixtureMode) {
+                  updateFixtureState((current) => ({
+                    ...current,
+                    relayState: {
+                      ...current.relayState,
+                      urls: ['wss://fixture.local'],
+                    },
+                  }))
+                  setActionFeedback('Fixture de relays revertido.')
+                  return
+                }
+
                 const result = await bridge.revertRelays()
                 setActionFeedback(
                   result?.message ?? 'No habia override activo para revertir.',
@@ -285,7 +400,7 @@ export default function GraphAppV2() {
                       }`}
                       key={layer}
                       onClick={() => {
-                        bridge.toggleLayer(layer)
+                        toggleLayer(layer)
                       }}
                       type="button"
                     >
@@ -313,7 +428,8 @@ export default function GraphAppV2() {
               </header>
               <div className="min-h-0 flex-1">
                 <SigmaCanvasHost
-                  callbacks={controller.callbacks}
+                  callbacks={callbacks}
+                  enableDebugProbe={isTestMode}
                   scene={deferredScene}
                 />
               </div>
@@ -380,6 +496,11 @@ export default function GraphAppV2() {
                         }
 
                         startTransition(() => {
+                          if (isFixtureMode) {
+                            setActionFeedback('El fixture no expande nodos por relay.')
+                            return
+                          }
+
                           void bridge.expandNode(selectedPubkey).then((result) => {
                             setActionFeedback(result.message)
                           })
@@ -402,7 +523,7 @@ export default function GraphAppV2() {
                           return
                         }
 
-                        bridge.togglePinnedNode(selectedPubkey)
+                        togglePinnedNode(selectedPubkey)
                       }}
                       type="button"
                     >
@@ -452,9 +573,13 @@ export default function GraphAppV2() {
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-white/40">Viewport</dt>
                   <dd className="text-white/70">
-                    {controller.getLastViewport()
-                      ? `${controller.getLastViewport()?.ratio.toFixed(2)}x`
-                      : 'idle'}
+                    {isFixtureMode
+                      ? lastViewportRatio
+                        ? `${lastViewportRatio.toFixed(2)}x`
+                        : 'idle'
+                      : controller.getLastViewport()
+                        ? `${controller.getLastViewport()?.ratio.toFixed(2)}x`
+                        : 'idle'}
                   </dd>
                 </div>
               </dl>
