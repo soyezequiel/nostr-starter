@@ -2,6 +2,10 @@
 
 Este documento describe el codigo que realmente existe hoy en este repositorio. Reemplaza a conciencia varias suposiciones del starter original.
 
+Complemento recomendado para onboarding tecnico:
+
+- [Diagramas para programadores](./diagramas-programador/README.md)
+
 ## 1. Forma actual del producto
 
 El starter inicial estaba centrado en perfil.
