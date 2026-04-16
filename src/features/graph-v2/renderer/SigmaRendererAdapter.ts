@@ -11,7 +11,7 @@ import type {
   SigmaNodeAttributes,
 } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 import {
-  buildDragNeighborhoodWeights,
+  buildDragHopDistances,
   DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
 } from '@/features/graph-v2/renderer/dragNeighborhood'
 import {
@@ -21,13 +21,6 @@ import {
   stepDragNeighborhoodInfluence,
   type DragNeighborhoodInfluenceState,
 } from '@/features/graph-v2/renderer/dragInfluence'
-import {
-  createDragReleaseSettlingState,
-  DEFAULT_DRAG_RELEASE_SETTLING_CONFIG,
-  getSettlingSpeedMagnitude,
-  stepDragReleaseSettling,
-  type DragReleaseSettlingState,
-} from '@/features/graph-v2/renderer/dragReleaseSettling'
 import { GraphologyProjectionStore } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 import {
   createSuppressedNodeClick,
@@ -44,7 +37,6 @@ import type {
   DebugNodePosition,
 } from '@/features/graph-v2/testing/browserDebug'
 
-const DRAG_VELOCITY_EMA_ALPHA = 0.45
 const HOVER_LABEL_BOOST = 1.25
 const HOVER_EDGE_BRIGHT_COLOR = '#e2ebff'
 
@@ -65,27 +57,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private draggedNodePubkey: string | null = null
 
-  private settlingDraggedNodePubkey: string | null = null
-
   private pendingDragFrame: number | null = null
-
-  private pendingSettlingFrame: number | null = null
 
   private pendingGraphPosition: { x: number; y: number } | null = null
 
-  private dragNeighborhoodWeights = new Map<string, number>()
+  private dragHopDistances: Map<string, number> = new Map()
 
   private dragInfluenceState: DragNeighborhoodInfluenceState | null = null
 
   private lastDragGraphPosition: { x: number; y: number } | null = null
 
   private lastDragFlushTimestamp: number | null = null
-
-  private dragReleaseVelocity: { x: number; y: number } | null = null
-
-  private settlingState: DragReleaseSettlingState | null = null
-
-  private lastSettlingTimestamp: number | null = null
 
   private moveBodyCount = 0
 
@@ -138,6 +120,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const depth1 = new Set<string>()
     const depth2 = new Set<string>()
+    const depth3 = new Set<string>()
 
     graph.forEachNeighbor(pubkey, (neighborPubkey) => {
       depth1.add(neighborPubkey)
@@ -153,13 +136,28 @@ export class SigmaRendererAdapter implements RendererAdapter {
       })
     }
 
+    for (const neighborPubkey of depth2) {
+      graph.forEachNeighbor(neighborPubkey, (candidatePubkey) => {
+        if (
+          candidatePubkey === pubkey ||
+          depth1.has(candidatePubkey) ||
+          depth2.has(candidatePubkey)
+        ) {
+          return
+        }
+
+        depth3.add(candidatePubkey)
+      })
+    }
+
     const outside = graph
       .nodes()
       .filter(
         (nodePubkey) =>
           nodePubkey !== pubkey &&
           !depth1.has(nodePubkey) &&
-          !depth2.has(nodePubkey),
+          !depth2.has(nodePubkey) &&
+          !depth3.has(nodePubkey),
       )
       .sort((left, right) => left.localeCompare(right))
 
@@ -168,6 +166,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       depth0: [pubkey],
       depth1: Array.from(depth1).sort((left, right) => left.localeCompare(right)),
       depth2: Array.from(depth2).sort((left, right) => left.localeCompare(right)),
+      depth3: Array.from(depth3).sort((left, right) => left.localeCompare(right)),
       outside,
     }
   }
@@ -200,14 +199,20 @@ export class SigmaRendererAdapter implements RendererAdapter {
   }
 
   public getDragRuntimeState(): DebugDragRuntimeState {
+    const hopEntries = Array.from(this.dragHopDistances.entries())
+      .filter(([pubkey]) => pubkey !== this.draggedNodePubkey)
+      .sort(
+        (left, right) =>
+          left[1] - right[1] || left[0].localeCompare(right[0]),
+      )
+    const maxHopDistance = hopEntries.reduce(
+      (max, [, hop]) => (hop > max ? hop : max),
+      0,
+    )
+
     return {
       draggedNodePubkey: this.draggedNodePubkey,
-      settlingDraggedNodePubkey: this.settlingDraggedNodePubkey,
       pendingDragGesturePubkey: this.pendingDragGesture?.pubkey ?? null,
-      settlingSpeed:
-        this.settlingState !== null
-          ? getSettlingSpeedMagnitude(this.settlingState)
-          : null,
       forceAtlasRunning: this.forceRuntime?.isRunning() ?? false,
       forceAtlasSuspended: this.forceRuntime?.isSuspended() ?? false,
       moveBodyCount: this.moveBodyCount,
@@ -215,6 +220,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
       lastMoveBodyPointer: this.lastMoveBodyPointer,
       lastScheduledGraphPosition: this.lastScheduledGraphPosition,
       lastFlushedGraphPosition: this.lastFlushedGraphPosition,
+      influencedNodeCount: hopEntries.length,
+      maxHopDistance: hopEntries.length > 0 ? maxHopDistance : null,
+      influenceHopSample: hopEntries
+        .slice(0, 12)
+        .map(([pubkey, hopDistance]) => ({ pubkey, hopDistance })),
     }
   }
 
@@ -235,38 +245,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const draggedNodePubkey = this.draggedNodePubkey
     const graphPosition = this.pendingGraphPosition
     this.pendingGraphPosition = null
-    const previousPosition =
-      this.lastDragGraphPosition ??
-      this.projectionStore.getNodePosition(draggedNodePubkey)
     const now = performance.now()
     const previousTimestamp = this.lastDragFlushTimestamp
     const deltaMs =
       previousTimestamp === null ? 16 : Math.max(now - previousTimestamp, 1)
-
-    if (previousPosition) {
-      const dx = graphPosition.x - previousPosition.x
-      const dy = graphPosition.y - previousPosition.y
-
-      if (dx !== 0 || dy !== 0) {
-        const nextVelocityX = dx / deltaMs
-        const nextVelocityY = dy / deltaMs
-        const previousVelocity = this.dragReleaseVelocity
-
-        this.dragReleaseVelocity = previousVelocity
-          ? {
-              x:
-                previousVelocity.x * (1 - DRAG_VELOCITY_EMA_ALPHA) +
-                nextVelocityX * DRAG_VELOCITY_EMA_ALPHA,
-              y:
-                previousVelocity.y * (1 - DRAG_VELOCITY_EMA_ALPHA) +
-                nextVelocityY * DRAG_VELOCITY_EMA_ALPHA,
-            }
-          : {
-              x: nextVelocityX,
-              y: nextVelocityY,
-            }
-      }
-    }
 
     this.projectionStore.setNodePosition(
       draggedNodePubkey,
@@ -310,149 +292,13 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingGraphPosition = null
   }
 
-  private readonly clearReleaseSettling = (releaseNode: boolean) => {
-    if (this.pendingSettlingFrame !== null) {
-      cancelAnimationFrame(this.pendingSettlingFrame)
-      this.pendingSettlingFrame = null
-    }
-
-    this.settlingState = null
-    this.lastSettlingTimestamp = null
-
-    if (!releaseNode || !this.settlingDraggedNodePubkey || !this.projectionStore) {
-      this.settlingDraggedNodePubkey = null
-      return
-    }
-
-    releaseDraggedNode(
-      this.projectionStore,
-      this.settlingDraggedNodePubkey,
-      this.scene?.pins.pubkeys ?? [],
-    )
-    this.settlingDraggedNodePubkey = null
-  }
-
-  private readonly finishReleaseSettling = (pubkey: string) => {
-    if (!this.projectionStore) {
-      this.clearReleaseSettling(false)
-      this.dragNeighborhoodWeights = new Map()
-      this.dragInfluenceState = null
-      this.lastDragGraphPosition = null
-      this.dragReleaseVelocity = null
-      return
-    }
-
-    releaseDraggedNode(
-      this.projectionStore,
-      pubkey,
-      this.scene?.pins.pubkeys ?? [],
-    )
-    this.clearReleaseSettling(false)
-    this.dragNeighborhoodWeights = new Map()
-    this.dragInfluenceState = null
-    this.lastDragGraphPosition = null
-    this.dragReleaseVelocity = null
-    this.forceRuntime?.resume()
-    this.setCameraLocked(false)
-    this.setGraphBoundsLocked(false)
-    this.sigma?.refresh()
-  }
-
-  private readonly flushReleaseSettlingFrame = (timestamp: number) => {
-    this.pendingSettlingFrame = null
-
-    if (
-      !this.projectionStore ||
-      !this.sigma ||
-      !this.settlingDraggedNodePubkey ||
-      !this.settlingState
-    ) {
-      return
-    }
-
-    const pubkey = this.settlingDraggedNodePubkey
-    const lastTimestamp = this.lastSettlingTimestamp ?? timestamp
-    const deltaMs = Math.max(timestamp - lastTimestamp, 1)
-    const result = stepDragReleaseSettling(
-      this.settlingState,
-      deltaMs,
-      DEFAULT_DRAG_RELEASE_SETTLING_CONFIG,
-    )
-    const position = this.projectionStore.getNodePosition(pubkey)
-    let translatedSomething = false
-
-    this.lastSettlingTimestamp = timestamp
-    this.settlingState = result.nextState
-
-    if (position && (result.translationX !== 0 || result.translationY !== 0)) {
-      const nextPosition = {
-        x: position.x + result.translationX,
-        y: position.y + result.translationY,
-      }
-
-      this.projectionStore.setNodePosition(pubkey, nextPosition.x, nextPosition.y, true)
-      this.lastDragGraphPosition = nextPosition
-      this.lastFlushedGraphPosition = nextPosition
-      this.callbacks?.onNodeDragMove(pubkey, nextPosition)
-      translatedSomething = true
-    }
-
-    const influenceResult = this.dragInfluenceState
-      ? stepDragNeighborhoodInfluence(
-          this.projectionStore,
-          pubkey,
-          this.dragInfluenceState,
-          deltaMs,
-          DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
-        )
-      : { active: false, translated: false }
-
-    translatedSomething ||= influenceResult.translated
-
-    if (translatedSomething) {
-      this.sigma.refresh()
-    }
-
-    if (result.done && !influenceResult.active) {
-      this.finishReleaseSettling(pubkey)
-      return
-    }
-
-    this.pendingSettlingFrame = requestAnimationFrame(this.flushReleaseSettlingFrame)
-  }
-
-  private readonly scheduleSettledNodeRelease = (pubkey: string) => {
-    this.clearReleaseSettling(false)
-    this.settlingDraggedNodePubkey = pubkey
-    const velocity = this.dragReleaseVelocity ?? { x: 0, y: 0 }
-
-    this.settlingState = createDragReleaseSettlingState(
-      velocity.x,
-      velocity.y,
-      DEFAULT_DRAG_RELEASE_SETTLING_CONFIG,
-    )
-    this.lastSettlingTimestamp = null
-
-    if (
-      getSettlingSpeedMagnitude(this.settlingState) <=
-        DEFAULT_DRAG_RELEASE_SETTLING_CONFIG.stopSpeedThreshold &&
-      !this.dragInfluenceState
-    ) {
-      this.finishReleaseSettling(pubkey)
-      return
-    }
-
-    this.pendingSettlingFrame = requestAnimationFrame(this.flushReleaseSettlingFrame)
-  }
-
   private readonly startDrag = (pubkey: string) => {
     if (!this.projectionStore || !this.callbacks) {
       return
     }
 
-    this.clearReleaseSettling(true)
     this.draggedNodePubkey = pubkey
-    this.dragNeighborhoodWeights = buildDragNeighborhoodWeights(
+    this.dragHopDistances = buildDragHopDistances(
       this.projectionStore.getGraph(),
       pubkey,
       DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
@@ -460,11 +306,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.dragInfluenceState = createDragNeighborhoodInfluenceState(
       this.projectionStore,
       pubkey,
-      this.dragNeighborhoodWeights,
+      this.dragHopDistances,
     )
     this.lastDragGraphPosition = this.projectionStore.getNodePosition(pubkey)
     this.lastDragFlushTimestamp = null
-    this.dragReleaseVelocity = null
     this.cancelPendingDragFrame()
     this.projectionStore.setNodeFixed(pubkey, true)
     this.setGraphBoundsLocked(true)
@@ -479,7 +324,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.setCameraLocked(false)
       this.setGraphBoundsLocked(false)
       this.cancelPendingDragFrame()
-      this.dragNeighborhoodWeights = new Map()
+      this.dragHopDistances = new Map()
       this.dragInfluenceState = null
       this.lastDragGraphPosition = null
       return
@@ -489,27 +334,28 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const draggedNodePubkey = this.draggedNodePubkey
     const position = this.projectionStore.getNodePosition(draggedNodePubkey)
-    if (this.scene?.pins.pubkeys.includes(draggedNodePubkey)) {
-      releaseDraggedNode(
-        this.projectionStore,
-        draggedNodePubkey,
-        this.scene.pins.pubkeys,
-      )
-      this.dragNeighborhoodWeights = new Map()
-      this.dragInfluenceState = null
-      this.lastDragGraphPosition = null
-      this.dragReleaseVelocity = null
-      this.forceRuntime?.resume()
-      this.setCameraLocked(false)
-      this.setGraphBoundsLocked(false)
-      this.sigma?.refresh()
-    } else {
-      this.scheduleSettledNodeRelease(draggedNodePubkey)
-    }
+
+    releaseDraggedNode(
+      this.projectionStore,
+      draggedNodePubkey,
+      this.scene?.pins.pubkeys ?? [],
+    )
+    this.dragHopDistances = new Map()
+    this.dragInfluenceState = null
+    this.lastDragGraphPosition = null
+
     this.draggedNodePubkey = null
     this.lastDragFlushTimestamp = null
-    this.dragReleaseVelocity ??= { x: 0, y: 0 }
     this.suppressedClick = createSuppressedNodeClick(draggedNodePubkey)
+
+    // Reheat FA2 so it absorbs the drag's kinetic energy and relaxes the
+    // graph back toward equilibrium from the new positions, instead of
+    // running a separate settling pipeline.
+    this.forceRuntime?.resume()
+    this.forceRuntime?.reheat()
+    this.setCameraLocked(false)
+    this.setGraphBoundsLocked(false)
+    this.sigma?.refresh()
 
     if (position) {
       this.callbacks.onNodeDragEnd(draggedNodePubkey, position)
@@ -567,31 +413,25 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const sigma = this.sigma
     const previousScene = this.scene
     const draggedNodePubkey = this.draggedNodePubkey
-    const activeSettlingPubkey = this.settlingDraggedNodePubkey
-    const activeInteractionPubkey = draggedNodePubkey ?? activeSettlingPubkey
     const draggedNodePosition =
       draggedNodePubkey !== null ? this.lastDragGraphPosition : null
-    const settlingDraggedNodePosition =
-      activeSettlingPubkey !== null
-        ? this.projectionStore.getNodePosition(activeSettlingPubkey)
-        : null
     this.scene = scene
     this.projectionStore.applyScene(scene)
 
-    if (activeInteractionPubkey) {
-      this.dragNeighborhoodWeights = buildDragNeighborhoodWeights(
+    if (draggedNodePubkey) {
+      this.dragHopDistances = buildDragHopDistances(
         this.projectionStore.getGraph(),
-        activeInteractionPubkey,
+        draggedNodePubkey,
         DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
       )
       this.dragInfluenceState = createDragNeighborhoodInfluenceState(
         this.projectionStore,
-        activeInteractionPubkey,
-        this.dragNeighborhoodWeights,
+        draggedNodePubkey,
+        this.dragHopDistances,
         this.dragInfluenceState,
       )
     } else {
-      this.dragNeighborhoodWeights = new Map()
+      this.dragHopDistances = new Map()
       this.dragInfluenceState = null
     }
 
@@ -600,15 +440,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
         draggedNodePubkey,
         draggedNodePosition.x,
         draggedNodePosition.y,
-        true,
-      )
-    }
-
-    if (activeSettlingPubkey && settlingDraggedNodePosition) {
-      this.projectionStore.setNodePosition(
-        activeSettlingPubkey,
-        settlingDraggedNodePosition.x,
-        settlingDraggedNodePosition.y,
         true,
       )
     }
@@ -634,7 +465,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
   public dispose() {
     this.releaseDrag()
     this.cancelPendingDragFrame()
-    this.clearReleaseSettling(false)
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)
     this.forceRuntime?.dispose()

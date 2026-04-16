@@ -1,64 +1,62 @@
 import type Graph from 'graphology-types'
 
 export interface DragNeighborhoodConfig {
-  readonly maxDepth: number
-  readonly weightsByDepth: Readonly<Record<number, number>>
+  readonly maxHopDistance: number
 }
 
 export const DEFAULT_DRAG_NEIGHBORHOOD_CONFIG: DragNeighborhoodConfig = {
-  maxDepth: 2,
-  weightsByDepth: {
-    0: 1,
-    1: 0.45,
-    2: 0.18,
-  },
+  // Generous enough to include distant neighbors so physics decay is natural
+  // instead of a hard cutoff. Nodes beyond this are still anchored by FA2.
+  maxHopDistance: 12,
 }
 
-export const buildDragNeighborhoodWeights = (
+/**
+ * Returns the shortest hop distance from `sourcePubkey` to every reachable
+ * node within `maxHopDistance`. The source itself has distance `0`.
+ *
+ * Unlike the previous weighted/BFS approach, there is no weight cutoff: the
+ * drag influence layer handles falloff continuously via spring dynamics.
+ */
+export const buildDragHopDistances = (
   graph: Graph,
   sourcePubkey: string,
   config: DragNeighborhoodConfig = DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
 ) => {
-  const weights = new Map<string, number>()
+  const distances = new Map<string, number>()
 
   if (!graph.hasNode(sourcePubkey)) {
-    return weights
+    return distances
   }
 
-  const maxDepth = Math.max(0, Math.floor(config.maxDepth))
-  const pending: Array<{ pubkey: string; depth: number }> = [
+  const maxHopDistance = Math.max(0, Math.floor(config.maxHopDistance))
+  const queue: Array<{ pubkey: string; depth: number }> = [
     { pubkey: sourcePubkey, depth: 0 },
   ]
-  const visited = new Set<string>([sourcePubkey])
 
-  while (pending.length > 0) {
-    const current = pending.shift()
+  distances.set(sourcePubkey, 0)
+
+  while (queue.length > 0) {
+    const current = queue.shift()
 
     if (!current) {
       continue
     }
 
-    const weight = config.weightsByDepth[current.depth]
-    if (typeof weight === 'number' && weight > 0) {
-      weights.set(current.pubkey, weight)
-    }
-
-    if (current.depth >= maxDepth) {
+    if (current.depth >= maxHopDistance) {
       continue
     }
 
+    const nextDepth = current.depth + 1
+
     graph.forEachNeighbor(current.pubkey, (neighborPubkey) => {
-      if (visited.has(neighborPubkey)) {
+      if (distances.has(neighborPubkey)) {
         return
       }
 
-      visited.add(neighborPubkey)
-      pending.push({
-        pubkey: neighborPubkey,
-        depth: current.depth + 1,
-      })
+      distances.set(neighborPubkey, nextDepth)
+      queue.push({ pubkey: neighborPubkey, depth: nextDepth })
     })
   }
 
-  return weights
+  return distances
 }

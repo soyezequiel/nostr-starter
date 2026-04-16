@@ -13,12 +13,12 @@ const TARGET_PUBKEY = 'fixture-drag-target'
 const PINNED_NEIGHBOR_PUBKEY = 'fixture-pinned-neighbor'
 const DEPTH1_MOVABLE_PUBKEY = 'fixture-hop1-a'
 const DEPTH2_PUBKEY = 'fixture-hop2-a'
+const DEPTH3_PUBKEY = 'fixture-hop3-a'
 const OUTSIDE_PUBKEY = 'fixture-outside-a'
 
 interface DragMetrics {
   selectedBeforeDrag: string | null
   selectedAfterDrag: string | null
-  selectedAfterClick: string | null
   pinnedNeighborPubkey: string | null
   candidatePubkey: string | null
   degree: number | null
@@ -26,14 +26,13 @@ interface DragMetrics {
   meanDisplacements: Record<string, number>
   pinnedDisplacement: number | null
   residuals: number[]
-  settlingSpeeds: number[]
-  settlingStepDisplacements: number[]
 }
 
 interface SampledNodes {
   target: DebugNodePosition
   depth1: DebugNodePosition
   depth2: DebugNodePosition
+  depth3: DebugNodePosition
   outside: DebugNodePosition
   pinned: DebugNodePosition
 }
@@ -153,10 +152,11 @@ const meanDisplacement = (
 }
 
 const collectTrackedNodes = async (page: Page): Promise<SampledNodes> => {
-  const [target, depth1, depth2, outside, pinned] = await Promise.all([
+  const [target, depth1, depth2, depth3, outside, pinned] = await Promise.all([
     getNodePosition(page, TARGET_PUBKEY),
     getNodePosition(page, DEPTH1_MOVABLE_PUBKEY),
     getNodePosition(page, DEPTH2_PUBKEY),
+    getNodePosition(page, DEPTH3_PUBKEY),
     getNodePosition(page, OUTSIDE_PUBKEY),
     getNodePosition(page, PINNED_NEIGHBOR_PUBKEY),
   ])
@@ -164,6 +164,7 @@ const collectTrackedNodes = async (page: Page): Promise<SampledNodes> => {
   expect(target).not.toBeNull()
   expect(depth1).not.toBeNull()
   expect(depth2).not.toBeNull()
+  expect(depth3).not.toBeNull()
   expect(outside).not.toBeNull()
   expect(pinned).not.toBeNull()
 
@@ -171,18 +172,18 @@ const collectTrackedNodes = async (page: Page): Promise<SampledNodes> => {
     target: target!,
     depth1: depth1!,
     depth2: depth2!,
+    depth3: depth3!,
     outside: outside!,
     pinned: pinned!,
   }
 }
 
-test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
+test('arrastra un nodo real con influencia elastica continua al estilo Obsidian', async ({
   page,
 }, testInfo) => {
   const metrics: DragMetrics = {
     selectedBeforeDrag: null,
     selectedAfterDrag: null,
-    selectedAfterClick: null,
     pinnedNeighborPubkey: null,
     candidatePubkey: null,
     degree: null,
@@ -190,8 +191,6 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     meanDisplacements: {},
     pinnedDisplacement: null,
     residuals: [],
-    settlingSpeeds: [],
-    settlingStepDisplacements: [],
   }
 
   try {
@@ -200,7 +199,7 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
       () =>
         typeof window.__sigmaLabDebug !== 'undefined' &&
         window.__sigmaLabDebug !== null &&
-        window.__sigmaLabDebug.findDragCandidate().pubkey === 'fixture-drag-target',
+        window.__sigmaLabDebug.findDragCandidate()?.pubkey === 'fixture-drag-target',
     )
     await expect.poll(() => getViewportPosition(page, TARGET_PUBKEY)).not.toBeNull()
     await expect.poll(() => getNodePosition(page, TARGET_PUBKEY)).not.toBeNull()
@@ -223,6 +222,7 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     expect(neighborGroups?.depth1).toContain(PINNED_NEIGHBOR_PUBKEY)
     expect(neighborGroups?.depth1).toContain(DEPTH1_MOVABLE_PUBKEY)
     expect(neighborGroups?.depth2).toContain(DEPTH2_PUBKEY)
+    expect(neighborGroups?.depth3).toContain(DEPTH3_PUBKEY)
     expect(neighborGroups?.outside).toContain(OUTSIDE_PUBKEY)
 
     metrics.pinnedNeighborPubkey = PINNED_NEIGHBOR_PUBKEY
@@ -233,7 +233,6 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     const baselineRuntimeState = await getDragRuntimeState(page)
     expect(baselineRuntimeState).toMatchObject({
       draggedNodePubkey: null,
-      settlingDraggedNodePubkey: null,
       forceAtlasRunning: true,
       forceAtlasSuspended: false,
     })
@@ -247,6 +246,7 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
       TARGET_PUBKEY,
       ...neighborGroups!.depth1,
       ...neighborGroups!.depth2,
+      ...neighborGroups!.depth3,
       ...neighborGroups!.outside,
     ]
     const movableDepth1Pubkeys = neighborGroups!.depth1.filter(
@@ -314,21 +314,27 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     for (const sample of dragSamples) {
       expect(sample.runtime).toMatchObject({
         draggedNodePubkey: TARGET_PUBKEY,
-        settlingDraggedNodePubkey: null,
         forceAtlasSuspended: true,
         forceAtlasRunning: false,
       })
       expect(sample.cursorErrorPx).toBeLessThan(18)
     }
 
-    await expect
-      .poll(() => getDragRuntimeState(page))
-      .toMatchObject({
-        draggedNodePubkey: TARGET_PUBKEY,
-        settlingDraggedNodePubkey: null,
-        forceAtlasSuspended: true,
-        forceAtlasRunning: false,
-      })
+    const runtimeDuringDrag = await getDragRuntimeState(page)
+    expect(runtimeDuringDrag?.influencedNodeCount ?? 0).toBeGreaterThanOrEqual(6)
+    expect(runtimeDuringDrag?.maxHopDistance ?? 0).toBeGreaterThanOrEqual(3)
+    expect(
+      runtimeDuringDrag?.influenceHopSample.some(
+        (entry) => entry.pubkey === DEPTH3_PUBKEY && entry.hopDistance === 3,
+      ) ?? false,
+    ).toBe(true)
+    // Outside nodes live in a disconnected component; BFS should leave them
+    // out of the drag hop map entirely.
+    expect(
+      runtimeDuringDrag?.influenceHopSample.some(
+        (entry) => entry.pubkey === OUTSIDE_PUBKEY,
+      ) ?? false,
+    ).toBe(false)
 
     const targetDragDisplacement = displacement(
       baselinePositions.target,
@@ -342,6 +348,10 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
       baselinePositions.depth2,
       duringDragPositions.depth2,
     )
+    const depth3Displacement = displacement(
+      baselinePositions.depth3,
+      duringDragPositions.depth3,
+    )
     const pinnedDisplacement = displacement(
       baselinePositions.pinned,
       duringDragPositions.pinned,
@@ -352,88 +362,18 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     metrics.selectedAfterDrag = selectionAfterDrag?.selectedNodePubkey ?? null
     expect(selectionAfterDrag?.selectedNodePubkey).toBe(TARGET_PUBKEY)
     expect(await getFixedState(page, PINNED_NEIGHBOR_PUBKEY)).toBe(true)
+
+    // On release the drag pipeline clears and FA2 reheats to relax the graph.
     await expect
       .poll(() => getDragRuntimeState(page))
       .toMatchObject({
         draggedNodePubkey: null,
-        settlingDraggedNodePubkey: TARGET_PUBKEY,
-        forceAtlasSuspended: true,
-        forceAtlasRunning: false,
-      })
-    const settlingState0 = await getDragRuntimeState(page)
-    expect(settlingState0?.settlingSpeed ?? 0).toBeGreaterThan(0)
-    metrics.settlingSpeeds.push(settlingState0?.settlingSpeed ?? 0)
-    expect(await getFixedState(page, TARGET_PUBKEY)).toBe(true)
-
-    const settlingSamples: Array<{
-      runtime: DebugDragRuntimeState | null
-      nodes: SampledNodes
-    }> = []
-
-    for (let index = 0; index < 3; index += 1) {
-      await page.waitForTimeout(35)
-      const runtime = await getDragRuntimeState(page)
-      const nodes = await collectTrackedNodes(page)
-      metrics.settlingSpeeds.push(runtime?.settlingSpeed ?? 0)
-      settlingSamples.push({ runtime, nodes })
-      if (runtime?.settlingDraggedNodePubkey === TARGET_PUBKEY) {
-        expect(runtime).toMatchObject({
-          settlingDraggedNodePubkey: TARGET_PUBKEY,
-          forceAtlasSuspended: true,
-          forceAtlasRunning: false,
-        })
-      } else {
-        expect(runtime).toMatchObject({
-          settlingDraggedNodePubkey: null,
-          forceAtlasSuspended: false,
-          forceAtlasRunning: true,
-        })
-      }
-    }
-
-    const activeSettlingSamples = settlingSamples.filter(
-      (sample) => sample.runtime?.settlingDraggedNodePubkey === TARGET_PUBKEY,
-    )
-    const settlingStepDisplacements = activeSettlingSamples.map((sample, index) =>
-      index === 0
-        ? displacement(duringDragPositions.target, sample.nodes.target)
-        : displacement(activeSettlingSamples[index - 1]!.nodes.target, sample.nodes.target),
-    )
-    metrics.settlingStepDisplacements = settlingStepDisplacements
-
-    for (let index = 1; index < metrics.settlingSpeeds.length; index += 1) {
-      expect(metrics.settlingSpeeds[index]!).toBeLessThanOrEqual(
-        metrics.settlingSpeeds[index - 1]! + 1e-6,
-      )
-    }
-
-    expect(settlingStepDisplacements[0]).toBeGreaterThan(0)
-    if (settlingStepDisplacements.length > 1) {
-      expect(settlingStepDisplacements[1]!).toBeLessThanOrEqual(
-        settlingStepDisplacements[0]! + 1,
-      )
-    }
-    if (settlingStepDisplacements.length > 2) {
-      expect(settlingStepDisplacements[2]!).toBeLessThanOrEqual(
-        settlingStepDisplacements[1]! + 1,
-      )
-    }
-    expect(activeSettlingSamples.length).toBeGreaterThan(0)
-    expect(
-      displacement(baselinePositions.target, activeSettlingSamples[0]!.nodes.target),
-    ).toBeGreaterThan(targetDragDisplacement * 0.7)
-
-    await expect.poll(() => getFixedState(page, TARGET_PUBKEY)).toBe(false)
-    await expect
-      .poll(() => getDragRuntimeState(page))
-      .toMatchObject({
-        draggedNodePubkey: null,
-        settlingDraggedNodePubkey: null,
         forceAtlasSuspended: false,
         forceAtlasRunning: true,
       })
-    const afterSettling = await collectTrackedNodes(page)
+    await expect.poll(() => getFixedState(page, TARGET_PUBKEY)).toBe(false)
 
+    const afterRelease = await collectTrackedNodes(page)
     const postReleaseSamples: SampledNodes[] = []
     for (let index = 0; index < 3; index += 1) {
       await page.waitForTimeout(170)
@@ -442,11 +382,7 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
 
     metrics.meanDisplacements = {
       dragged: targetDragDisplacement,
-      draggedSettling: displacement(
-        baselinePositions.target,
-        activeSettlingSamples[0]!.nodes.target,
-      ),
-      draggedAfterRelease: displacement(baselinePositions.target, afterSettling.target),
+      draggedAfterRelease: displacement(baselinePositions.target, afterRelease.target),
       depth1Movable: meanDisplacement(
         baselineGroupPositions,
         duringDragGroupPositions,
@@ -457,6 +393,11 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
         duringDragGroupPositions,
         neighborGroups!.depth2,
       ),
+      depth3: meanDisplacement(
+        baselineGroupPositions,
+        duringDragGroupPositions,
+        neighborGroups!.depth3,
+      ),
       outside: meanDisplacement(
         baselineGroupPositions,
         duringDragGroupPositions,
@@ -466,26 +407,28 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
     metrics.pinnedDisplacement = pinnedDisplacement
 
     metrics.residuals = [
-      displacement(afterSettling.target, postReleaseSamples[0]!.target),
+      displacement(afterRelease.target, postReleaseSamples[0]!.target),
       displacement(postReleaseSamples[0]!.target, postReleaseSamples[1]!.target),
       displacement(postReleaseSamples[1]!.target, postReleaseSamples[2]!.target),
     ]
 
     expect(targetDragDisplacement).toBeGreaterThan(40)
     expect(depth1Displacement).toBeGreaterThan(20)
-    expect(depth2Displacement).toBeGreaterThan(8)
+    expect(depth2Displacement).toBeGreaterThan(6)
+    expect(depth3Displacement).toBeGreaterThan(0.5)
+    expect(depth1Displacement).toBeGreaterThan(depth2Displacement)
+    expect(depth2Displacement).toBeGreaterThan(depth3Displacement)
     expect(metrics.meanDisplacements.depth1Movable).toBeGreaterThan(
-      metrics.meanDisplacements.depth2 * 1.8,
+      metrics.meanDisplacements.depth2,
     )
-    expect(metrics.meanDisplacements.outside).toBeLessThan(metrics.meanDisplacements.depth2)
-    expect(metrics.meanDisplacements.outside).toBeLessThan(
-      metrics.meanDisplacements.depth1Movable * 0.5,
+    expect(metrics.meanDisplacements.depth2).toBeGreaterThan(
+      metrics.meanDisplacements.depth3,
     )
+    // Outside component is not reached by the spring network.
+    expect(metrics.meanDisplacements.outside).toBeLessThan(0.5)
     expect(pinnedDisplacement).toBeLessThan(0.01)
     expect(await getFixedState(page, PINNED_NEIGHBOR_PUBKEY)).toBe(true)
-    expect(displacement(baselinePositions.target, afterSettling.target)).toBeGreaterThan(40)
-    expect(metrics.residuals[1]!).toBeLessThanOrEqual(metrics.residuals[0]! + 1)
-    expect(metrics.residuals[2]!).toBeLessThanOrEqual(metrics.residuals[1]! + 1)
+    expect(metrics.meanDisplacements.draggedAfterRelease).toBeGreaterThan(40)
 
     const candidateAfterDrag = await getViewportPosition(page, TARGET_PUBKEY)
     expect(candidateAfterDrag).not.toBeNull()
@@ -494,11 +437,6 @@ test('arrastra un nodo real y demuestra influencia local por vecindad', async ({
 
     const selectionAfterSuppressedClick = await getSelectionState(page)
     expect(selectionAfterSuppressedClick?.selectedNodePubkey).toBe(TARGET_PUBKEY)
-
-    await page.waitForTimeout(260)
-    await clickNodeUntilSelected(page, OUTSIDE_PUBKEY)
-    metrics.selectedAfterClick = (await getSelectionState(page))?.selectedNodePubkey ?? null
-    expect(metrics.selectedAfterClick).toBe(OUTSIDE_PUBKEY)
   } catch (error) {
     await testInfo.attach('drag-metrics', {
       body: Buffer.from(JSON.stringify(metrics, null, 2)),

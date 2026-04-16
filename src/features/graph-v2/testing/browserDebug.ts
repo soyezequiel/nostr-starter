@@ -18,12 +18,18 @@ export interface DebugNeighborGroups {
   depth0: string[]
   depth1: string[]
   depth2: string[]
+  depth3: string[]
   outside: string[]
 }
 
 export interface DebugDragCandidate {
   pubkey: string
   degree: number
+}
+
+export interface DebugInfluenceHopSample {
+  pubkey: string
+  hopDistance: number
 }
 
 export interface DebugSelectionState {
@@ -33,9 +39,7 @@ export interface DebugSelectionState {
 
 export interface DebugDragRuntimeState {
   draggedNodePubkey: string | null
-  settlingDraggedNodePubkey: string | null
   pendingDragGesturePubkey: string | null
-  settlingSpeed: number | null
   forceAtlasRunning: boolean
   forceAtlasSuspended: boolean
   moveBodyCount: number
@@ -43,6 +47,9 @@ export interface DebugDragRuntimeState {
   lastMoveBodyPointer: DebugNodePosition | null
   lastScheduledGraphPosition: DebugNodePosition | null
   lastFlushedGraphPosition: DebugNodePosition | null
+  influencedNodeCount: number
+  maxHopDistance: number | null
+  influenceHopSample: DebugInfluenceHopSample[]
 }
 
 export interface SigmaLabDebugApi {

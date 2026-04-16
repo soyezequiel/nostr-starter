@@ -4,7 +4,7 @@ import test from 'node:test'
 import { DirectedGraph } from 'graphology'
 
 import {
-  buildDragNeighborhoodWeights,
+  buildDragHopDistances,
   DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
 } from '@/features/graph-v2/renderer/dragNeighborhood'
 
@@ -24,35 +24,66 @@ const createGraph = () => {
   return graph
 }
 
-test('assigns weights by shortest-hop distance including the drag source', () => {
-  const weights = buildDragNeighborhoodWeights(createGraph(), 'A')
+test('assigns shortest hop distance from the drag source', () => {
+  const distances = buildDragHopDistances(createGraph(), 'A')
 
-  assert.equal(weights.get('A'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[0])
-  assert.equal(weights.get('B'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[1])
-  assert.equal(weights.get('F'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[1])
-  assert.equal(weights.get('C'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[2])
-  assert.equal(weights.get('E'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[2])
-})
-
-test('does not include nodes beyond the configured neighborhood radius', () => {
-  const weights = buildDragNeighborhoodWeights(createGraph(), 'A')
-
-  assert.equal(weights.has('D'), false)
+  assert.equal(distances.get('A'), 0)
+  assert.equal(distances.get('B'), 1)
+  assert.equal(distances.get('F'), 1)
+  assert.equal(distances.get('C'), 2)
+  assert.equal(distances.get('E'), 2)
+  assert.equal(distances.get('D'), 3)
 })
 
 test('does not duplicate nodes when multiple paths reach the same neighbor', () => {
   const graph = createGraph()
   graph.addDirectedEdgeWithKey('F->C', 'F', 'C')
 
-  const weights = buildDragNeighborhoodWeights(graph, 'A')
-  const entriesForC = Array.from(weights.entries()).filter(([pubkey]) => pubkey === 'C')
+  const distances = buildDragHopDistances(graph, 'A')
+  const entriesForC = Array.from(distances.entries()).filter(
+    ([pubkey]) => pubkey === 'C',
+  )
 
   assert.equal(entriesForC.length, 1)
-  assert.equal(weights.get('C'), DEFAULT_DRAG_NEIGHBORHOOD_CONFIG.weightsByDepth[2])
+  assert.equal(distances.get('C'), 2)
+})
+
+test('traversal has no hard weight cutoff — deep neighbors are still included', () => {
+  const graph = createGraph()
+
+  for (const pubkey of ['G', 'H', 'I', 'J']) {
+    graph.addNode(pubkey)
+  }
+
+  graph.addDirectedEdgeWithKey('D->G', 'D', 'G')
+  graph.addDirectedEdgeWithKey('G->H', 'G', 'H')
+  graph.addDirectedEdgeWithKey('H->I', 'H', 'I')
+  graph.addDirectedEdgeWithKey('I->J', 'I', 'J')
+
+  const distances = buildDragHopDistances(graph, 'A')
+
+  assert.equal(distances.get('G'), 4)
+  assert.equal(distances.get('H'), 5)
+  assert.equal(distances.get('I'), 6)
+  assert.equal(distances.get('J'), 7)
+})
+
+test('respects max hop distance when it is tight enough to clip the frontier', () => {
+  const graph = createGraph()
+
+  const distances = buildDragHopDistances(graph, 'A', {
+    ...DEFAULT_DRAG_NEIGHBORHOOD_CONFIG,
+    maxHopDistance: 2,
+  })
+
+  assert.equal(distances.get('A'), 0)
+  assert.equal(distances.get('B'), 1)
+  assert.equal(distances.get('C'), 2)
+  assert.equal(distances.has('D'), false)
 })
 
 test('returns an empty map when the source node is missing', () => {
-  const weights = buildDragNeighborhoodWeights(createGraph(), 'Z')
+  const distances = buildDragHopDistances(createGraph(), 'Z')
 
-  assert.equal(weights.size, 0)
+  assert.equal(distances.size, 0)
 })

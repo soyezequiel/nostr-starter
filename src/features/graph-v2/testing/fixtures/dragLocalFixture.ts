@@ -68,8 +68,9 @@ export const createDragLocalFixture = (): FixtureScenario => {
     createNode('fixture-hop2-b', { label: 'Hop 2 B', discoveredAt: 7 }),
     createNode('fixture-hop2-c', { label: 'Hop 2 C', discoveredAt: 8 }),
     createNode('fixture-hop2-d', { label: 'Hop 2 D', discoveredAt: 9 }),
-    createNode('fixture-outside-a', { label: 'Outside A', discoveredAt: 10 }),
-    createNode('fixture-outside-b', { label: 'Outside B', discoveredAt: 11 }),
+    createNode('fixture-hop3-a', { label: 'Hop 3 A', discoveredAt: 10 }),
+    createNode('fixture-outside-a', { label: 'Outside A', discoveredAt: 11 }),
+    createNode('fixture-outside-b', { label: 'Outside B', discoveredAt: 12 }),
   ]
 
   const edges = [
@@ -84,6 +85,7 @@ export const createDragLocalFixture = (): FixtureScenario => {
     createEdge('fixture-hop1-b', 'fixture-hop2-b'),
     createEdge('fixture-hop1-c', 'fixture-hop2-c'),
     createEdge(PINNED_NEIGHBOR_PUBKEY, 'fixture-hop2-d'),
+    createEdge('fixture-hop2-a', 'fixture-hop3-a'),
     createEdge('fixture-outside-a', 'fixture-outside-b'),
     createEdge('fixture-outside-b', 'fixture-outside-a'),
   ]

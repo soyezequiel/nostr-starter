@@ -88,9 +88,7 @@ export function SigmaCanvasHost({
       }),
       getDragRuntimeState: () => adapterRef.current?.getDragRuntimeState() ?? {
         draggedNodePubkey: null,
-        settlingDraggedNodePubkey: null,
         pendingDragGesturePubkey: null,
-        settlingSpeed: null,
         forceAtlasRunning: false,
         forceAtlasSuspended: false,
         moveBodyCount: 0,
@@ -98,6 +96,9 @@ export function SigmaCanvasHost({
         lastMoveBodyPointer: null,
         lastScheduledGraphPosition: null,
         lastFlushedGraphPosition: null,
+        influencedNodeCount: 0,
+        maxHopDistance: null,
+        influenceHopSample: [],
       },
     }
 

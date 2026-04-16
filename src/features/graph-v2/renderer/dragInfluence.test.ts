@@ -3,7 +3,6 @@ import test from 'node:test'
 
 import type { GraphSceneSnapshot } from '@/features/graph-v2/renderer/contracts'
 import {
-  clampInfluenceDelta,
   createDragNeighborhoodInfluenceState,
   DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
   releaseDraggedNode,
@@ -78,6 +77,19 @@ const createScene = (): GraphSceneSnapshot => ({
       isDimmed: false,
       focusState: 'idle',
     },
+    {
+      pubkey: 'F',
+      label: 'F',
+      pictureUrl: null,
+      color: '#fff',
+      size: 10,
+      isRoot: false,
+      isSelected: false,
+      isPinned: false,
+      isNeighbor: false,
+      isDimmed: false,
+      focusState: 'idle',
+    },
   ],
   visibleEdges: [
     {
@@ -116,6 +128,18 @@ const createScene = (): GraphSceneSnapshot => ({
       isDimmed: false,
       touchesFocus: false,
     },
+    {
+      id: 'follow:C:F',
+      source: 'C',
+      target: 'F',
+      color: '#8fb6ff',
+      size: 1,
+      hidden: false,
+      relation: 'follow',
+      weight: 1,
+      isDimmed: false,
+      touchesFocus: false,
+    },
   ],
   forceEdges: [],
   labels: [],
@@ -132,8 +156,8 @@ const createScene = (): GraphSceneSnapshot => ({
   },
   diagnostics: {
     activeLayer: 'graph',
-    nodeCount: 5,
-    visibleEdgeCount: 3,
+    nodeCount: 6,
+    visibleEdgeCount: 4,
     forceEdgeCount: 0,
     relayCount: 0,
     isGraphStale: false,
@@ -144,97 +168,140 @@ const createScene = (): GraphSceneSnapshot => ({
 const createStore = () => {
   const store = new GraphologyProjectionStore()
   store.applyScene(createScene())
+  // Place nodes on a predictable line so rest lengths are deterministic.
+  store.setNodePosition('A', 0, 0)
+  store.setNodePosition('B', 10, 0)
+  store.setNodePosition('C', 20, 0)
+  store.setNodePosition('F', 30, 0)
+  store.setNodePosition('D', 200, 200) // disconnected component, unreachable from A
+  store.setNodePosition('E', 210, 200)
   return store
 }
 
-test('clamps oversized influence deltas', () => {
-  assert.equal(clampInfluenceDelta(40, 1), 12)
-  assert.equal(clampInfluenceDelta(-40, 1), -12)
-  assert.equal(clampInfluenceDelta(10, 0.2), 2)
-})
-
-test('depth-1 neighbors converge faster than depth-2 and outside nodes stay still', () => {
+test('collects hop-connected nodes and builds spring edges between them', () => {
   const store = createStore()
-  const influenceState = createDragNeighborhoodInfluenceState(
+  const state = createDragNeighborhoodInfluenceState(
     store,
     'A',
     new Map([
-      ['A', 1],
-      ['B', 0.45],
-      ['C', 0.18],
+      ['A', 0],
+      ['B', 1],
+      ['C', 2],
+      ['F', 3],
     ]),
   )
-  const beforeB = store.getNodePosition('B')
-  const beforeC = store.getNodePosition('C')
-  const beforeD = store.getNodePosition('D')
 
-  assert.ok(beforeB)
-  assert.ok(beforeC)
-  assert.ok(beforeD)
+  assert.equal(state.nodes.size, 3)
+  assert.ok(state.nodes.has('B'))
+  assert.ok(state.nodes.has('C'))
+  assert.ok(state.nodes.has('F'))
+  // Spring edges between every consecutive pair included in the set.
+  const edgePairs = state.edges.map(
+    (edge) =>
+      [edge.sourcePubkey, edge.targetPubkey].sort().join('::'),
+  )
+  assert.ok(edgePairs.includes('A::B'))
+  assert.ok(edgePairs.includes('B::C'))
+  assert.ok(edgePairs.includes('C::F'))
+  // Rest lengths equal the initial geometric distance.
+  const edgeAB = state.edges.find(
+    (edge) =>
+      (edge.sourcePubkey === 'A' && edge.targetPubkey === 'B') ||
+      (edge.sourcePubkey === 'B' && edge.targetPubkey === 'A'),
+  )
+  assert.ok(edgeAB)
+  assert.equal(Math.round(edgeAB!.restLength), 10)
+})
 
-  store.setNodePosition('A', 18, -6, true)
-
-  let firstStep = stepDragNeighborhoodInfluence(
+test('chain propagation: closer neighbors move more than distant ones, with smooth decay', () => {
+  const store = createStore()
+  const state = createDragNeighborhoodInfluenceState(
     store,
     'A',
-    influenceState,
-    16,
-    DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
+    new Map([
+      ['A', 0],
+      ['B', 1],
+      ['C', 2],
+      ['F', 3],
+    ]),
   )
 
-  assert.equal(firstStep.translated, true)
-  assert.equal(firstStep.active, true)
+  const beforeB = store.getNodePosition('B')!
+  const beforeC = store.getNodePosition('C')!
+  const beforeF = store.getNodePosition('F')!
 
-  for (let index = 0; index < 4; index += 1) {
-    firstStep = stepDragNeighborhoodInfluence(
+  // Pin A somewhere far.
+  store.setNodePosition('A', 40, 0, true)
+
+  for (let index = 0; index < 8; index += 1) {
+    stepDragNeighborhoodInfluence(
       store,
       'A',
-      influenceState,
+      state,
       16,
       DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_CONFIG,
     )
   }
 
-  const afterB = store.getNodePosition('B')
-  const afterC = store.getNodePosition('C')
-  const afterD = store.getNodePosition('D')
-
-  assert.ok(afterB)
-  assert.ok(afterC)
-  assert.ok(afterD)
+  const afterB = store.getNodePosition('B')!
+  const afterC = store.getNodePosition('C')!
+  const afterF = store.getNodePosition('F')!
 
   const bDisplacement = Math.hypot(afterB.x - beforeB.x, afterB.y - beforeB.y)
   const cDisplacement = Math.hypot(afterC.x - beforeC.x, afterC.y - beforeC.y)
-  const dDisplacement = Math.hypot(afterD.x - beforeD.x, afterD.y - beforeD.y)
+  const fDisplacement = Math.hypot(afterF.x - beforeF.x, afterF.y - beforeF.y)
 
-  assert.ok(bDisplacement > cDisplacement * 1.45)
-  assert.ok(cDisplacement > 0)
-  assert.deepEqual(afterD, beforeD)
-  assert.equal(dDisplacement, 0)
+  assert.ok(bDisplacement > cDisplacement)
+  assert.ok(cDisplacement > fDisplacement)
+  assert.ok(fDisplacement > 0)
 })
 
-test('keeps fixed neighbors untouched while other neighbors keep springing', () => {
+test('leaves disconnected nodes untouched even when they are in the hop map', () => {
   const store = createStore()
-  const influenceState = createDragNeighborhoodInfluenceState(
+  // D is in a separate component; the spring network has no edges to it.
+  const state = createDragNeighborhoodInfluenceState(
     store,
     'A',
     new Map([
-      ['A', 1],
-      ['B', 0.45],
-      ['C', 0.18],
+      ['A', 0],
+      ['B', 1],
+      ['D', 1],
     ]),
   )
-  const beforeB = store.getNodePosition('B')
-  const beforeC = store.getNodePosition('C')
 
-  assert.ok(beforeB)
-  assert.ok(beforeC)
-
-  store.setNodeFixed('B', true)
-  store.setNodePosition('A', 12, 8, true)
+  const beforeD = store.getNodePosition('D')!
+  store.setNodePosition('A', 80, 0, true)
 
   for (let index = 0; index < 6; index += 1) {
-    stepDragNeighborhoodInfluence(store, 'A', influenceState, 16)
+    stepDragNeighborhoodInfluence(store, 'A', state, 16)
+  }
+
+  const afterD = store.getNodePosition('D')!
+  // D has anchor force only (no edge force) — it should stay near its initial
+  // position because it starts at rest.
+  assert.equal(afterD.x, beforeD.x)
+  assert.equal(afterD.y, beforeD.y)
+})
+
+test('keeps fixed neighbors untouched while the chain around them flexes', () => {
+  const store = createStore()
+  const state = createDragNeighborhoodInfluenceState(
+    store,
+    'A',
+    new Map([
+      ['A', 0],
+      ['B', 1],
+      ['C', 2],
+    ]),
+  )
+  const beforeB = store.getNodePosition('B')!
+  const beforeC = store.getNodePosition('C')!
+
+  store.setNodeFixed('B', true)
+  store.setNodePosition('A', 60, 0, true)
+
+  for (let index = 0; index < 10; index += 1) {
+    stepDragNeighborhoodInfluence(store, 'A', state, 16)
   }
 
   assert.deepEqual(store.getNodePosition('B'), beforeB)
