@@ -11,6 +11,7 @@ import type { KernelContext, RelayAdapterInstance } from '@/features/graph/kerne
 import {
   MAX_SESSION_RELAYS,
   NODE_EXPAND_CONNECT_TIMEOUT_MS,
+  NODE_EXPAND_HARD_TIMEOUT_MS,
   NODE_EXPAND_INBOUND_QUERY_LIMIT,
   NODE_EXPAND_PAGE_TIMEOUT_MS,
   NODE_EXPAND_RETRY_COUNT,
@@ -73,7 +74,9 @@ export function createNodeExpansionModule(
           '#p': [pubkey],
           limit: NODE_EXPAND_INBOUND_QUERY_LIMIT,
         } satisfies Filter & { '#p': string[] },
-      ])
+      ], {
+        hardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
+      })
 
       const inboundFollowerEvidence = await collectInboundFollowerEvidence(
         ctx.eventsWorker,
@@ -488,7 +491,9 @@ export function createNodeExpansionModule(
       )
       const contactListResult = await collectRelayEvents(adapter, [
         { authors: [pubkey], kinds: [3] } satisfies Filter,
-      ])
+      ], {
+        hardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
+      })
 
       setLoadingState(
         pubkey,
@@ -500,15 +505,7 @@ export function createNodeExpansionModule(
       const latestContactListEvent = selectLatestReplaceableEvent(contactListResult.events)
 
       if (!latestContactListEvent) {
-        let cachedContactList = await ctx.repositories.contactLists.get(pubkey)
-        if (!cachedContactList) {
-          const activePreviewRequest = collaborators.nodeDetail.getActivePreviewRequest(pubkey)
-          if (activePreviewRequest) {
-            await activePreviewRequest
-            cachedContactList = await ctx.repositories.contactLists.get(pubkey)
-          }
-        }
-
+        const cachedContactList = await ctx.repositories.contactLists.get(pubkey)
         if (cachedContactList) {
           const cachePreviewMessage =
             buildContactListPartialMessage({

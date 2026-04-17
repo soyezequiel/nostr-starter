@@ -57,6 +57,7 @@ export interface RelayCollectionProgress {
 
 export type RelayCollectionOptions = RelaySubscribeOptions & {
   onProgress?: (progress: RelayCollectionProgress) => void
+  hardTimeoutMs?: number
 }
 
 export interface InboundFollowerEvidence {
@@ -282,9 +283,19 @@ export async function collectRelayEvents(
 ): Promise<RelayCollectionResult> {
   return new Promise<RelayCollectionResult>((resolve) => {
     const events: RelayEventEnvelope[] = []
-    const { onProgress, ...subscribeOptions } = options ?? {}
+    const { hardTimeoutMs, onProgress, ...subscribeOptions } = options ?? {}
     let settled = false
     let cancel = () => {}
+    let hardTimeout: ReturnType<typeof setTimeout> | null =
+      typeof hardTimeoutMs === 'number' && hardTimeoutMs > 0
+        ? setTimeout(() => {
+            finalize({
+              events,
+              summary: null,
+              error: new Error(`Relay collection timed out after ${hardTimeoutMs}ms.`),
+            })
+          }, hardTimeoutMs)
+        : null
 
     const reportProgress = (latestBatch: readonly RelayEventEnvelope[]) => {
       if (!onProgress || latestBatch.length === 0) {
@@ -306,6 +317,10 @@ export async function collectRelayEvents(
       }
 
       settled = true
+      if (hardTimeout !== null) {
+        clearTimeout(hardTimeout)
+        hardTimeout = null
+      }
       cancel()
       resolve(result)
     }
