@@ -522,6 +522,8 @@ export default function GraphAppV2() {
     updateFixtureState((current) => ({
       ...current,
       activeLayer: layer,
+      connectionsSourceLayer:
+        layer === 'connections' ? 'mutuals' : current.connectionsSourceLayer,
     }))
   }
 

@@ -87,6 +87,12 @@ const EMPTY_GRAPH_ANALYSIS: DiscoveredGraphAnalysisState = {
   message: null,
   result: null,
 }
+const createEmptyExpandedSharedTopology = (): ExpandedSharedTopology => ({
+  sharedByExpandedCount: new Map<string, number>(),
+  expandedSourcesByTarget: new Map<string, readonly string[]>(),
+  sharedTargetSetsByExpanded: new Map<string, ReadonlySet<string>>(),
+  overlapStrengthByExpandedPair: new Map(),
+})
 const AUTO_SIZE_DISTANCE_CLAMP_RATIO = 1.5
 const AUTO_SIZE_MIN_CELL_SIZE = 32
 
@@ -1394,13 +1400,14 @@ export const buildGraphRenderModel = async ({
     visiblePubkeys,
   })
   const degreeValues = Array.from(visibleDegreeByPubkey.values())
-  // Plan 3 keeps the richer shared-topology derivation local to render for now.
-  // Current consumers still read the legacy scalar count, while later plans can
-  // promote the pair/target overlap signals without re-deriving topology.
-  const expandedSharedTopology = buildExpandedSharedTopology({
-    links,
-    expandedNodePubkeys,
-  })
+  const shouldBuildExpandedSharedTopology =
+    !isRelationshipFocusLayer && activeLayer !== 'connections'
+  const expandedSharedTopology = shouldBuildExpandedSharedTopology
+    ? buildExpandedSharedTopology({
+        links,
+        expandedNodePubkeys,
+      })
+    : createEmptyExpandedSharedTopology()
   const { sharedByExpandedCount } = expandedSharedTopology
   const pathPubkeys = pathfinding?.status === 'found' && pathfinding.path ? pathfinding.path : []
   const pathOrderByPubkey = new Map(

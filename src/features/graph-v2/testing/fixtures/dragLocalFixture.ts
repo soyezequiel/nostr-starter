@@ -142,7 +142,7 @@ export const createDragLocalFixture = (): FixtureScenario => {
       sceneSignature: 'drag-local|graph|1|0|0',
       rootPubkey: ROOT_PUBKEY,
       activeLayer: 'graph',
-      connectionsSourceLayer: 'graph',
+      connectionsSourceLayer: 'mutuals',
       selectedNodePubkey: null,
       pinnedNodePubkeys: new Set<string>(),
       relayState: {

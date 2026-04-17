@@ -16,7 +16,7 @@ const createEmptyState = (): CanonicalGraphState => ({
   sceneSignature: 'empty',
   rootPubkey: null,
   activeLayer: DEFAULT_GRAPH_V2_LAYER,
-  connectionsSourceLayer: 'graph',
+  connectionsSourceLayer: 'mutuals',
   selectedNodePubkey: null,
   pinnedNodePubkeys: new Set<string>(),
   relayState: {

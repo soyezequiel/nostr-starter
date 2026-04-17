@@ -2199,7 +2199,7 @@ export const GraphCanvas = memo(function GraphCanvas({
 
       if (activeLayer === 'connections') {
         if (!nextFollowing && !nextFollowers) {
-          setConnectionsSourceLayer('graph')
+          runtime.toggleLayer('graph')
           return
         }
 

@@ -273,6 +273,67 @@ test('graph layer exposes global shared-target counts independent of the selecte
   assert.equal(countByPubkeyWithSelection.get(fixture.expanderPubkeys[0]), 0)
 })
 
+test('following layer does not apply expanded shared topology to visible nodes', async () => {
+  const model = await buildGraphRenderModel({
+    nodes: {
+      root: { pubkey: 'root', keywordHits: 0, discoveredAt: 0, source: 'root' },
+      expanderA: {
+        pubkey: 'expanderA',
+        keywordHits: 0,
+        discoveredAt: 1,
+        source: 'follow',
+      },
+      expanderB: {
+        pubkey: 'expanderB',
+        keywordHits: 0,
+        discoveredAt: 2,
+        source: 'follow',
+      },
+      sharedTarget: {
+        pubkey: 'sharedTarget',
+        keywordHits: 0,
+        discoveredAt: 3,
+        source: 'follow',
+      },
+    },
+    links: [
+      { source: 'root', target: 'sharedTarget', relation: 'follow' },
+      { source: 'expanderA', target: 'sharedTarget', relation: 'follow' },
+      { source: 'expanderB', target: 'sharedTarget', relation: 'follow' },
+    ],
+    inboundLinks: [],
+    connectionsLinks: [],
+    zapEdges: [],
+    activeLayer: 'following',
+    connectionsSourceLayer: 'graph',
+    rootNodePubkey: 'root',
+    selectedNodePubkey: null,
+    expandedNodePubkeys: new Set(['expanderA', 'expanderB']),
+    comparedNodePubkeys: new Set(),
+    pathfinding: {
+      status: 'idle',
+      path: null,
+    },
+    graphAnalysis: DEFAULT_GRAPH_ANALYSIS,
+    effectiveGraphCaps: {
+      ...DEFAULT_EFFECTIVE_GRAPH_CAPS,
+      coldStartLayoutTicks: 0,
+      warmStartLayoutTicks: 0,
+    },
+    renderConfig: DEFAULT_RENDER_CONFIG,
+  })
+
+  const visibleNodeByPubkey = new Map(
+    model.nodes.map((node) => [node.pubkey, node]),
+  )
+
+  assert.deepEqual(
+    model.edges.map((edge) => edge.id),
+    ['root->sharedTarget:follow'],
+  )
+  assert.equal(visibleNodeByPubkey.get('sharedTarget')?.sharedByExpandedCount, 0)
+})
+
 test('graph layer thinning stays topology-first regardless of selected node', async () => {
   const fixture = createSyntheticExpandedIntersectionFixture({
     expandedCount: 70,

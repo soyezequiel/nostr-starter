@@ -439,7 +439,7 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
     }
 
     if (layer === 'connections' && previousLayer !== 'connections') {
-      state.setConnectionsSourceLayer(previousLayer)
+      state.setConnectionsSourceLayer('mutuals')
     }
 
     state.setActiveLayer(layer)

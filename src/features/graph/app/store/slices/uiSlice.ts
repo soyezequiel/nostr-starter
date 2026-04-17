@@ -109,7 +109,7 @@ export const createInitialUiSliceState = (): Pick<
   selectedNodePubkey: null,
   comparedNodePubkeys: new Set<string>(),
   activeLayer: 'graph',
-  connectionsSourceLayer: 'graph',
+  connectionsSourceLayer: 'mutuals',
   openPanel: 'overview',
   currentKeyword: '',
   rootLoad: {

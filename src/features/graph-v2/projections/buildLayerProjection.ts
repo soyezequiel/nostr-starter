@@ -1,7 +1,6 @@
 import type { CanonicalEdge, CanonicalGraphState } from '@/features/graph-v2/domain/types'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
 import {
-  comparePubkeys,
   createCanonicalEdgeId,
   isGraphV2Layer,
 } from '@/features/graph-v2/domain/invariants'
@@ -22,6 +21,31 @@ const sortAndDedupeEdges = (edges: readonly CanonicalEdge[]) => {
   }
 
   return Array.from(edgesById.values()).sort(compareEdges)
+}
+
+const addMapSetValue = (
+  map: Map<string, Set<string>>,
+  key: string,
+  value: string,
+) => {
+  const values = map.get(key)
+
+  if (values) {
+    values.add(value)
+    return
+  }
+
+  map.set(key, new Set<string>([value]))
+}
+
+const buildAdjacency = (edges: readonly CanonicalEdge[]) => {
+  const adjacency = new Map<string, Set<string>>()
+
+  for (const edge of edges) {
+    addMapSetValue(adjacency, edge.source, edge.target)
+  }
+
+  return adjacency
 }
 
 const createVisibleNodeSet = (
@@ -60,22 +84,11 @@ const normalizeConnectionEdge = (edge: CanonicalEdge): CanonicalEdge => ({
   relation: edge.relation === 'follow' ? 'follow' : 'inbound',
 })
 
-export const buildLayerProjection = (
-  state: CanonicalGraphState,
-  layer: GraphV2Layer = state.activeLayer,
-): LayerProjection => {
-  const allEdges = Object.values(state.edgesById)
-  const primaryEdges = allEdges.filter((edge) => edge.origin !== 'connections')
-  const rootPubkey = state.rootPubkey
-  const relationshipAnchorPubkeys = new Set<string>(
-    state.discoveryState.expandedNodePubkeys,
-  )
-
-  if (rootPubkey) {
-    relationshipAnchorPubkeys.add(rootPubkey)
-  }
-
-  const followingEdges = sortAndDedupeEdges(
+const buildFollowingEdges = (
+  primaryEdges: readonly CanonicalEdge[],
+  relationshipAnchorPubkeys: ReadonlySet<string>,
+) =>
+  sortAndDedupeEdges(
     primaryEdges.filter(
       (edge) =>
         edge.relation === 'follow' &&
@@ -83,7 +96,11 @@ export const buildLayerProjection = (
     ),
   )
 
-  const followerEdges = sortAndDedupeEdges(
+const buildFollowerEdges = (
+  primaryEdges: readonly CanonicalEdge[],
+  relationshipAnchorPubkeys: ReadonlySet<string>,
+) =>
+  sortAndDedupeEdges(
     primaryEdges
       .filter(
         (edge) =>
@@ -100,21 +117,14 @@ export const buildLayerProjection = (
       })),
   )
 
-  const adjacency = new Map<string, Set<string>>()
-  for (const edge of primaryEdges) {
-    const targets = adjacency.get(edge.source) ?? new Set<string>()
-    targets.add(edge.target)
-    adjacency.set(edge.source, targets)
-  }
-
-  const mutualEdges = sortAndDedupeEdges(
-    Array.from(relationshipAnchorPubkeys)
-      .sort(comparePubkeys)
-      .flatMap((anchorPubkey) =>
-        followingEdges
-          .filter((edge) => edge.source === anchorPubkey)
-          .filter((edge) => adjacency.get(edge.target)?.has(anchorPubkey))
-          .flatMap((edge) => [
+const buildMutualEdges = (
+  followingEdges: readonly CanonicalEdge[],
+  adjacency: ReadonlyMap<string, ReadonlySet<string>>,
+) =>
+  sortAndDedupeEdges(
+    followingEdges.flatMap((edge) =>
+      adjacency.get(edge.target)?.has(edge.source)
+        ? [
             {
               ...edge,
               relation: 'follow' as const,
@@ -127,19 +137,33 @@ export const buildLayerProjection = (
               relation: 'follow' as const,
               id: createCanonicalEdgeId(edge.target, edge.source, 'follow'),
             },
-          ]),
-      ),
+          ]
+        : [],
+    ),
   )
 
-  const nonReciprocalFollowingEdges = sortAndDedupeEdges(
-    followingEdges.filter((edge) => !adjacency.get(edge.target)?.has(edge.source)),
+const buildNonReciprocalEdges = (
+  edges: readonly CanonicalEdge[],
+  adjacency: ReadonlyMap<string, ReadonlySet<string>>,
+) =>
+  sortAndDedupeEdges(
+    edges.filter((edge) => !adjacency.get(edge.target)?.has(edge.source)),
   )
 
-  const nonReciprocalFollowerEdges = sortAndDedupeEdges(
-    followerEdges.filter((edge) => !adjacency.get(edge.target)?.has(edge.source)),
+export const buildLayerProjection = (
+  state: CanonicalGraphState,
+  layer: GraphV2Layer = state.activeLayer,
+): LayerProjection => {
+  const allEdges = Object.values(state.edgesById)
+  const primaryEdges = allEdges.filter((edge) => edge.origin !== 'connections')
+  const rootPubkey = state.rootPubkey
+  const relationshipAnchorPubkeys = new Set<string>(
+    state.discoveryState.expandedNodePubkeys,
   )
 
-  const graphEdges = sortAndDedupeEdges(primaryEdges)
+  if (rootPubkey) {
+    relationshipAnchorPubkeys.add(rootPubkey)
+  }
 
   const resolveConnectionsVisiblePubkeys = () => {
     const sourceLayer: GraphV2Layer = isGraphV2Layer(state.connectionsSourceLayer)
@@ -155,6 +179,19 @@ export const buildLayerProjection = (
 
     return visiblePubkeys
   }
+
+  const createProjectionFromEdges = (
+    visibleEdges: readonly CanonicalEdge[],
+    includeExpanded: boolean,
+  ): LayerProjection => ({
+    visibleEdges: [...visibleEdges],
+    visibleNodePubkeys: createVisibleNodeSet(
+      rootPubkey,
+      state.discoveryState.expandedNodePubkeys,
+      visibleEdges,
+      includeExpanded,
+    ),
+  })
 
   if (layer === 'connections') {
     const connectionsVisiblePubkeys = resolveConnectionsVisiblePubkeys()
@@ -191,26 +228,47 @@ export const buildLayerProjection = (
     }
   }
 
-  const visibleEdges =
-    layer === 'following'
-      ? followingEdges
-      : layer === 'followers'
-        ? followerEdges
-        : layer === 'mutuals'
-          ? mutualEdges
-          : layer === 'following-non-followers'
-            ? nonReciprocalFollowingEdges
-            : layer === 'nonreciprocal-followers'
-              ? nonReciprocalFollowerEdges
-              : graphEdges
-
-  return {
-    visibleEdges,
-    visibleNodePubkeys: createVisibleNodeSet(
-      rootPubkey,
-      state.discoveryState.expandedNodePubkeys,
-      visibleEdges,
-      layer === 'graph',
-    ),
+  if (layer === 'graph') {
+    return createProjectionFromEdges(sortAndDedupeEdges(primaryEdges), true)
   }
+
+  if (layer === 'following') {
+    const followingEdges = buildFollowingEdges(
+      primaryEdges,
+      relationshipAnchorPubkeys,
+    )
+    return createProjectionFromEdges(followingEdges, true)
+  }
+
+  if (layer === 'mutuals' || layer === 'following-non-followers') {
+    const followingEdges = buildFollowingEdges(
+      primaryEdges,
+      relationshipAnchorPubkeys,
+    )
+    const adjacency = buildAdjacency(primaryEdges)
+
+    if (layer === 'mutuals') {
+      return createProjectionFromEdges(
+        buildMutualEdges(followingEdges, adjacency),
+        true,
+      )
+    }
+
+    return createProjectionFromEdges(
+      buildNonReciprocalEdges(followingEdges, adjacency),
+      true,
+    )
+  }
+
+  const followerEdges = buildFollowerEdges(primaryEdges, relationshipAnchorPubkeys)
+
+  if (layer === 'followers') {
+    return createProjectionFromEdges(followerEdges, true)
+  }
+
+  const adjacency = buildAdjacency(primaryEdges)
+  return createProjectionFromEdges(
+    buildNonReciprocalEdges(followerEdges, adjacency),
+    true,
+  )
 }

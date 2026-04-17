@@ -173,7 +173,7 @@ test('leaves every node with idle/root focus state when there is no selection', 
   assert.ok(scene.visibleEdges.every((edge) => !edge.isDimmed))
 })
 
-test('keeps semantic selection from activating visual highlight', () => {
+test('uses selection as visual focus for the selected node and its links', () => {
   const scene = buildGraphSceneSnapshot(
     createState({
       selectedNodePubkey: 'alice',
@@ -188,13 +188,13 @@ test('keeps semantic selection from activating visual highlight', () => {
   )
   assert.equal(scene.selection.selectedNodePubkey, 'alice')
   assert.equal(nodesByPubkey.alice?.isSelected, true)
-  assert.equal(focusByPubkey.alice, 'idle')
+  assert.equal(focusByPubkey.alice, 'selected')
   assert.equal(focusByPubkey.root, 'root')
-  assert.equal(focusByPubkey.bob, 'idle')
-  assert.equal(nodesByPubkey.alice?.color, '#9ec5ff')
-  assert.equal(nodesByPubkey.alice?.size, 9)
-  assert.equal(nodesByPubkey.bob?.color, '#9ec5ff')
-  assert.equal(nodesByPubkey.bob?.size, 9)
+  assert.equal(focusByPubkey.bob, 'neighbor')
+  assert.equal(nodesByPubkey.alice?.color, '#ffb25b')
+  assert.equal(nodesByPubkey.alice?.size, 17)
+  assert.equal(nodesByPubkey.bob?.color, '#f8f2a2')
+  assert.equal(nodesByPubkey.bob?.size, 13)
 
   const edgeFocusById = Object.fromEntries(
     scene.forceEdges.map((edge) => [edge.id, edge.touchesFocus]),
@@ -202,15 +202,15 @@ test('keeps semantic selection from activating visual highlight', () => {
   const edgesById = Object.fromEntries(
     scene.forceEdges.map((edge) => [edge.id, edge]),
   )
-  assert.equal(edgeFocusById['root->alice:follow'], false)
-  assert.equal(edgeFocusById['alice->bob:follow'], false)
+  assert.equal(edgeFocusById['root->alice:follow'], true)
+  assert.equal(edgeFocusById['alice->bob:follow'], true)
   assert.equal(edgeFocusById['root->bob:follow'], false)
-  assert.equal(edgesById['alice->bob:follow']?.hidden, true)
-  assert.equal(edgesById['alice->bob:follow']?.color, '#8fb6ff')
-  assert.equal(edgesById['alice->bob:follow']?.size, 1.1)
-  assert.equal(edgesById['root->bob:follow']?.isDimmed, false)
-  assert.equal(edgesById['root->bob:follow']?.color, '#8fb6ff')
-  assert.equal(edgesById['root->bob:follow']?.size, 1.1)
+  assert.equal(edgesById['alice->bob:follow']?.hidden, false)
+  assert.equal(edgesById['alice->bob:follow']?.color, '#f4fbff')
+  assert.equal(edgesById['alice->bob:follow']?.size, 2.7)
+  assert.equal(edgesById['root->bob:follow']?.isDimmed, true)
+  assert.equal(edgesById['root->bob:follow']?.color, '#10171f')
+  assert.equal(edgesById['root->bob:follow']?.size, 0.25)
 })
 
 test('keeps root as the root focus state even when it is a depth-1 neighbor of the selection', () => {
@@ -259,7 +259,7 @@ test('marks pinned nodes outside the neighborhood with pinned focus state (not d
   assert.equal(carol.focusState, 'pinned')
 })
 
-test('does not dim edges from semantic selection alone', () => {
+test('dims edges outside the selected node neighborhood', () => {
   const state = createState({
     activeLayer: 'graph',
     selectedNodePubkey: 'root',
@@ -314,6 +314,6 @@ test('does not dim edges from semantic selection alone', () => {
   const scene = buildGraphSceneSnapshot(state)
   const dimmed = scene.forceEdges.find((edge) => edge.id === 'carol->dave:follow')
   assert.ok(dimmed)
-  assert.equal(dimmed.isDimmed, false)
+  assert.equal(dimmed.isDimmed, true)
   assert.equal(dimmed.touchesFocus, false)
 })

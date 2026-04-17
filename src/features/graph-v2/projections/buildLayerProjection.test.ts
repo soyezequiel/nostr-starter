@@ -105,3 +105,83 @@ test('emits at most one mutual edge per directed pair inside a snapshot', () => 
   assert.deepEqual(pairKeys, ['alice->root', 'root->alice'])
   assert.equal(new Set(pairKeys).size, pairKeys.length)
 })
+
+test('keeps relationship layers anchored to the root and expanded nodes', () => {
+  const state = createState()
+  state.nodesByPubkey.bob = {
+    ...state.nodesByPubkey.alice!,
+    pubkey: 'bob',
+    label: 'Bob',
+    discoveredAt: 2,
+  }
+  state.edgesById['alice->bob:follow'] = {
+    id: 'alice->bob:follow',
+    source: 'alice',
+    target: 'bob',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+  state.edgesById['bob->alice:follow'] = {
+    id: 'bob->alice:follow',
+    source: 'bob',
+    target: 'alice',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+  state.discoveryState = {
+    ...state.discoveryState,
+    expandedNodePubkeys: new Set<string>(['root', 'alice']),
+  }
+
+  const following = buildLayerProjection(state, 'following')
+  const mutuals = buildLayerProjection(state, 'mutuals')
+
+  assert.deepEqual(
+    following.visibleEdges.map((edge) => edge.id),
+    ['alice->bob:follow', 'alice->root:follow', 'root->alice:follow'],
+  )
+  assert.deepEqual(
+    mutuals.visibleEdges.map((edge) => edge.id),
+    [
+      'alice->bob:follow',
+      'alice->root:follow',
+      'bob->alice:follow',
+      'root->alice:follow',
+    ],
+  )
+})
+
+test('keeps expanded nodes visible in mutuals without inventing non-mutual edges', () => {
+  const state = createState()
+  state.nodesByPubkey.bob = {
+    ...state.nodesByPubkey.alice!,
+    pubkey: 'bob',
+    label: 'Bob',
+    discoveredAt: 2,
+  }
+  state.edgesById['alice->bob:follow'] = {
+    id: 'alice->bob:follow',
+    source: 'alice',
+    target: 'bob',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+  state.discoveryState = {
+    ...state.discoveryState,
+    expandedNodePubkeys: new Set<string>(['root', 'alice', 'bob']),
+  }
+
+  const mutuals = buildLayerProjection(state, 'mutuals')
+
+  assert.deepEqual(
+    Array.from(mutuals.visibleNodePubkeys).sort(),
+    ['alice', 'bob', 'root'],
+  )
+  assert.deepEqual(
+    mutuals.visibleEdges.map((edge) => edge.id),
+    ['alice->root:follow', 'root->alice:follow'],
+  )
+})

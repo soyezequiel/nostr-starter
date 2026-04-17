@@ -142,6 +142,30 @@ export const GraphControlRail = memo(function GraphControlRail({
     canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
   const isNonReciprocalActive =
     isNonReciprocalAvailable && relationshipToggleState.onlyNonReciprocal
+  const relationshipMode =
+    relationshipToggleState.following && relationshipToggleState.followers
+      ? 'mutuals'
+      : relationshipToggleState.following
+        ? relationshipToggleState.onlyNonReciprocal
+          ? 'following-non-followers'
+          : 'following'
+        : relationshipToggleState.followers
+          ? relationshipToggleState.onlyNonReciprocal
+            ? 'nonreciprocal-followers'
+            : 'followers'
+          : 'none'
+  const connectionFilterLabel =
+    relationshipMode === 'mutuals'
+      ? 'Filtro activo: Sigo + Me siguen'
+      : relationshipMode === 'following'
+        ? 'Filtro activo: Sigo'
+        : relationshipMode === 'followers'
+          ? 'Filtro activo: Me siguen'
+          : relationshipMode === 'following-non-followers'
+            ? 'Filtro activo: Sigo sin reciprocidad'
+            : relationshipMode === 'nonreciprocal-followers'
+              ? 'Filtro activo: Me siguen sin reciprocidad'
+              : 'Sin filtro de relacion activo'
 
   return (
     <div className="graph-panel__control-bar">
@@ -163,6 +187,9 @@ export const GraphControlRail = memo(function GraphControlRail({
       <div className="graph-panel__control-actions">
         <div
           className="graph-panel__control-group graph-panel__control-group--primary"
+          data-relationship-mode={
+            activeLayer === 'connections' ? relationshipMode : undefined
+          }
           role="group"
           aria-label="Vista principal del grafo"
         >
@@ -216,6 +243,11 @@ export const GraphControlRail = memo(function GraphControlRail({
           >
             Me siguen
           </button>
+          {activeLayer === 'connections' ? (
+            <span className="graph-panel__control-filter-state">
+              {connectionFilterLabel}
+            </span>
+          ) : null}
         </div>
 
         <div

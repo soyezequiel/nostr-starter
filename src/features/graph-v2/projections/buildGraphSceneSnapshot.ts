@@ -166,11 +166,11 @@ export const buildGraphSceneSnapshot = (
     )
     .sort((left, right) => left.id.localeCompare(right.id))
 
-  // Visual focus is intentionally renderer-local: hover and drag should
-  // highlight neighbors, but a clicked/selected node should only drive
-  // semantic UI like the detail panel.
-  const visualFocusPubkey: string | null = null
-  const hasVisualFocus = false
+  const visualFocusPubkey =
+    state.selectedNodePubkey && state.nodesByPubkey[state.selectedNodePubkey]
+      ? state.selectedNodePubkey
+      : null
+  const hasVisualFocus = visualFocusPubkey !== null
 
   const depth1Neighbors = new Set<string>()
   if (visualFocusPubkey && hasVisualFocus) {
