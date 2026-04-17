@@ -120,7 +120,7 @@ const createState = (
   ...overrides,
 })
 
-test('keeps force edges separate from visible edges in relationship layers', () => {
+test('keeps relationship force edges limited to visible edges without selection', () => {
   const scene = buildGraphSceneSnapshot(createState())
 
   assert.deepEqual(
@@ -129,11 +129,7 @@ test('keeps force edges separate from visible edges in relationship layers', () 
   )
   assert.deepEqual(
     scene.forceEdges.map((edge) => edge.id),
-    ['alice->bob:follow', 'root->alice:follow', 'root->bob:follow'],
-  )
-  assert.equal(
-    scene.forceEdges.find((edge) => edge.id === 'alice->bob:follow')?.hidden,
-    true,
+    ['root->alice:follow', 'root->bob:follow'],
   )
 })
 
@@ -157,7 +153,24 @@ test('builds connections layer without reintroducing the root node', () => {
 test('builds a compact deterministic topology signature', () => {
   const scene = buildGraphSceneSnapshot(createState())
 
-  assert.equal(scene.diagnostics.topologySignature, 'root::following::1::0::1::3::3')
+  assert.equal(scene.diagnostics.topologySignature, 'root::following::1::0::1::3::2')
+})
+
+test('keeps graph force layout independent from loaded connection edges', () => {
+  const scene = buildGraphSceneSnapshot(
+    createState({
+      activeLayer: 'graph',
+    }),
+  )
+
+  assert.deepEqual(
+    scene.visibleEdges.map((edge) => edge.id),
+    ['root->alice:follow', 'root->bob:follow'],
+  )
+  assert.deepEqual(
+    scene.forceEdges.map((edge) => edge.id),
+    ['root->alice:follow', 'root->bob:follow'],
+  )
 })
 
 test('leaves every node with idle/root focus state when there is no selection', () => {

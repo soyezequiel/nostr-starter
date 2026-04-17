@@ -43,6 +43,18 @@ const SIZE_DIMMED = 5
 const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
   relation === 'follow' ? 1.1 : 0.9
 
+const sortAndDedupeSceneEdges = (edges: readonly CanonicalEdge[]) => {
+  const edgesById = new Map<string, CanonicalEdge>()
+
+  for (const edge of edges) {
+    edgesById.set(edge.id, edge)
+  }
+
+  return Array.from(edgesById.values()).sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )
+}
+
 const resolveFocusState = ({
   isRoot,
   isSelected,
@@ -159,18 +171,33 @@ export const buildGraphSceneSnapshot = (
   const layerProjection = buildLayerProjection(state)
   const visibleEdgeIds = new Set(layerProjection.visibleEdges.map((edge) => edge.id))
   const visibleNodePubkeys = new Set(layerProjection.visibleNodePubkeys)
-  const forceEdges = Object.values(state.edgesById)
-    .filter(
-      (edge) =>
-        visibleNodePubkeys.has(edge.source) && visibleNodePubkeys.has(edge.target),
-    )
-    .sort((left, right) => left.id.localeCompare(right.id))
-
   const visualFocusPubkey =
     state.selectedNodePubkey && state.nodesByPubkey[state.selectedNodePubkey]
       ? state.selectedNodePubkey
       : null
   const hasVisualFocus = visualFocusPubkey !== null
+  const forceEdges =
+    state.activeLayer === 'graph'
+      ? Object.values(state.edgesById)
+          .filter(
+            (edge) =>
+              edge.origin !== 'connections' &&
+              visibleNodePubkeys.has(edge.source) &&
+              visibleNodePubkeys.has(edge.target),
+          )
+          .sort((left, right) => left.id.localeCompare(right.id))
+      : sortAndDedupeSceneEdges([
+          ...layerProjection.visibleEdges,
+          ...(hasVisualFocus
+            ? Object.values(state.edgesById).filter(
+                (edge) =>
+                  visibleNodePubkeys.has(edge.source) &&
+                  visibleNodePubkeys.has(edge.target) &&
+                  (edge.source === visualFocusPubkey ||
+                    edge.target === visualFocusPubkey),
+              )
+            : []),
+        ])
 
   const depth1Neighbors = new Set<string>()
   if (visualFocusPubkey && hasVisualFocus) {

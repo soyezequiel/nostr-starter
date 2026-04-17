@@ -150,9 +150,33 @@ const buildNonReciprocalEdges = (
     edges.filter((edge) => !adjacency.get(edge.target)?.has(edge.source)),
   )
 
+const projectionCache = new WeakMap<
+  CanonicalGraphState,
+  Map<GraphV2Layer, LayerProjection>
+>()
+
 export const buildLayerProjection = (
   state: CanonicalGraphState,
   layer: GraphV2Layer = state.activeLayer,
+): LayerProjection => {
+  const cached = projectionCache.get(state)?.get(layer)
+  if (cached) {
+    return cached
+  }
+
+  const projection = computeLayerProjection(state, layer)
+  let byLayer = projectionCache.get(state)
+  if (!byLayer) {
+    byLayer = new Map()
+    projectionCache.set(state, byLayer)
+  }
+  byLayer.set(layer, projection)
+  return projection
+}
+
+const computeLayerProjection = (
+  state: CanonicalGraphState,
+  layer: GraphV2Layer,
 ): LayerProjection => {
   const allEdges = Object.values(state.edgesById)
   const primaryEdges = allEdges.filter((edge) => edge.origin !== 'connections')

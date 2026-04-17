@@ -219,7 +219,7 @@ const PHYSICS_TUNING_SLIDERS: Array<{
     key: 'damping',
     label: 'Amortiguacion',
     description: 'Multiplica slowDown: controla velocidad e inercia.',
-    min: 0.5,
+    min: 0.25,
     max: 2.5,
     step: 0.05,
   },

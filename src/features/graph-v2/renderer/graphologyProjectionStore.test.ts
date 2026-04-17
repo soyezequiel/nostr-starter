@@ -4,7 +4,10 @@ import test from 'node:test'
 import type { GraphSceneSnapshot } from '@/features/graph-v2/renderer/contracts'
 import { GraphologyProjectionStore } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 
-const createScene = (edgeId: string): GraphSceneSnapshot => ({
+const createScene = (
+  edgeId: string,
+  activeLayer: GraphSceneSnapshot['diagnostics']['activeLayer'] = 'graph',
+): GraphSceneSnapshot => ({
   nodes: [
     {
       pubkey: 'A',
@@ -61,7 +64,7 @@ const createScene = (edgeId: string): GraphSceneSnapshot => ({
     rootPubkey: 'A',
   },
   diagnostics: {
-    activeLayer: 'graph',
+    activeLayer,
     nodeCount: 2,
     visibleEdgeCount: 1,
     forceEdgeCount: 0,
@@ -110,6 +113,20 @@ test('translates node positions without changing their fixed state', () => {
 
   assert.deepEqual(store.getNodePosition('A'), { x: 7, y: -2 })
   assert.equal(store.isNodeFixed('A'), true)
+})
+
+test('reuses node positions across layers for continuous transitions', () => {
+  const store = new GraphologyProjectionStore()
+
+  store.applyScene(createScene('follow:A:B', 'graph'))
+  store.setNodePosition('B', 10, 10)
+
+  store.applyScene(createScene('follow:A:B', 'connections'))
+  store.setNodePosition('B', 100, 100)
+
+  store.applyScene(createScene('follow:A:B', 'graph'))
+
+  assert.deepEqual(store.getNodePosition('B'), { x: 100, y: 100 })
 })
 
 test('projects selected neighborhoods into prominent sigma attributes', () => {

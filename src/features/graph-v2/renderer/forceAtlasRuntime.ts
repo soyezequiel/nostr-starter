@@ -46,7 +46,7 @@ export const DEFAULT_FORCE_ATLAS_PHYSICS_TUNING: ForceAtlasPhysicsTuning = {
   repulsionForce: 2.5,
   linkForce: 1,
   linkDistance: 1,
-  damping: 0.5,
+  damping: 0.35,
 }
 
 export interface ForceAtlasPhysicsDiagnostics {
@@ -105,7 +105,7 @@ export const createForceAtlasPhysicsTuning = (
   ),
   damping: clampNumber(
     tuning.damping ?? DEFAULT_FORCE_ATLAS_PHYSICS_TUNING.damping,
-    0.5,
+    0.25,
     2.5,
   ),
 })
