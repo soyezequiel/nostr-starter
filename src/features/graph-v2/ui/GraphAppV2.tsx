@@ -6,6 +6,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
@@ -17,7 +18,11 @@ import { GraphInteractionController } from '@/features/graph-v2/application/Inte
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
 import type { CanonicalGraphState } from '@/features/graph-v2/domain/types'
-import { buildGraphSceneSnapshot } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
+import {
+  buildGraphSceneSnapshot,
+  getSnapshotCacheStats,
+} from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
+import { getProjectionCacheStats } from '@/features/graph-v2/projections/buildLayerProjection'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
 import type { GraphInteractionCallbacks, GraphViewportState } from '@/features/graph-v2/renderer/contracts'
 import {
@@ -430,6 +435,20 @@ export default function GraphAppV2() {
     return () => bridge.dispose()
   }, [bridge])
 
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
+    console.info('[graph-v2 perf] enabled')
+    const id = setInterval(() => {
+      const proj = getProjectionCacheStats()
+      const snap = getSnapshotCacheStats()
+      console.info(
+        `[graph-v2 perf] projection calls=${proj.calls} hits=${proj.hits} misses=${proj.misses}` +
+        ` | snapshot calls=${snap.calls} hits=${snap.hits} misses=${snap.misses}`,
+      )
+    }, 2000)
+    return () => clearInterval(id)
+  }, [])
+
   const domainState = fixtureState ?? liveDomainState
   const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
   const callbacks = useMemo<GraphInteractionCallbacks>(
@@ -467,6 +486,26 @@ export default function GraphAppV2() {
         : controller.callbacks,
     [controller, isFixtureMode],
   )
+  const prevSignatureRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
+    const sig = domainState.sceneSignature
+    const prev = prevSignatureRef.current
+    if (prev !== null && prev !== sig) {
+      const prevParts = prev.split('|')
+      const nextParts = sig.split('|')
+      const KEYS = [
+        'rootPubkey', 'activeLayer', 'connectionsSourceLayer',
+        'selectedNodePubkey', 'graphRevision', 'inboundGraphRevision',
+        'connectionsLinksRevision', 'nodeCount', 'linkCount',
+        'inboundLinkCount', 'connectionsLinkCount', 'pinnedNodePubkeys',
+      ]
+      const changed = KEYS.filter((k, i) => prevParts[i] !== nextParts[i])
+      console.info('[graph-v2 perf] sceneSignature changed:', changed.join(', '))
+    }
+    prevSignatureRef.current = sig
+  })
+
   const scene = useMemo(
     () => buildGraphSceneSnapshot(domainState),
     // domainState also carries relay/progress objects; sceneSignature is the

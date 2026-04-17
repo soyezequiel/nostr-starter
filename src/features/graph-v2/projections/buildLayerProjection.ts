@@ -155,12 +155,26 @@ const projectionCache = new WeakMap<
   Map<GraphV2Layer, LayerProjection>
 >()
 
+let _projCalls = 0
+let _projHits = 0
+
 export const buildLayerProjection = (
   state: CanonicalGraphState,
   layer: GraphV2Layer = state.activeLayer,
 ): LayerProjection => {
+  const isPerfEnabled =
+    typeof process !== 'undefined' &&
+    process.env.NEXT_PUBLIC_GRAPH_V2_PERF === '1'
+
+  if (isPerfEnabled) {
+    _projCalls++
+  }
+
   const cached = projectionCache.get(state)?.get(layer)
   if (cached) {
+    if (isPerfEnabled) {
+      _projHits++
+    }
     return cached
   }
 
@@ -173,6 +187,12 @@ export const buildLayerProjection = (
   byLayer.set(layer, projection)
   return projection
 }
+
+export const getProjectionCacheStats = () => ({
+  calls: _projCalls,
+  hits: _projHits,
+  misses: _projCalls - _projHits,
+})
 
 const computeLayerProjection = (
   state: CanonicalGraphState,

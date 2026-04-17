@@ -3,7 +3,8 @@
     "allow": [
       "Bash(node --test --experimental-strip-types src/features/graph-v2/projections/buildGraphSceneSnapshot.test.ts)",
       "Bash(npx tsx:*)",
-      "Bash(node -e \"const s = require\\('sigma'\\); console.log\\(Object.getOwnPropertyNames\\(s.default?.prototype || {}\\).filter\\(k=>k.includes\\('Node'\\)||k.includes\\('node'\\)\\).join\\('\\\\n'\\)\\)\")"
+      "Bash(node -e \"const s = require\\('sigma'\\); console.log\\(Object.getOwnPropertyNames\\(s.default?.prototype || {}\\).filter\\(k=>k.includes\\('Node'\\)||k.includes\\('node'\\)\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(npm run *)"
     ]
   }
 }

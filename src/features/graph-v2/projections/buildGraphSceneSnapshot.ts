@@ -165,7 +165,42 @@ const mapSceneEdge = (
   }
 }
 
+const snapshotCache = new WeakMap<CanonicalGraphState, GraphSceneSnapshot>()
+
+let _snapCalls = 0
+let _snapHits = 0
+
 export const buildGraphSceneSnapshot = (
+  state: CanonicalGraphState,
+): GraphSceneSnapshot => {
+  const isPerfEnabled =
+    typeof process !== 'undefined' &&
+    process.env.NEXT_PUBLIC_GRAPH_V2_PERF === '1'
+
+  if (isPerfEnabled) {
+    _snapCalls++
+  }
+
+  const cached = snapshotCache.get(state)
+  if (cached) {
+    if (isPerfEnabled) {
+      _snapHits++
+    }
+    return cached
+  }
+
+  const snapshot = computeGraphSceneSnapshot(state)
+  snapshotCache.set(state, snapshot)
+  return snapshot
+}
+
+export const getSnapshotCacheStats = () => ({
+  calls: _snapCalls,
+  hits: _snapHits,
+  misses: _snapCalls - _snapHits,
+})
+
+const computeGraphSceneSnapshot = (
   state: CanonicalGraphState,
 ): GraphSceneSnapshot => {
   const layerProjection = buildLayerProjection(state)
