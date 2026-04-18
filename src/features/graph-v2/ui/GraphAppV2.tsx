@@ -23,7 +23,6 @@ import type {
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph/app/store/types'
-import { NpubInput } from '@/features/graph/components/NpubInput'
 import { GraphInteractionController } from '@/features/graph-v2/application/InteractionController'
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
@@ -74,6 +73,7 @@ import { SigmaSidePanel } from '@/features/graph-v2/ui/SigmaSidePanel'
 import { SigmaRootLoader } from '@/features/graph-v2/ui/SigmaRootLoader'
 import { SigmaEmptyState } from '@/features/graph-v2/ui/SigmaEmptyState'
 import { SigmaLoadingOverlay } from '@/features/graph-v2/ui/SigmaLoadingOverlay'
+import { SigmaRootInput } from '@/features/graph-v2/ui/SigmaRootInput'
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
 import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
@@ -578,7 +578,6 @@ export default function GraphAppV2() {
   const isTestMode = searchParams.get('testMode') === '1'
   const isFixtureMode = isTestMode && fixtureName === 'drag-local'
   const [bridge] = useState(() => new LegacyKernelBridge())
-  const [validationFeedback, setValidationFeedback] = useState<string | null>(null)
   const [loadFeedback, setLoadFeedback] = useState<string | null>(
     isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
   )
@@ -599,6 +598,7 @@ export default function GraphAppV2() {
   const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('renderer')
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
   // Rail toggles — direct controls, decoupled from the settings panel
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
   const [showZaps, setShowZaps] = useState(true)
@@ -724,10 +724,11 @@ export default function GraphAppV2() {
   // loader modal (the modal has its own feedback) and not if we already have
   // a meaningful number of nodes drawn.
   const isGraphLoading =
-    domainState.rootPubkey !== null &&
     !isRootSheetOpen &&
-    (rootLoadStatus === 'loading' || rootLoadStatus === 'partial') &&
-    scene.nodes.length < 3
+    (isRootLoadScreenOpen ||
+      (domainState.rootPubkey !== null &&
+        rootLoadStatus === 'loading' &&
+        scene.nodes.length < 3))
   const isDragFixtureLab = fixtureName === 'drag-local'
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
@@ -957,19 +958,33 @@ export default function GraphAppV2() {
       relays?: string[]
       npub?: string
       profile?: SavedRootProfileSnapshot | null
-      profileFetchedAt?: number | null
-    }) => {
-      setValidationFeedback(null)
+    profileFetchedAt?: number | null
+  }) => {
       setLoadFeedback('Cargando root...')
+      setIsRootSheetOpen(false)
+      setIsRootLoadScreenOpen(true)
       startTransition(() => {
-        if (isFixtureMode) { setLoadFeedback('El fixture no admite cargar roots manuales.'); return }
+        if (isFixtureMode) {
+          setLoadFeedback('El fixture no admite cargar roots manuales.')
+          setIsRootLoadScreenOpen(false)
+          return
+        }
         const encodedNpub = npub ?? nip19.npubEncode(pubkey)
         upsertSavedRoot({ pubkey, npub: encodedNpub, openedAt: Date.now(), relayHints: relays, profile, profileFetchedAt })
-        void bridge
-          .loadRoot(pubkey, { bootstrapRelayUrls: relays })
-          .then((result) => { setLoadFeedback(result.message); setIsRootSheetOpen(false) })
+        const minimumLoadingMs = new Promise((resolve) => window.setTimeout(resolve, 900))
+        void Promise.all([
+          bridge.loadRoot(pubkey, { bootstrapRelayUrls: relays }),
+          minimumLoadingMs,
+        ])
+          .then(([result]) => result)
+          .then((result) => {
+            setLoadFeedback(result.message)
+            setIsRootLoadScreenOpen(false)
+          })
           .catch((error) => {
             setLoadFeedback(error instanceof Error ? error.message : 'No se pudo cargar el root.')
+            setIsRootLoadScreenOpen(false)
+            setIsRootSheetOpen(true)
           })
       })
     },
@@ -1172,9 +1187,8 @@ export default function GraphAppV2() {
     const entries: SigmaToast[] = []
     if (actionFeedback) entries.push({ id: 'action', msg: actionFeedback, tone: 'default' })
     if (zapFeedback)    entries.push({ id: 'zap', msg: zapFeedback, tone: 'zap' })
-    if (validationFeedback) entries.push({ id: 'validation', msg: validationFeedback, tone: 'warn' })
     return entries
-  }, [actionFeedback, zapFeedback, validationFeedback])
+  }, [actionFeedback, zapFeedback])
 
   // Minimap viewport info
   const viewportRatio = isFixtureMode
@@ -1565,10 +1579,9 @@ export default function GraphAppV2() {
       {isRootSheetOpen && (
         <SigmaRootLoader
           canClose={hasRoot}
-          feedback={visibleLoadFeedback ?? validationFeedback}
           manualInputSlot={
-            <NpubInput
-              onInvalidRoot={(payload) => setValidationFeedback(payload.message)}
+            <SigmaRootInput
+              feedback={visibleLoadFeedback}
               onValidRoot={loadRootFromPointer}
             />
           }

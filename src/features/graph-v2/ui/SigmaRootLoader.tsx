@@ -8,7 +8,6 @@ interface Props {
   onClose: () => void
   savedRootsSlot: ReactNode
   manualInputSlot: ReactNode
-  feedback?: string | null
   title?: string
   copy?: string
 }
@@ -18,7 +17,6 @@ export const SigmaRootLoader = memo(function SigmaRootLoader({
   onClose,
   savedRootsSlot,
   manualInputSlot,
-  feedback,
   title = 'Cargar identidad',
   copy = 'Pegá un npub o nprofile — Sigma consultará tus relays y proyectará su vecindario.',
 }: Props) {
@@ -35,10 +33,6 @@ export const SigmaRootLoader = memo(function SigmaRootLoader({
           <div className="sg-loader__divider">Identidades recientes</div>
 
           {savedRootsSlot}
-
-          {feedback ? (
-            <p className="sg-loader__feedback">{feedback}</p>
-          ) : null}
 
           {canClose ? (
             <div className="sg-loader__cancel">

@@ -32,6 +32,21 @@ const getInitials = (entry: SavedRootEntry) => {
 
 const shortenNpub = (npub: string) => `${npub.slice(0, 12)}...${npub.slice(-6)}`
 
+const getRootTag = (entry: SavedRootEntry) => {
+  const relayHint = entry.relayHints?.[0]
+  if (relayHint) {
+    try {
+      const host = new URL(relayHint).hostname.replace(/^relay\./, '')
+      return host.split('.')[0] || 'relay'
+    } catch {
+      return 'relay'
+    }
+  }
+
+  const nip05Domain = entry.profile?.nip05?.split('@')[1]
+  return nip05Domain?.split('.')[0] ?? 'root'
+}
+
 const formatSavedRootTime = (timestamp: number) => {
   const elapsedMs = timestamp - Date.now()
   const elapsedMinutes = Math.round(elapsedMs / 60_000)
@@ -105,7 +120,7 @@ export const SigmaSavedRootsPanel = memo(function SigmaSavedRootsPanel({
       <div className="saved-roots-grid">
         {entries.map((entry, index) => {
           const displayName = getDisplayName(entry)
-          const description = [entry.profile?.nip05, shortenNpub(entry.npub)]
+          const description = [shortenNpub(entry.npub), entry.profile?.nip05]
             .filter(Boolean)
             .join(' · ')
           const picture = entry.profile?.picture ?? null
@@ -149,6 +164,9 @@ export const SigmaSavedRootsPanel = memo(function SigmaSavedRootsPanel({
                     <p className="saved-root-card__name">{displayName}</p>
                     <span className="saved-root-card__stamp">
                       {formatSavedRootTime(entry.lastOpenedAt)}
+                    </span>
+                    <span className="saved-root-card__tag">
+                      {getRootTag(entry)}
                     </span>
                   </div>
                   <p className="saved-root-card__meta">{description}</p>
