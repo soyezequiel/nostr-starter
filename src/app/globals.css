@@ -266,3 +266,8 @@ body {
   background: rgba(180, 249, 83, 0.25);
   color: #fafafa;
 }
+
+.landing-cypher ::selection {
+  background: rgba(255, 75, 93, 0.3);
+  color: #f7f5ef;
+}

@@ -9,8 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Nostr Starter Kit - La Crypta Hackathon',
-  description: 'Build your first Nostr app. Connect with extension, nsec, or bunker.',
+  title: 'Nostr Espacial',
+  description:
+    'Explorador visual para entender relaciones, relays y señales públicas de identidad en Nostr.',
 };
 
 export default function RootLayout({
@@ -19,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="es" suppressHydrationWarning>
       <body className={`${inter.className} bg-lc-black text-lc-white antialiased`}>
         <DevCacheButton />
         {children}

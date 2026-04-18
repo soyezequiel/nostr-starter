@@ -1,19 +1,21 @@
-// Imperative canvas overlay that renders "electron" zaps on top of Sigma.
+// Imperative canvas overlay that renders energy-like zaps on top of Sigma.
 // Lives in the Sigma container as a pointer-events: none canvas and is
 // driven by a single requestAnimationFrame loop while animations exist.
 //
-// Radius scale (documented):
-//   radiusPx = clamp(3 + log10(sats + 1) * 3.2, 3, 22)
-// Log-based so a 1 sat blip stays visible (~3px) and a 1M sat mega-zap is
-// bounded (~22px). Anything above the clamp ceiling looks the same — this is
-// intentional to keep huge zaps from taking over the canvas.
+// The zap itself should read as energy moving through an existing edge, not as
+// a large graph node. Sats influence intensity and label value; size stays
+// deliberately small so the route remains legible in dense Sigma views.
 
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 
-const DEFAULT_DURATION_MS = 1500
-const MIN_RADIUS_PX = 3
-const MAX_RADIUS_PX = 22
-const TAIL_COUNT = 6
+const DEFAULT_DURATION_MS = 1350
+const MIN_RADIUS_PX = 2.4
+const MAX_RADIUS_PX = 5.8
+const TAIL_COUNT = 9
+const ROUTE_WIDTH_PX = 1.15
+const ENERGY_COLOR = '#ffd86b'
+const ENERGY_HOT_COLOR = '#fff4bf'
+const ENERGY_SHADOW_COLOR = '#f2994a'
 
 export interface ViewportPositionResolver {
   (pubkey: string): { x: number; y: number } | null
@@ -23,14 +25,15 @@ interface ActiveElectron {
   fromPubkey: string
   toPubkey: string
   radiusPx: number
+  label: string
   startMs: number
   durationMs: number
-  color: string
+  flickerSeed: number
 }
 
 export function satsToRadiusPx(sats: number): number {
   if (!Number.isFinite(sats) || sats <= 0) return MIN_RADIUS_PX
-  const raw = 3 + Math.log10(sats + 1) * 3.2
+  const raw = 2.4 + Math.log10(sats + 1) * 0.72
   return Math.min(Math.max(raw, MIN_RADIUS_PX), MAX_RADIUS_PX)
 }
 
@@ -88,9 +91,10 @@ export class ZapElectronOverlay {
       fromPubkey: zap.fromPubkey,
       toPubkey: zap.toPubkey,
       radiusPx: satsToRadiusPx(zap.sats),
+      label: formatSatsLabel(zap.sats),
       startMs: performance.now(),
       durationMs: DEFAULT_DURATION_MS,
-      color: '#ffd86b',
+      flickerSeed: Math.random() * Math.PI * 2,
     })
     this.ensureTicking()
     return true
@@ -162,44 +166,190 @@ export class ZapElectronOverlay {
     anim: ActiveElectron,
   ): void {
     const eased = easeInOutQuad(progress)
-    const x = from.x + (to.x - from.x) * eased
-    const y = from.y + (to.y - from.y) * eased
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const distance = Math.hypot(dx, dy)
+    if (distance < 1) return
 
-    // Tail
-    for (let i = TAIL_COUNT; i >= 1; i--) {
-      const t = Math.max(0, eased - i * 0.025)
-      const tx = from.x + (to.x - from.x) * t
-      const ty = from.y + (to.y - from.y) * t
-      const alpha = ((TAIL_COUNT - i + 1) / TAIL_COUNT) * 0.25 * (1 - progress * 0.4)
-      const r = anim.radiusPx * (0.45 + (TAIL_COUNT - i) * 0.06)
-      ctx.beginPath()
-      ctx.globalAlpha = alpha
-      ctx.fillStyle = anim.color
-      ctx.arc(tx, ty, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
+    const nx = -dy / distance
+    const ny = dx / distance
+    const x = from.x + dx * eased
+    const y = from.y + dy * eased
+    const fadeIn = smoothstep(0, 0.12, progress)
+    const fadeOut = 1 - smoothstep(0.84, 1, progress)
+    const lifeAlpha = fadeIn * fadeOut
+    const flicker = 0.86 + Math.sin(progress * Math.PI * 18 + anim.flickerSeed) * 0.14
 
-    // Glow
-    ctx.globalAlpha = 0.35
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+
+    this.drawEnergyRoute(ctx, from, to, lifeAlpha)
+    this.drawEnergyTail(ctx, from, dx, dy, eased, progress, anim, lifeAlpha)
+    this.drawEnergyCore(ctx, x, y, anim.radiusPx, lifeAlpha, flicker)
+    this.drawArrivalPulse(ctx, to, progress, anim.radiusPx)
+
+    ctx.restore()
+
+    this.drawAmountLabel(ctx, anim.label, x, y, nx, ny, progress, lifeAlpha)
+  }
+
+  private drawEnergyRoute(
+    ctx: CanvasRenderingContext2D,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    lifeAlpha: number,
+  ): void {
+    ctx.globalAlpha = 0.22 * lifeAlpha
+    ctx.strokeStyle = ENERGY_COLOR
+    ctx.lineWidth = ROUTE_WIDTH_PX
+    ctx.lineCap = 'round'
     ctx.beginPath()
-    ctx.fillStyle = anim.color
-    ctx.arc(x, y, anim.radiusPx * 2.2, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo(from.x, from.y)
+    ctx.lineTo(to.x, to.y)
+    ctx.stroke()
+  }
 
-    // Core
-    ctx.globalAlpha = 1
+  private drawEnergyTail(
+    ctx: CanvasRenderingContext2D,
+    from: { x: number; y: number },
+    dx: number,
+    dy: number,
+    eased: number,
+    progress: number,
+    anim: ActiveElectron,
+    lifeAlpha: number,
+  ): void {
+    const tailLength = 0.22
+    const tailStart = Math.max(0, eased - tailLength)
+    const tailEndX = from.x + dx * eased
+    const tailEndY = from.y + dy * eased
+    const tailStartX = from.x + dx * tailStart
+    const tailStartY = from.y + dy * tailStart
+    const gradient = ctx.createLinearGradient(tailStartX, tailStartY, tailEndX, tailEndY)
+    gradient.addColorStop(0, 'rgba(242, 153, 74, 0)')
+    gradient.addColorStop(0.68, 'rgba(255, 216, 107, 0.42)')
+    gradient.addColorStop(1, 'rgba(255, 246, 207, 0.98)')
+
+    ctx.globalAlpha = lifeAlpha
+    ctx.strokeStyle = gradient
+    ctx.lineWidth = Math.max(ROUTE_WIDTH_PX, anim.radiusPx * 0.78)
+    ctx.lineCap = 'round'
     ctx.beginPath()
-    ctx.fillStyle = '#fff6cf'
-    ctx.strokeStyle = anim.color
-    ctx.lineWidth = 1.5
-    ctx.arc(x, y, anim.radiusPx, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo(tailStartX, tailStartY)
+    ctx.lineTo(tailEndX, tailEndY)
     ctx.stroke()
 
-    ctx.globalAlpha = 1
+    for (let i = TAIL_COUNT; i >= 1; i -= 1) {
+      const t = Math.max(0, eased - i * 0.018)
+      const sparkX = from.x + dx * t
+      const sparkY = from.y + dy * t
+      const alpha = ((TAIL_COUNT - i + 1) / TAIL_COUNT) * 0.28 * lifeAlpha * (1 - progress * 0.28)
+      const radius = Math.max(0.85, anim.radiusPx * (0.2 + (TAIL_COUNT - i) * 0.035))
+
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = i % 2 === 0 ? ENERGY_COLOR : ENERGY_SHADOW_COLOR
+      ctx.beginPath()
+      ctx.arc(sparkX, sparkY, radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
+
+  private drawEnergyCore(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radiusPx: number,
+    lifeAlpha: number,
+    flicker: number,
+  ): void {
+    const glowRadius = radiusPx * (3.3 + flicker * 0.55)
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius)
+    glow.addColorStop(0, 'rgba(255, 246, 207, 0.95)')
+    glow.addColorStop(0.32, 'rgba(255, 216, 107, 0.58)')
+    glow.addColorStop(1, 'rgba(242, 153, 74, 0)')
+
+    ctx.globalAlpha = 0.88 * lifeAlpha
+    ctx.beginPath()
+    ctx.fillStyle = glow
+    ctx.arc(x, y, glowRadius, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.globalAlpha = lifeAlpha
+    ctx.beginPath()
+    ctx.fillStyle = ENERGY_HOT_COLOR
+    ctx.arc(x, y, radiusPx, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.globalAlpha = 0.75 * lifeAlpha
+    ctx.strokeStyle = ENERGY_COLOR
+    ctx.lineWidth = 0.9
+    ctx.stroke()
+  }
+
+  private drawArrivalPulse(
+    ctx: CanvasRenderingContext2D,
+    to: { x: number; y: number },
+    progress: number,
+    radiusPx: number,
+  ): void {
+    const pulse = smoothstep(0.74, 1, progress)
+    if (pulse <= 0) return
+
+    const alpha = (1 - pulse) * 0.48
+    const radius = radiusPx * 1.8 + pulse * 18
+
+    ctx.globalAlpha = alpha
+    ctx.strokeStyle = ENERGY_COLOR
+    ctx.lineWidth = 1.4
+    ctx.beginPath()
+    ctx.arc(to.x, to.y, radius, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
+  private drawAmountLabel(
+    ctx: CanvasRenderingContext2D,
+    label: string,
+    x: number,
+    y: number,
+    nx: number,
+    ny: number,
+    progress: number,
+    lifeAlpha: number,
+  ): void {
+    const labelAlpha = lifeAlpha * (1 - smoothstep(0.7, 1, progress))
+    if (labelAlpha <= 0.02) return
+
+    const offset = 12
+    ctx.save()
+    ctx.globalAlpha = labelAlpha
+    ctx.font = '600 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)'
+    ctx.shadowBlur = 5
+    ctx.fillStyle = ENERGY_COLOR
+    ctx.fillText(label, x + nx * offset, y + ny * offset - 4)
+    ctx.restore()
+  }
+}
+
+function formatSatsLabel(sats: number): string {
+  if (!Number.isFinite(sats) || sats <= 0) return '0'
+  if (sats < 1_000) return Math.floor(sats).toString()
+  if (sats < 1_000_000) return `${formatCompact(sats / 1_000)}k`
+  return `${formatCompact(sats / 1_000_000)}m`
+}
+
+function formatCompact(value: number): string {
+  if (value >= 100) return Math.round(value).toString()
+  return value.toFixed(1).replace(/\.0$/, '')
 }
 
 function easeInOutQuad(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
 }
