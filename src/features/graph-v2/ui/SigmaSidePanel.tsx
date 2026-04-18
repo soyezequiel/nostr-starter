@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { ReactNode } from 'react'
 
 import { CloseIcon } from '@/features/graph-v2/ui/SigmaIcons'
@@ -12,7 +13,13 @@ interface Props {
   tabs?: ReactNode
 }
 
-export function SigmaSidePanel({ eyebrow, title, onClose, children, tabs }: Props) {
+export const SigmaSidePanel = memo(function SigmaSidePanel({
+  eyebrow,
+  title,
+  onClose,
+  children,
+  tabs,
+}: Props) {
   return (
     <aside className="sg-panel">
       <div className="sg-panel__header">
@@ -34,4 +41,4 @@ export function SigmaSidePanel({ eyebrow, title, onClose, children, tabs }: Prop
       <div className="sg-panel__body">{children}</div>
     </aside>
   )
-}
+})

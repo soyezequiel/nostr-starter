@@ -377,16 +377,28 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  public subscribeToCameraTicks(listener: () => void): () => void {
+    const sigma = this.sigma
+    if (!sigma) return () => {}
+    const camera = sigma.getCamera()
+    const onCam = () => listener()
+    camera.on('updated', onCam)
+    return () => {
+      camera.off('updated', onCam)
+    }
+  }
+
   /**
-   * Snapshot of current node positions + selection used to render the
-   * minimap. Returns graph-space coordinates and a bounding box so the
-   * caller can map to its own canvas. Null when the renderer isn't mounted.
+   * Coarse snapshot for the minimap. It samples regular nodes aggressively
+   * and keeps root / selection exact so navigation stays useful at low cost.
    */
   public getMinimapSnapshot(): {
     nodes: Array<{ x: number; y: number; color: string; isRoot: boolean; isSelected: boolean }>
     bounds: { minX: number; minY: number; maxX: number; maxY: number }
+    viewport: { minX: number; minY: number; maxX: number; maxY: number } | null
   } | null {
-    if (!this.projectionStore) return null
+    const sigma = this.sigma
+    if (!this.projectionStore || !sigma) return null
     const graph = this.projectionStore.getGraph()
     if (graph.order === 0) return null
     let minX = Infinity
@@ -394,7 +406,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     let maxX = -Infinity
     let maxY = -Infinity
     const nodes: Array<{ x: number; y: number; color: string; isRoot: boolean; isSelected: boolean }> = []
+    const sampleStride = Math.max(1, Math.ceil(graph.order / 96))
+    let index = 0
     graph.forEachNode((_, attrs) => {
+      index += 1
       const x = attrs.x
       const y = attrs.y
       if (!Number.isFinite(x) || !Number.isFinite(y)) return
@@ -402,6 +417,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       if (y < minY) minY = y
       if (x > maxX) maxX = x
       if (y > maxY) maxY = y
+      if (index % sampleStride !== 0 && !attrs.isRoot && !attrs.isSelected) return
       nodes.push({
         x,
         y,
@@ -411,7 +427,46 @@ export class SigmaRendererAdapter implements RendererAdapter {
       })
     })
     if (!Number.isFinite(minX)) return null
-    return { nodes, bounds: { minX, minY, maxX, maxY } }
+    return {
+      nodes,
+      bounds: { minX, minY, maxX, maxY },
+      viewport: this.getMinimapViewport(),
+    }
+  }
+
+  public getMinimapViewport(): {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  } | null {
+    const sigma = this.sigma
+    if (!sigma) return null
+    const dimensions = sigma.getDimensions()
+    if (dimensions.width <= 0 || dimensions.height <= 0) return null
+    const viewportCorners = [
+      sigma.viewportToGraph({ x: 0, y: 0 }),
+      sigma.viewportToGraph({ x: dimensions.width, y: 0 }),
+      sigma.viewportToGraph({ x: dimensions.width, y: dimensions.height }),
+      sigma.viewportToGraph({ x: 0, y: dimensions.height }),
+    ]
+    return viewportCorners.reduce<{
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+    } | null>((acc, point) => {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return acc
+      if (!acc) {
+        return { minX: point.x, minY: point.y, maxX: point.x, maxY: point.y }
+      }
+      return {
+        minX: Math.min(acc.minX, point.x),
+        minY: Math.min(acc.minY, point.y),
+        maxX: Math.max(acc.maxX, point.x),
+        maxY: Math.max(acc.maxY, point.y),
+      }
+    }, null)
   }
 
   public setHideAvatarsOnMove(enabled: boolean) {

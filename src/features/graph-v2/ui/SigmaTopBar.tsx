@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 interface Props {
   rootDisplayName: string | null
   rootNpub: string | null
@@ -8,7 +10,7 @@ interface Props {
   brandVersion?: string
 }
 
-export function SigmaTopBar({
+export const SigmaTopBar = memo(function SigmaTopBar({
   rootDisplayName,
   rootNpub,
   rootPictureUrl,
@@ -69,4 +71,4 @@ export function SigmaTopBar({
       </div>
     </div>
   )
-}
+})

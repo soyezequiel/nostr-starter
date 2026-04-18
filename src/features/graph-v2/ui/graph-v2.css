@@ -415,6 +415,18 @@
   height: 100%;
 }
 
+[data-graph-v2] .sg-minimap__viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  border: 1px solid rgba(165, 226, 255, 0.86);
+  background: rgba(124, 213, 255, 0.10);
+  box-shadow: 0 0 0 1px rgba(5, 10, 18, 0.55);
+  transform-origin: 0 0;
+  will-change: transform, width, height;
+}
+
 [data-graph-v2] .sg-minimap__foot {
   display: flex;
   align-items: center;

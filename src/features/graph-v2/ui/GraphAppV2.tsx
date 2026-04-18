@@ -24,7 +24,6 @@ import type {
   SavedRootProfileSnapshot,
 } from '@/features/graph/app/store/types'
 import { NpubInput } from '@/features/graph/components/NpubInput'
-import { SavedRootsPanel } from '@/features/graph/components/SavedRootsPanel'
 import { GraphInteractionController } from '@/features/graph-v2/application/InteractionController'
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
@@ -75,6 +74,7 @@ import { SigmaSidePanel } from '@/features/graph-v2/ui/SigmaSidePanel'
 import { SigmaRootLoader } from '@/features/graph-v2/ui/SigmaRootLoader'
 import { SigmaEmptyState } from '@/features/graph-v2/ui/SigmaEmptyState'
 import { SigmaLoadingOverlay } from '@/features/graph-v2/ui/SigmaLoadingOverlay'
+import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
 import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
@@ -732,9 +732,9 @@ export default function GraphAppV2() {
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
 
-  const updateFixtureState = (updater: (current: CanonicalGraphState) => CanonicalGraphState) => {
+  const updateFixtureState = useCallback((updater: (current: CanonicalGraphState) => CanonicalGraphState) => {
     setFixtureState((current) => current ? withClientSceneSignature(updater(current)) : current)
-  }
+  }, [])
 
   const relationshipControlLayer = useMemo(
     () => resolveRelationshipControlLayer(domainState.activeLayer, domainState.connectionsSourceLayer),
@@ -781,7 +781,7 @@ export default function GraphAppV2() {
     )
   }, [currentRootNode, domainState.rootPubkey, setSavedRootProfile])
 
-  const togglePinnedNode = (pubkey: string) => {
+  const togglePinnedNode = useCallback((pubkey: string) => {
     if (!isFixtureMode) { bridge.togglePinnedNode(pubkey); return }
     updateFixtureState((current) => {
       const pinnedNodePubkeys = new Set(current.pinnedNodePubkeys)
@@ -789,9 +789,9 @@ export default function GraphAppV2() {
       else pinnedNodePubkeys.add(pubkey)
       return { ...current, pinnedNodePubkeys }
     })
-  }
+  }, [bridge, isFixtureMode, updateFixtureState])
 
-  const toggleLayer = (layer: (typeof GRAPH_V2_LAYERS)[number]) => {
+  const toggleLayer = useCallback((layer: (typeof GRAPH_V2_LAYERS)[number]) => {
     if (!isFixtureMode) { bridge.toggleLayer(layer); return }
     updateFixtureState((current) => ({
       ...current,
@@ -801,14 +801,14 @@ export default function GraphAppV2() {
           ? 'mutuals'
           : current.connectionsSourceLayer,
     }))
-  }
+  }, [bridge, isFixtureMode, updateFixtureState])
 
-  const setConnectionsSourceLayer = (layer: ConnectionsSourceLayer) => {
+  const setConnectionsSourceLayer = useCallback((layer: ConnectionsSourceLayer) => {
     if (!isFixtureMode) { bridge.setConnectionsSourceLayer(layer); return }
     updateFixtureState((current) => ({ ...current, connectionsSourceLayer: layer }))
-  }
+  }, [bridge, isFixtureMode, updateFixtureState])
 
-  const handleToggleRelationship = (role: 'following' | 'followers') => {
+  const handleToggleRelationship = useCallback((role: 'following' | 'followers') => {
     const current = getRelationshipToggleState(relationshipControlLayer)
     const nextFollowing = role === 'following' ? !current.following : current.following
     const nextFollowers = role === 'followers' ? !current.followers : current.followers
@@ -824,9 +824,9 @@ export default function GraphAppV2() {
     if (nextFollowing && nextFollowers) { toggleLayer('mutuals'); return }
     if (nextFollowing) { toggleLayer(current.onlyNonReciprocal ? 'following-non-followers' : 'following'); return }
     toggleLayer(current.onlyNonReciprocal ? 'nonreciprocal-followers' : 'followers')
-  }
+  }, [domainState.activeLayer, relationshipControlLayer, setConnectionsSourceLayer, toggleLayer])
 
-  const handleToggleOnlyNonReciprocal = () => {
+  const handleToggleOnlyNonReciprocal = useCallback(() => {
     const current = getRelationshipToggleState(relationshipControlLayer)
     if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) return
     if (domainState.activeLayer === 'connections') {
@@ -836,37 +836,48 @@ export default function GraphAppV2() {
     }
     if (current.following) { toggleLayer(current.onlyNonReciprocal ? 'following' : 'following-non-followers'); return }
     if (current.followers) { toggleLayer(current.onlyNonReciprocal ? 'followers' : 'nonreciprocal-followers') }
-  }
+  }, [
+    canToggleOnlyNonReciprocal,
+    domainState.activeLayer,
+    onlyOneRelationshipSideActive,
+    relationshipControlLayer,
+    setConnectionsSourceLayer,
+    toggleLayer,
+  ])
 
-  const updateDragInfluenceTuning = <K extends keyof DragNeighborhoodInfluenceTuning>(
+  const updateDragInfluenceTuning = useCallback(function updateDragInfluenceTuning<K extends keyof DragNeighborhoodInfluenceTuning>(
     key: K, value: DragNeighborhoodInfluenceTuning[K],
-  ) => { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }
+  ) { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }, [])
 
-  const visiblePubkeys = useMemo(() => deferredScene.nodes.map((node) => node.pubkey), [deferredScene])
+  const visiblePubkeys = useMemo(() => deferredScene.nodes.map((node) => node.pubkey), [deferredScene.nodes])
   const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
 
-  const handleZap = (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
+  const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     if (!showZaps) return false
     if (!visibleNodeSet.has(zap.fromPubkey)) return false
     if (!visibleNodeSet.has(zap.toPubkey)) return false
     if (!hasVisibleEdgeBetween(deferredScene, zap.fromPubkey, zap.toPubkey)) return false
     return sigmaHostRef.current?.playZap(zap) ?? false
-  }
+  }, [deferredScene, showZaps, visibleNodeSet])
 
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {
     sigmaHostRef.current?.setPhysicsSuspended(!physicsEnabled)
   }, [physicsEnabled])
 
-  const shouldEnableLiveZapFeed = !isFixtureMode && domainState.activeLayer !== 'connections'
+  const shouldEnableLiveZapFeed =
+    showZaps && !isFixtureMode && domainState.activeLayer !== 'connections'
+  const handleLiveZap = useCallback((zap: ParsedZap) => {
+    handleZap(zap)
+  }, [handleZap])
   useLiveZapFeed({
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
-    onZap: (zap) => { handleZap(zap) },
+    onZap: handleLiveZap,
   })
 
   const isDev = process.env.NODE_ENV === 'development'
-  const findSimulationPair = (): { from: string; to: string } | null => {
+  const findSimulationPair = useCallback((): { from: string; to: string } | null => {
     for (const edge of deferredScene.visibleEdges) {
       if (edge.hidden) continue
       if (!visibleNodeSet.has(edge.source)) continue
@@ -874,8 +885,11 @@ export default function GraphAppV2() {
       return { from: edge.source, to: edge.target }
     }
     return null
-  }
-  const simulationPair = isDev ? findSimulationPair() : null
+  }, [deferredScene.visibleEdges, visibleNodeSet])
+  const simulationPair = useMemo(
+    () => (isDev ? findSimulationPair() : null),
+    [findSimulationPair, isDev],
+  )
 
   const stableAvatarRuntimeOptions = useMemo(() => avatarRuntimeOptions, [avatarRuntimeOptions])
   const handleAvatarPerfSnapshot = useCallback(
@@ -883,7 +897,7 @@ export default function GraphAppV2() {
     [],
   )
 
-  const handleSimulateZap = () => {
+  const handleSimulateZap = useCallback(() => {
     const pair = findSimulationPair()
     if (!pair) { setZapFeedback('Sin pares visibles conectados para simular.'); return }
     const flipped = Math.random() < 0.5
@@ -897,13 +911,13 @@ export default function GraphAppV2() {
         ? `Zap simulado: ${sats} sats ${fromPubkey.slice(0, 8)}… → ${toPubkey.slice(0, 8)}…`
         : 'No se pudo reproducir el zap simulado.',
     )
-  }
+  }, [findSimulationPair, handleZap])
 
-  const updatePhysicsTuning = <K extends keyof ForceAtlasPhysicsTuning>(
+  const updatePhysicsTuning = useCallback(function updatePhysicsTuning<K extends keyof ForceAtlasPhysicsTuning>(
     key: K, value: ForceAtlasPhysicsTuning[K],
-  ) => { setPhysicsTuning((current) => ({ ...current, [key]: value })) }
+  ) { setPhysicsTuning((current) => ({ ...current, [key]: value })) }, [])
 
-  const handleApplyRelays = async (relayUrls: string[]) => {
+  const handleApplyRelays = useCallback(async (relayUrls: string[]) => {
     if (isFixtureMode) {
       updateFixtureState((current) => ({ ...current, relayState: { ...current.relayState, urls: relayUrls } }))
       setActionFeedback(`Fixture actualizado con ${relayUrls.length} relays.`)
@@ -912,9 +926,9 @@ export default function GraphAppV2() {
     const result = await bridge.setRelays(relayUrls)
     setActionFeedback(result.message)
     return result
-  }
+  }, [bridge, isFixtureMode, updateFixtureState])
 
-  const handleRevertRelays = async () => {
+  const handleRevertRelays = useCallback(async () => {
     if (isFixtureMode) {
       updateFixtureState((current) => ({ ...current, relayState: { ...current.relayState, urls: ['wss://fixture.local'] } }))
       setActionFeedback('Fixture de relays revertido.')
@@ -922,13 +936,13 @@ export default function GraphAppV2() {
     }
     const result = await bridge.revertRelays()
     setActionFeedback(result?.message ?? 'No había override activo para revertir.')
-  }
+  }, [bridge, isFixtureMode, updateFixtureState])
 
-  const openSettingsTab = (tab: SigmaSettingsTab) => {
+  const openSettingsTab = useCallback((tab: SigmaSettingsTab) => {
     setActiveSettingsTab(tab)
     setIsRootSheetOpen(false)
     setIsSettingsOpen(true)
-  }
+  }, [])
 
   const loadRootFromPointer = useCallback(
     ({
@@ -1004,15 +1018,15 @@ export default function GraphAppV2() {
     return 'all'
   }, [domainState.activeLayer])
 
-  const filterPills: FilterPill[] = [
+  const filterPills: FilterPill[] = useMemo(() => [
     { id: 'all',       label: 'Todos',            count: deferredScene.diagnostics.nodeCount, swatch: 'oklch(55% 0.02 230)' },
     { id: 'following', label: 'Sigo',             count: null, swatch: 'oklch(65% 0.10 220)' },
     { id: 'followers', label: 'Me siguen',        count: null, swatch: 'oklch(65% 0.08 300)' },
     { id: 'mutuals',   label: 'Mutuos',           count: null, swatch: 'oklch(72% 0.06 220)' },
     { id: 'oneway',    label: 'Sin reciprocidad', count: null, swatch: 'oklch(60% 0.06 80)' },
-  ]
+  ], [deferredScene.diagnostics.nodeCount])
 
-  const handleFilterSelect = (id: FilterPill['id']) => {
+  const handleFilterSelect = useCallback((id: FilterPill['id']) => {
     if (id === 'all')       { toggleLayer('graph'); return }
     if (id === 'following') { toggleLayer('following'); return }
     if (id === 'followers') { toggleLayer('followers'); return }
@@ -1022,10 +1036,10 @@ export default function GraphAppV2() {
       if (cur === 'following-non-followers' || cur === 'nonreciprocal-followers') return
       toggleLayer('following-non-followers')
     }
-  }
+  }, [domainState.activeLayer, toggleLayer])
 
   // HUD stats
-  const hudStats: HudStat[] = [
+  const hudStats: HudStat[] = useMemo(() => [
     { k: 'Nodos',   v: String(deferredScene.diagnostics.nodeCount) },
     { k: 'Aristas', v: String(deferredScene.diagnostics.forceEdgeCount) },
     { k: 'Visibles', v: String(deferredScene.diagnostics.visibleEdgeCount) },
@@ -1044,72 +1058,114 @@ export default function GraphAppV2() {
       v: avatarPerfSnapshot ? `${avatarPerfSnapshot.emaFrameMs.toFixed(1)}ms` : '—',
       tone: avatarPerfSnapshot && avatarPerfSnapshot.emaFrameMs > 20 ? 'warn' : 'default',
     },
-  ]
+  ], [
+    avatarPerfSnapshot,
+    deferredScene.diagnostics.forceEdgeCount,
+    deferredScene.diagnostics.nodeCount,
+    deferredScene.diagnostics.relayCount,
+    deferredScene.diagnostics.visibleEdgeCount,
+    domainState.relayState.isGraphStale,
+    physicsEnabled,
+  ])
 
   // Rail buttons — every entry is a DIRECT action or toggle.
   // Settings panel keeps the detailed controls; rail gives quick toggles
   // without duplicating what the panel does.
-  const railButtons: RailButton[] = [
+  const handleOpenRootSheet = useCallback(() => {
+    setIsRootSheetOpen(true)
+  }, [])
+
+  const handleToggleSettings = useCallback(() => {
+    if (isSettingsOpen) {
+      setIsSettingsOpen(false)
+      return
+    }
+    openSettingsTab(activeSettingsTab)
+  }, [activeSettingsTab, isSettingsOpen, openSettingsTab])
+
+  const handleTogglePhysics = useCallback(() => {
+    setPhysicsEnabled((current) => {
+      const next = !current
+      setActionFeedback(next ? 'Fisica reanudada.' : 'Fisica en pausa.')
+      return next
+    })
+  }, [])
+
+  const handleToggleZaps = useCallback(() => {
+    setShowZaps((current) => {
+      const next = !current
+      setActionFeedback(next ? 'Zaps visibles.' : 'Zaps ocultos.')
+      return next
+    })
+  }, [])
+
+  const handleRecenter = useCallback(() => {
+    sigmaHostRef.current?.recenterCamera()
+  }, [])
+
+  const handleStaleRelays = useCallback(() => {
+    if (!domainState.relayState.isGraphStale) {
+      setActionFeedback('Relays al dia: no hay override para revertir.')
+      return
+    }
+    void handleRevertRelays()
+  }, [domainState.relayState.isGraphStale, handleRevertRelays])
+
+  const railButtons: RailButton[] = useMemo(() => [
     {
       id: 'settings',
       tip: isSettingsOpen ? 'Cerrar ajustes' : 'Ajustes',
       icon: <GearIcon />,
       active: isSettingsOpen,
-      onClick: () => {
-        if (isSettingsOpen) setIsSettingsOpen(false)
-        else openSettingsTab(activeSettingsTab)
-      },
+      onClick: handleToggleSettings,
     },
     {
       id: 'physics',
       tip: physicsEnabled ? 'Pausar física' : 'Reanudar física',
       icon: <AtomIcon />,
       active: physicsEnabled,
-      onClick: () => {
-        setPhysicsEnabled((v) => !v)
-        setActionFeedback(physicsEnabled ? 'Física en pausa.' : 'Física reanudada.')
-      },
+      onClick: handleTogglePhysics,
     },
     {
       id: 'zaps',
       tip: showZaps ? 'Ocultar zaps' : 'Mostrar zaps',
       icon: <ZapIcon />,
       active: showZaps,
-      onClick: () => {
-        setShowZaps((v) => !v)
-        setActionFeedback(showZaps ? 'Zaps ocultos.' : 'Zaps visibles.')
-      },
+      onClick: handleToggleZaps,
       dividerAfter: true,
     },
     {
       id: 'recenter',
       tip: 'Recentrar vista',
       icon: <TargetIcon />,
-      onClick: () => {
-        sigmaHostRef.current?.recenterCamera()
-      },
+      onClick: handleRecenter,
     },
     {
       id: 'stale',
       tip: domainState.relayState.isGraphStale ? 'Revertir relays' : 'Relays al día',
       icon: <ClockIcon />,
       active: domainState.relayState.isGraphStale,
-      onClick: () => {
-        if (!domainState.relayState.isGraphStale) {
-          setActionFeedback('Relays al día — no hay override para revertir.')
-          return
-        }
-        void handleRevertRelays()
-      },
+      onClick: handleStaleRelays,
       dividerAfter: true,
     },
     {
       id: 'search',
       tip: 'Cargar identidad (/)',
       icon: <SearchIcon />,
-      onClick: () => setIsRootSheetOpen(true),
+      onClick: handleOpenRootSheet,
     },
-  ]
+  ], [
+    domainState.relayState.isGraphStale,
+    handleOpenRootSheet,
+    handleRecenter,
+    handleStaleRelays,
+    handleTogglePhysics,
+    handleToggleSettings,
+    handleToggleZaps,
+    isSettingsOpen,
+    physicsEnabled,
+    showZaps,
+  ])
 
   // Toasts — combine feedback sources
   const toastEntries: SigmaToast[] = useMemo(() => {
@@ -1124,6 +1180,40 @@ export default function GraphAppV2() {
   const viewportRatio = isFixtureMode
     ? lastViewportRatio
     : controller.getLastViewport()?.ratio ?? null
+
+  const getMinimapSnapshot = useCallback(
+    () => sigmaHostRef.current?.getMinimapSnapshot() ?? null,
+    [],
+  )
+  const getMinimapViewport = useCallback(
+    () => sigmaHostRef.current?.getMinimapViewport() ?? null,
+    [],
+  )
+  const handleMinimapFit = useCallback(() => {
+    sigmaHostRef.current?.recenterCamera()
+  }, [])
+  const handleMinimapZoomIn = useCallback(() => {
+    sigmaHostRef.current?.zoomIn()
+  }, [])
+  const handleMinimapZoomOut = useCallback(() => {
+    sigmaHostRef.current?.zoomOut()
+  }, [])
+  const handleMinimapPan = useCallback(
+    (x: number, y: number, opts?: { animate?: boolean }) => {
+      sigmaHostRef.current?.panCameraToGraph(x, y, opts)
+    },
+    [],
+  )
+  const subscribeToMinimapTicks = useCallback(
+    (listener: () => void) =>
+      sigmaHostRef.current?.subscribeToRenderTicks(listener) ?? (() => {}),
+    [],
+  )
+  const subscribeToMinimapCameraTicks = useCallback(
+    (listener: () => void) =>
+      sigmaHostRef.current?.subscribeToCameraTicks(listener) ?? (() => {}),
+    [],
+  )
 
   // ── Settings panel content ─────────────────────────────────────────────────
 
@@ -1412,7 +1502,7 @@ export default function GraphAppV2() {
 
       {/* Top bar: root chip (left) + brand (right) */}
       <SigmaTopBar
-        onSwitchRoot={() => setIsRootSheetOpen(true)}
+        onSwitchRoot={handleOpenRootSheet}
         rootDisplayName={hasRoot ? (rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null) : null}
         rootNpub={rootNpubEncoded}
         rootPictureUrl={rootPictureUrl}
@@ -1429,17 +1519,14 @@ export default function GraphAppV2() {
           <SigmaSideRail buttons={railButtons} />
           <SigmaHud stats={hudStats} />
           <SigmaMinimap
-            getSnapshot={() => sigmaHostRef.current?.getMinimapSnapshot() ?? null}
-            onFit={() => sigmaHostRef.current?.recenterCamera()}
-            onZoomIn={() => sigmaHostRef.current?.zoomIn()}
-            onZoomOut={() => sigmaHostRef.current?.zoomOut()}
-            panCameraToGraph={(x, y, opts) =>
-              sigmaHostRef.current?.panCameraToGraph(x, y, opts)
-            }
-            subscribeToRenderTicks={(listener) =>
-              sigmaHostRef.current?.subscribeToRenderTicks(listener) ??
-              (() => {})
-            }
+            getSnapshot={getMinimapSnapshot}
+            getViewport={getMinimapViewport}
+            onFit={handleMinimapFit}
+            onZoomIn={handleMinimapZoomIn}
+            onZoomOut={handleMinimapZoomOut}
+            panCameraToGraph={handleMinimapPan}
+            subscribeToCameraTicks={subscribeToMinimapCameraTicks}
+            subscribeToRenderTicks={subscribeToMinimapTicks}
             zoomRatio={viewportRatio}
           />
         </>
@@ -1488,7 +1575,7 @@ export default function GraphAppV2() {
           onClose={() => setIsRootSheetOpen(false)}
           savedRootsSlot={
             shouldShowSavedRootsSection ? (
-              <SavedRootsPanel
+              <SigmaSavedRootsPanel
                 entries={savedRoots}
                 isHydrated={savedRootsHydrated}
                 onDelete={handleDeleteSavedRoot}

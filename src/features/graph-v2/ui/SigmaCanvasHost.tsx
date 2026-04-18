@@ -29,7 +29,10 @@ interface SigmaCanvasHostProps {
 export interface MinimapSnapshot {
   nodes: Array<{ x: number; y: number; color: string; isRoot: boolean; isSelected: boolean }>
   bounds: { minX: number; minY: number; maxX: number; maxY: number }
+  viewport: { minX: number; minY: number; maxX: number; maxY: number } | null
 }
+
+export type MinimapViewport = MinimapSnapshot['viewport']
 
 export interface SigmaCanvasHostHandle {
   playZap: (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => boolean
@@ -38,7 +41,9 @@ export interface SigmaCanvasHostHandle {
   zoomOut: () => void
   setPhysicsSuspended: (suspended: boolean) => void
   getMinimapSnapshot: () => MinimapSnapshot | null
+  getMinimapViewport: () => MinimapViewport
   panCameraToGraph: (graphX: number, graphY: number, options?: { animate?: boolean }) => void
+  subscribeToCameraTicks: (listener: () => void) => () => void
   subscribeToRenderTicks: (listener: () => void) => () => void
 }
 
@@ -106,7 +111,10 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       zoomOut: () => adapterRef.current?.zoomOut(),
       setPhysicsSuspended: (suspended) => adapterRef.current?.setPhysicsSuspended(suspended),
       getMinimapSnapshot: () => adapterRef.current?.getMinimapSnapshot() ?? null,
+      getMinimapViewport: () => adapterRef.current?.getMinimapViewport() ?? null,
       panCameraToGraph: (x, y, opts) => adapterRef.current?.panCameraToGraph(x, y, opts),
+      subscribeToCameraTicks: (listener) =>
+        adapterRef.current?.subscribeToCameraTicks(listener) ?? (() => {}),
       subscribeToRenderTicks: (listener) =>
         adapterRef.current?.subscribeToRenderTicks(listener) ?? (() => {}),
     }),

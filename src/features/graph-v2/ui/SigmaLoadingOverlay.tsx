@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 interface Props {
   message: string | null
   nodeCount: number
@@ -10,7 +12,10 @@ interface Props {
  * Sits between the canvas and the chrome so the user knows data
  * is arriving even before nodes appear.
  */
-export function SigmaLoadingOverlay({ message, nodeCount }: Props) {
+export const SigmaLoadingOverlay = memo(function SigmaLoadingOverlay({
+  message,
+  nodeCount,
+}: Props) {
   const label = message ?? 'Cargando…'
   return (
     <div className="sg-loading-overlay" aria-live="polite">
@@ -25,4 +30,4 @@ export function SigmaLoadingOverlay({ message, nodeCount }: Props) {
       </div>
     </div>
   )
-}
+})

@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { ReactNode } from 'react'
 
 interface Props {
@@ -12,7 +13,7 @@ interface Props {
   copy?: string
 }
 
-export function SigmaRootLoader({
+export const SigmaRootLoader = memo(function SigmaRootLoader({
   canClose,
   onClose,
   savedRootsSlot,
@@ -55,4 +56,4 @@ export function SigmaRootLoader({
       </div>
     </div>
   )
-}
+})

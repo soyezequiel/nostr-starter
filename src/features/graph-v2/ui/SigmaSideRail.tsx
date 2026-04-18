@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { ReactNode } from 'react'
 
 export interface RailButton {
@@ -15,7 +16,7 @@ interface Props {
   buttons: RailButton[]
 }
 
-export function SigmaSideRail({ buttons }: Props) {
+export const SigmaSideRail = memo(function SigmaSideRail({ buttons }: Props) {
   return (
     <div className="sg-rail">
       {buttons.map((btn) => (
@@ -33,4 +34,4 @@ export function SigmaSideRail({ buttons }: Props) {
       ))}
     </div>
   )
-}
+})

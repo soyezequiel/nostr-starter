@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 export interface FilterPill {
   id: 'all' | 'following' | 'followers' | 'mutuals' | 'oneway'
   label: string
@@ -13,7 +15,11 @@ interface Props {
   onSelect: (id: FilterPill['id']) => void
 }
 
-export function SigmaFilterBar({ activeId, pills, onSelect }: Props) {
+export const SigmaFilterBar = memo(function SigmaFilterBar({
+  activeId,
+  pills,
+  onSelect,
+}: Props) {
   return (
     <div className="sg-filter-bar">
       {pills.map((pill) => (
@@ -43,4 +49,4 @@ export function SigmaFilterBar({ activeId, pills, onSelect }: Props) {
       ))}
     </div>
   )
-}
+})

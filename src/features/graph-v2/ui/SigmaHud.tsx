@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 export interface HudStat {
   k: string
   v: string
@@ -10,7 +12,7 @@ interface Props {
   stats: HudStat[]
 }
 
-export function SigmaHud({ stats }: Props) {
+export const SigmaHud = memo(function SigmaHud({ stats }: Props) {
   return (
     <div className="sg-hud">
       <div className="sg-hud-card">
@@ -33,4 +35,4 @@ export function SigmaHud({ stats }: Props) {
       </div>
     </div>
   )
-}
+})

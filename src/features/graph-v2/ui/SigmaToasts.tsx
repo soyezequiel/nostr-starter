@@ -1,5 +1,7 @@
 'use client'
 
+import { memo } from 'react'
+
 export interface SigmaToast {
   id: string
   msg: string
@@ -10,7 +12,7 @@ interface Props {
   toasts: SigmaToast[]
 }
 
-export function SigmaToasts({ toasts }: Props) {
+export const SigmaToasts = memo(function SigmaToasts({ toasts }: Props) {
   if (toasts.length === 0) return null
 
   return (
@@ -25,4 +27,4 @@ export function SigmaToasts({ toasts }: Props) {
       ))}
     </div>
   )
-}
+})

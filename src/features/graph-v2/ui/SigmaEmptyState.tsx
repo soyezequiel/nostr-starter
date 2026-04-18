@@ -1,10 +1,12 @@
 'use client'
 
+import { memo } from 'react'
+
 interface Props {
   onLoadIdentity: () => void
 }
 
-export function SigmaEmptyState({ onLoadIdentity }: Props) {
+export const SigmaEmptyState = memo(function SigmaEmptyState({ onLoadIdentity }: Props) {
   return (
     <div className="sg-empty">
       <div className="sg-empty__ring">
@@ -27,4 +29,4 @@ export function SigmaEmptyState({ onLoadIdentity }: Props) {
       </span>
     </div>
   )
-}
+})

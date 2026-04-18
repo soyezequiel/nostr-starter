@@ -1,8 +1,13 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef } from 'react'
 
-import type { MinimapSnapshot } from '@/features/graph-v2/ui/SigmaCanvasHost'
+import type {
+  MinimapSnapshot,
+  MinimapViewport,
+} from '@/features/graph-v2/ui/SigmaCanvasHost'
+
+const MINIMAP_REDRAW_INTERVAL_MS = 800
 
 interface Props {
   zoomRatio: number | null
@@ -10,27 +15,31 @@ interface Props {
   onZoomOut: () => void
   onFit: () => void
   getSnapshot: () => MinimapSnapshot | null
-  // Subscribe returns an unsubscribe fn. Called once on mount; the minimap
-  // redraws only when the underlying renderer ticks (camera moved or a
-  // frame was drawn) instead of running its own RAF.
+  getViewport: () => MinimapViewport
+  // Subscribe returns an unsubscribe fn. Called once on mount; redraws are
+  // throttled hard because this is an overview, not a second renderer.
   subscribeToRenderTicks: (listener: () => void) => () => void
+  subscribeToCameraTicks: (listener: () => void) => () => void
   // Pan the main camera so a graph-space point lands at the viewport center.
   // Called during pointer drag on the minimap to navigate the graph.
   panCameraToGraph: (graphX: number, graphY: number, options?: { animate?: boolean }) => void
 }
 
-// Redraws are coalesced to at most once per animation frame to keep the
-// minimap cheap even when the renderer ticks at 60fps.
-export function SigmaMinimap({
+// The minimap deliberately trades fidelity for bounded cost: one low-DPR
+// overview draw every few renderer ticks is enough for navigation.
+export const SigmaMinimap = memo(function SigmaMinimap({
   zoomRatio,
   onZoomIn,
   onZoomOut,
   onFit,
   getSnapshot,
+  getViewport,
   subscribeToRenderTicks,
+  subscribeToCameraTicks,
   panCameraToGraph,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   // Persist the last-computed layout so pointer events can reverse-project
   // without recomputing bounds each time.
   const projectionRef = useRef<{
@@ -41,20 +50,55 @@ export function SigmaMinimap({
   } | null>(null)
   const zoomLabel = zoomRatio != null ? zoomRatio.toFixed(2) + '×' : '—'
 
+  const updateViewportOverlay = useCallback(() => {
+    const overlay = viewportRef.current
+    const projection = projectionRef.current
+    if (!overlay || !projection) return
+    const viewport = getViewport()
+    if (!viewport) {
+      overlay.hidden = true
+      return
+    }
+    const { bounds, scale, offsetX, offsetY } = projection
+    const mapMinX = offsetX
+    const mapMinY = offsetY
+    const mapMaxX = offsetX + (bounds.maxX - bounds.minX) * scale
+    const mapMaxY = offsetY + (bounds.maxY - bounds.minY) * scale
+    const viewportMinX = offsetX + (viewport.minX - bounds.minX) * scale
+    const viewportMinY = offsetY + (viewport.minY - bounds.minY) * scale
+    const viewportMaxX = offsetX + (viewport.maxX - bounds.minX) * scale
+    const viewportMaxY = offsetY + (viewport.maxY - bounds.minY) * scale
+    const x = Math.max(mapMinX, Math.min(mapMaxX, viewportMinX))
+    const y = Math.max(mapMinY, Math.min(mapMaxY, viewportMinY))
+    const w = Math.max(4, Math.min(mapMaxX, viewportMaxX) - x)
+    const h = Math.max(4, Math.min(mapMaxY, viewportMaxY) - y)
+    overlay.hidden = false
+    overlay.style.transform = `translate3d(${x}px, ${y}px, 0)`
+    overlay.style.width = `${w}px`
+    overlay.style.height = `${h}px`
+  }, [getViewport])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     let rafScheduled = false
     let cancelled = false
+    let lastDrawAt = 0
+    let timeoutId: number | null = null
 
     const draw = () => {
       rafScheduled = false
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId)
+        timeoutId = null
+      }
       if (cancelled) return
+      lastDrawAt = performance.now()
       const ctx = canvas.getContext('2d')
       if (!ctx) return
       const snapshot = getSnapshot()
-      const dpr = window.devicePixelRatio || 1
+      const dpr = 1
       const rect = canvas.getBoundingClientRect()
       const targetW = Math.max(1, Math.round(rect.width * dpr))
       const targetH = Math.max(1, Math.round(rect.height * dpr))
@@ -67,6 +111,9 @@ export function SigmaMinimap({
 
       if (!snapshot || snapshot.nodes.length === 0) {
         projectionRef.current = null
+        if (viewportRef.current) {
+          viewportRef.current.hidden = true
+        }
         ctx.fillStyle = 'rgba(149, 200, 255, 0.5)'
         ctx.beginPath()
         ctx.arc(rect.width / 2, rect.height / 2, 2.5, 0, Math.PI * 2)
@@ -87,25 +134,33 @@ export function SigmaMinimap({
       const offsetY = padding + (availH - renderedH) / 2
       projectionRef.current = { bounds, scale, offsetX, offsetY }
 
+      ctx.fillStyle = 'rgba(149, 200, 255, 0.58)'
       for (const n of nodes) {
         const px = offsetX + (n.x - bounds.minX) * scale
         const py = offsetY + (n.y - bounds.minY) * scale
-        const radius = n.isRoot ? 2.6 : n.isSelected ? 2.2 : 1.4
-        ctx.fillStyle = n.isSelected
-          ? 'oklch(82% 0.17 75)'
-          : n.isRoot
-            ? 'oklch(80% 0.14 220)'
-            : n.color
-        ctx.globalAlpha = n.isRoot || n.isSelected ? 1 : 0.7
+        if (!n.isRoot && !n.isSelected) {
+          ctx.fillRect(px, py, 1.5, 1.5)
+          continue
+        }
+        ctx.fillStyle = n.isSelected ? 'oklch(82% 0.17 75)' : 'oklch(80% 0.14 220)'
         ctx.beginPath()
-        ctx.arc(px, py, radius, 0, Math.PI * 2)
+        ctx.arc(px, py, n.isRoot ? 2.6 : 2.2, 0, Math.PI * 2)
         ctx.fill()
+        ctx.fillStyle = 'rgba(149, 200, 255, 0.58)'
       }
-      ctx.globalAlpha = 1
+      updateViewportOverlay()
     }
 
     const schedule = () => {
-      if (rafScheduled || cancelled) return
+      if (rafScheduled || cancelled || timeoutId !== null) return
+      const elapsed = performance.now() - lastDrawAt
+      if (elapsed < MINIMAP_REDRAW_INTERVAL_MS) {
+        timeoutId = window.setTimeout(() => {
+          timeoutId = null
+          schedule()
+        }, MINIMAP_REDRAW_INTERVAL_MS - elapsed)
+        return
+      }
       rafScheduled = true
       requestAnimationFrame(draw)
     }
@@ -121,10 +176,32 @@ export function SigmaMinimap({
 
     return () => {
       cancelled = true
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId)
+      }
       unsubscribe()
       window.removeEventListener('resize', onResize)
     }
-  }, [getSnapshot, subscribeToRenderTicks])
+  }, [getSnapshot, subscribeToRenderTicks, updateViewportOverlay])
+
+  useEffect(() => {
+    let rafId: number | null = null
+    const schedule = () => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        updateViewportOverlay()
+      })
+    }
+    schedule()
+    const unsubscribe = subscribeToCameraTicks(schedule)
+    return () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+      }
+      unsubscribe()
+    }
+  }, [subscribeToCameraTicks, updateViewportOverlay])
 
   // Pointer navigation: click/drag on the minimap pans the main camera.
   useEffect(() => {
@@ -198,6 +275,7 @@ export function SigmaMinimap({
       </div>
       <div className="sg-minimap__canvas">
         <canvas className="sg-minimap__canvas-el" ref={canvasRef} />
+        <div className="sg-minimap__viewport" hidden ref={viewportRef} />
       </div>
       <div className="sg-minimap__foot">
         <button onClick={onZoomIn} title="Acercar" type="button">＋</button>
@@ -208,4 +286,4 @@ export function SigmaMinimap({
       </div>
     </div>
   )
-}
+})
