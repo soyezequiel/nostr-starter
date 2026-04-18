@@ -155,6 +155,19 @@ const projectionCache = new WeakMap<
   Map<string, LayerProjection>
 >()
 
+const expandedNodePubkeysSignatureCache = new WeakMap<ReadonlySet<string>, string>()
+
+const getExpandedNodePubkeysSignature = (pubkeys: ReadonlySet<string>) => {
+  const cached = expandedNodePubkeysSignatureCache.get(pubkeys)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  const signature = Array.from(pubkeys).sort().join(',')
+  expandedNodePubkeysSignatureCache.set(pubkeys, signature)
+  return signature
+}
+
 const createProjectionCacheKey = (
   state: CanonicalGraphState,
   layer: GraphV2Layer,
@@ -165,7 +178,7 @@ const createProjectionCacheKey = (
     isGraphV2Layer(state.connectionsSourceLayer)
       ? state.connectionsSourceLayer
       : 'graph',
-    Array.from(state.discoveryState.expandedNodePubkeys).sort().join(','),
+    getExpandedNodePubkeysSignature(state.discoveryState.expandedNodePubkeys),
   ].join('|')
 
 let _projCalls = 0

@@ -166,9 +166,27 @@ const mapSceneEdge = (
 }
 
 const snapshotCache = new WeakMap<CanonicalGraphState, GraphSceneSnapshot>()
+const snapshotSignatureCache = new Map<string, GraphSceneSnapshot>()
+const MAX_SNAPSHOT_SIGNATURE_CACHE_ENTRIES = 24
 
 let _snapCalls = 0
 let _snapHits = 0
+
+const rememberSnapshotBySignature = (
+  signature: string,
+  snapshot: GraphSceneSnapshot,
+) => {
+  snapshotSignatureCache.set(signature, snapshot)
+
+  if (snapshotSignatureCache.size <= MAX_SNAPSHOT_SIGNATURE_CACHE_ENTRIES) {
+    return
+  }
+
+  const oldestSignature = snapshotSignatureCache.keys().next().value
+  if (oldestSignature !== undefined) {
+    snapshotSignatureCache.delete(oldestSignature)
+  }
+}
 
 export const buildGraphSceneSnapshot = (
   state: CanonicalGraphState,
@@ -189,8 +207,18 @@ export const buildGraphSceneSnapshot = (
     return cached
   }
 
+  const signatureCached = snapshotSignatureCache.get(state.sceneSignature)
+  if (signatureCached) {
+    if (isPerfEnabled) {
+      _snapHits++
+    }
+    snapshotCache.set(state, signatureCached)
+    return signatureCached
+  }
+
   const snapshot = computeGraphSceneSnapshot(state)
   snapshotCache.set(state, snapshot)
+  rememberSnapshotBySignature(state.sceneSignature, snapshot)
   return snapshot
 }
 
@@ -213,14 +241,7 @@ const computeGraphSceneSnapshot = (
   const hasVisualFocus = visualFocusPubkey !== null
   const forceEdges =
     state.activeLayer === 'graph'
-      ? Object.values(state.edgesById)
-          .filter(
-            (edge) =>
-              edge.origin !== 'connections' &&
-              visibleNodePubkeys.has(edge.source) &&
-              visibleNodePubkeys.has(edge.target),
-          )
-          .sort((left, right) => left.id.localeCompare(right.id))
+      ? layerProjection.visibleEdges
       : sortAndDedupeSceneEdges([
           ...layerProjection.visibleEdges,
           ...(hasVisualFocus

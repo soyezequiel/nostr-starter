@@ -72,18 +72,25 @@ const createSceneNodeVisualSignature = (nodes: AppStore['nodes']) =>
 const createSceneSignature = (
   state: AppStore,
   activeLayer: CanonicalGraphState['activeLayer'],
+  nodeVisualSignature: string,
+  pinnedNodePubkeysSignature: string,
+  expandedNodePubkeysSignature: string,
 ) =>
   [
     state.rootNodePubkey ?? 'no-root',
     activeLayer,
     state.connectionsSourceLayer,
     state.selectedNodePubkey ?? 'no-selection',
-    createSceneNodeVisualSignature(state.nodes),
+    nodeVisualSignature,
+    expandedNodePubkeysSignature,
     Object.keys(state.nodes).length,
-    state.links.length,
-    state.inboundLinks.length,
-    state.connectionsLinks.length,
-    Array.from(state.pinnedNodePubkeys).sort().join(','),
+    state.links.length + state.inboundLinks.length + state.connectionsLinks.length,
+    state.graphRevision,
+    state.inboundGraphRevision,
+    state.connectionsLinksRevision,
+    state.relayUrls.join(','),
+    state.isGraphStale ? 'stale' : 'fresh',
+    pinnedNodePubkeysSignature,
   ].join('|')
 
 export class LegacyStoreSnapshotAdapter {
@@ -129,6 +136,22 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousCanonicalPinnedNodePubkeys: ReadonlySet<string> = new Set<string>()
 
+  private previousSceneSignatureNodes: AppStore['nodes'] | null = null
+
+  private previousSceneNodeVisualSignature = ''
+
+  private previousSceneSignaturePinnedNodePubkeys:
+    | AppStore['pinnedNodePubkeys']
+    | null = null
+
+  private previousScenePinnedNodePubkeysSignature = ''
+
+  private previousSceneSignatureExpandedNodePubkeys:
+    | AppStore['expandedNodePubkeys']
+    | null = null
+
+  private previousSceneExpandedNodePubkeysSignature = ''
+
   private previousSnapshot: CanonicalGraphState | null = null
 
   public adapt(state: AppStore): CanonicalGraphState {
@@ -140,7 +163,13 @@ export class LegacyStoreSnapshotAdapter {
     const activeLayer = isGraphV2Layer(state.activeLayer)
       ? state.activeLayer
       : DEFAULT_GRAPH_V2_LAYER
-    const sceneSignature = createSceneSignature(state, activeLayer)
+    const sceneSignature = createSceneSignature(
+      state,
+      activeLayer,
+      this.getSceneNodeVisualSignature(state.nodes),
+      this.getScenePinnedNodePubkeysSignature(state.pinnedNodePubkeys),
+      this.getSceneExpandedNodePubkeysSignature(state.expandedNodePubkeys),
+    )
 
     if (
       this.previousSnapshot &&
@@ -304,6 +333,49 @@ export class LegacyStoreSnapshotAdapter {
     this.previousCanonicalPinnedNodePubkeys = new Set(state.pinnedNodePubkeys)
 
     return this.previousCanonicalPinnedNodePubkeys
+  }
+
+  private getSceneNodeVisualSignature(nodes: AppStore['nodes']) {
+    if (this.previousSceneSignatureNodes === nodes) {
+      return this.previousSceneNodeVisualSignature
+    }
+
+    this.previousSceneSignatureNodes = nodes
+    this.previousSceneNodeVisualSignature = createSceneNodeVisualSignature(nodes)
+
+    return this.previousSceneNodeVisualSignature
+  }
+
+  private getScenePinnedNodePubkeysSignature(
+    pinnedNodePubkeys: AppStore['pinnedNodePubkeys'],
+  ) {
+    if (this.previousSceneSignaturePinnedNodePubkeys === pinnedNodePubkeys) {
+      return this.previousScenePinnedNodePubkeysSignature
+    }
+
+    this.previousSceneSignaturePinnedNodePubkeys = pinnedNodePubkeys
+    this.previousScenePinnedNodePubkeysSignature = Array.from(pinnedNodePubkeys)
+      .sort()
+      .join(',')
+
+    return this.previousScenePinnedNodePubkeysSignature
+  }
+
+  private getSceneExpandedNodePubkeysSignature(
+    expandedNodePubkeys: AppStore['expandedNodePubkeys'],
+  ) {
+    if (this.previousSceneSignatureExpandedNodePubkeys === expandedNodePubkeys) {
+      return this.previousSceneExpandedNodePubkeysSignature
+    }
+
+    this.previousSceneSignatureExpandedNodePubkeys = expandedNodePubkeys
+    this.previousSceneExpandedNodePubkeysSignature = Array.from(
+      expandedNodePubkeys,
+    )
+      .sort()
+      .join(',')
+
+    return this.previousSceneExpandedNodePubkeysSignature
   }
 }
 

@@ -38,7 +38,11 @@ import {
 } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
 import { getProjectionCacheStats } from '@/features/graph-v2/projections/buildLayerProjection'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
-import type { GraphInteractionCallbacks, GraphViewportState } from '@/features/graph-v2/renderer/contracts'
+import type {
+  GraphInteractionCallbacks,
+  GraphSceneSnapshot,
+  GraphViewportState,
+} from '@/features/graph-v2/renderer/contracts'
 import {
   DEFAULT_AVATAR_RUNTIME_OPTIONS,
   type AvatarRuntimeOptions,
@@ -128,6 +132,27 @@ const resolveConnectionFilterLabel = (
   return 'Filtro: vecindario visible'
 }
 
+const hasVisibleEdgeBetween = (
+  scene: GraphSceneSnapshot,
+  source: string,
+  target: string,
+) => {
+  for (const edge of scene.visibleEdges) {
+    if (edge.hidden) {
+      continue
+    }
+
+    if (
+      (edge.source === source && edge.target === target) ||
+      (edge.source === target && edge.target === source)
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
 const SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Render' },
   { id: 'physics', label: 'Fisica' },
@@ -180,8 +205,14 @@ const createClientSceneSignature = (state: CanonicalGraphState) =>
       )
       .sort()
       .join('|'),
+    Array.from(state.discoveryState.expandedNodePubkeys).sort().join(','),
     Object.keys(state.nodesByPubkey).length,
     Object.keys(state.edgesById).length,
+    state.discoveryState.graphRevision,
+    state.discoveryState.inboundGraphRevision,
+    state.discoveryState.connectionsLinksRevision,
+    state.relayState.urls.join(','),
+    state.relayState.isGraphStale ? 'stale' : 'fresh',
     Array.from(state.pinnedNodePubkeys).sort().join(','),
   ].join('|')
 
@@ -985,9 +1016,20 @@ export default function GraphAppV2() {
       const prevParts = prev.split('|')
       const nextParts = sig.split('|')
       const KEYS = [
-        'rootPubkey', 'activeLayer', 'connectionsSourceLayer',
-        'selectedNodePubkey', 'nodeVisuals', 'nodeCount', 'linkCount',
-        'inboundLinkCount', 'connectionsLinkCount', 'pinnedNodePubkeys',
+        'rootPubkey',
+        'activeLayer',
+        'connectionsSourceLayer',
+        'selectedNodePubkey',
+        'nodeVisuals',
+        'expandedNodePubkeys',
+        'nodeCount',
+        'edgeCount',
+        'graphRevision',
+        'inboundGraphRevision',
+        'connectionsLinksRevision',
+        'relayUrls',
+        'relayFreshness',
+        'pinnedNodePubkeys',
       ]
       const changed = KEYS.filter((k, i) => prevParts[i] !== nextParts[i])
       console.info('[graph-v2 perf] sceneSignature changed:', changed.join(', '))
@@ -1290,16 +1332,6 @@ export default function GraphAppV2() {
     () => deferredScene.nodes.map((node) => node.pubkey),
     [deferredScene],
   )
-  const visibleEdgeKeys = useMemo(() => {
-    const set = new Set<string>()
-    for (const edge of deferredScene.visibleEdges) {
-      if (edge.hidden) continue
-      // Store both directions so a zap from A->B matches a visible edge B->A too.
-      set.add(`${edge.source}|${edge.target}`)
-      set.add(`${edge.target}|${edge.source}`)
-    }
-    return set
-  }, [deferredScene])
   const visibleNodeSet = useMemo(
     () => new Set(visiblePubkeys),
     [visiblePubkeys],
@@ -1308,7 +1340,9 @@ export default function GraphAppV2() {
   const handleZap = (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     if (!visibleNodeSet.has(zap.fromPubkey)) return false
     if (!visibleNodeSet.has(zap.toPubkey)) return false
-    if (!visibleEdgeKeys.has(`${zap.fromPubkey}|${zap.toPubkey}`)) return false
+    if (!hasVisibleEdgeBetween(deferredScene, zap.fromPubkey, zap.toPubkey)) {
+      return false
+    }
     return sigmaHostRef.current?.playZap(zap) ?? false
   }
 
