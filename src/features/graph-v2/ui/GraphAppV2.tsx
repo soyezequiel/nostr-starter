@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import {
+  useCallback,
   startTransition,
   useDeferredValue,
   useEffect,
@@ -25,6 +26,11 @@ import {
 import { getProjectionCacheStats } from '@/features/graph-v2/projections/buildLayerProjection'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
 import type { GraphInteractionCallbacks, GraphViewportState } from '@/features/graph-v2/renderer/contracts'
+import {
+  DEFAULT_AVATAR_RUNTIME_OPTIONS,
+  type AvatarRuntimeOptions,
+} from '@/features/graph-v2/renderer/avatar/types'
+import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
 import {
   DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING,
   type DragNeighborhoodInfluenceTuning,
@@ -414,6 +420,260 @@ function DragTuningPanel({
   )
 }
 
+function RenderOptionsPanel({
+  hideAvatarsOnMove,
+  avatarRuntimeOptions,
+  avatarPerfSnapshot,
+  onHideAvatarsOnMoveChange,
+  onAvatarRuntimeOptionsChange,
+}: {
+  hideAvatarsOnMove: boolean
+  avatarRuntimeOptions: AvatarRuntimeOptions
+  avatarPerfSnapshot: PerfBudgetSnapshot | null
+  onHideAvatarsOnMoveChange: (enabled: boolean) => void
+  onAvatarRuntimeOptionsChange: (options: AvatarRuntimeOptions) => void
+}) {
+  const perfStatusLabel = avatarPerfSnapshot
+    ? avatarPerfSnapshot.isDegraded
+      ? `degradado a ${avatarPerfSnapshot.tier}`
+      : `base ${avatarPerfSnapshot.tier}`
+    : 'sin datos'
+  const adaptiveVisualsActive = avatarPerfSnapshot
+    ? avatarPerfSnapshot.isDegraded || avatarPerfSnapshot.budget.maxBucket <= 64
+    : false
+  const effectiveSizeThreshold = avatarPerfSnapshot && adaptiveVisualsActive
+    ? Math.max(
+      avatarRuntimeOptions.sizeThreshold,
+      avatarPerfSnapshot.budget.sizeThreshold,
+    )
+    : avatarRuntimeOptions.sizeThreshold
+  const effectiveZoomThreshold = avatarPerfSnapshot && adaptiveVisualsActive
+    ? Math.min(
+      avatarRuntimeOptions.zoomThreshold,
+      avatarPerfSnapshot.budget.zoomThreshold,
+    )
+    : avatarRuntimeOptions.zoomThreshold
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Render</p>
+          <h2 className="mt-1 text-sm font-semibold text-white">
+            Avatares
+          </h2>
+        </div>
+        <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/60">
+          {hideAvatarsOnMove ? 'fluido' : 'visible'}
+        </span>
+      </div>
+
+      <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+        <span className="text-sm text-white/80">
+          Ocultar durante pan, zoom y drag
+        </span>
+        <input
+          checked={hideAvatarsOnMove}
+          className="h-4 w-4 accent-[#7dd3a7]"
+          onChange={(event) => {
+            onHideAvatarsOnMoveChange(event.target.checked)
+          }}
+          type="checkbox"
+        />
+      </label>
+
+      <div className="mt-4 grid gap-4">
+        <label className="block">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-white/85">Radio minimo</span>
+            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
+              {avatarRuntimeOptions.sizeThreshold.toFixed(0)}px
+            </span>
+          </div>
+          <input
+            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
+            max={32}
+            min={4}
+            onChange={(event) => {
+              onAvatarRuntimeOptionsChange({
+                ...avatarRuntimeOptions,
+                sizeThreshold: Number.parseInt(event.target.value, 10),
+              })
+            }}
+            step={1}
+            type="range"
+            value={avatarRuntimeOptions.sizeThreshold}
+          />
+          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
+            <span>4px</span>
+            <span>32px</span>
+          </div>
+        </label>
+
+        <label className="block">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-white/85">Zoom max</span>
+            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
+              {avatarRuntimeOptions.zoomThreshold.toFixed(2)}x
+            </span>
+          </div>
+          <input
+            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
+            max={4}
+            min={0.6}
+            onChange={(event) => {
+              onAvatarRuntimeOptionsChange({
+                ...avatarRuntimeOptions,
+                zoomThreshold: Number.parseFloat(event.target.value),
+              })
+            }}
+            step={0.05}
+            type="range"
+            value={avatarRuntimeOptions.zoomThreshold}
+          />
+          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
+            <span>0.60x</span>
+            <span>4.00x</span>
+          </div>
+        </label>
+
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+          <span className="text-sm text-white/80">
+            Monograma si se mueve rapido
+          </span>
+          <input
+            checked={avatarRuntimeOptions.hideImagesOnFastNodes}
+            className="h-4 w-4 accent-[#7dd3a7]"
+            onChange={(event) => {
+              onAvatarRuntimeOptionsChange({
+                ...avatarRuntimeOptions,
+                hideImagesOnFastNodes: event.target.checked,
+              })
+            }}
+            type="checkbox"
+          />
+        </label>
+
+        <label className="block">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-white/85">Velocidad max</span>
+            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
+              {avatarRuntimeOptions.fastNodeVelocityThreshold.toFixed(0)}px/s
+            </span>
+          </div>
+          <input
+            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7] disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!avatarRuntimeOptions.hideImagesOnFastNodes}
+            max={1000}
+            min={40}
+            onChange={(event) => {
+              onAvatarRuntimeOptionsChange({
+                ...avatarRuntimeOptions,
+                fastNodeVelocityThreshold: Number.parseInt(
+                  event.target.value,
+                  10,
+                ),
+              })
+            }}
+            step={20}
+            type="range"
+            value={avatarRuntimeOptions.fastNodeVelocityThreshold}
+          />
+          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
+            <span>40px/s</span>
+            <span>1000px/s</span>
+          </div>
+        </label>
+
+        <button
+          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:border-white/20"
+          onClick={() => {
+            onAvatarRuntimeOptionsChange(DEFAULT_AVATAR_RUNTIME_OPTIONS)
+          }}
+          type="button"
+        >
+          Reset
+        </button>
+
+        <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-white/80">Adaptivo</span>
+            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
+              {perfStatusLabel}
+            </span>
+          </div>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Frame EMA</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot
+                  ? `${avatarPerfSnapshot.emaFrameMs.toFixed(1)}ms`
+                  : 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Base</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.baseTier ?? 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Loads</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.budget.concurrency ?? 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Bucket</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot
+                  ? `${avatarPerfSnapshot.budget.maxBucket}px`
+                  : 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">LRU</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.budget.lruCap ?? 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Draw</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.budget.drawAvatars ?? false ? 'on' : 'off'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Radio eff</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {`${effectiveSizeThreshold.toFixed(0)}px`}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Zoom eff</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {`${effectiveZoomThreshold.toFixed(2)}x`}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Avatars cap</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.budget.maxAvatarDrawsPerFrame ?? 'n/a'}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+              <dt className="text-white/35">Fotos cap</dt>
+              <dd className="mt-0.5 font-mono text-white/70">
+                {avatarPerfSnapshot?.budget.maxImageDrawsPerFrame ?? 'n/a'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function GraphAppV2() {
   const searchParams = useSearchParams()
   const fixtureName = searchParams.get('fixture')
@@ -440,6 +700,11 @@ export default function GraphAppV2() {
     )
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
+  const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(false)
+  const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
+    useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
+  const [avatarPerfSnapshot, setAvatarPerfSnapshot] =
+    useState<PerfBudgetSnapshot | null>(null)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
   const [zapFeedback, setZapFeedback] = useState<string | null>(null)
   useEffect(() => {
@@ -637,6 +902,16 @@ export default function GraphAppV2() {
     return null
   }
   const simulationPair = isDev ? findSimulationPair() : null
+  const stableAvatarRuntimeOptions = useMemo(
+    () => avatarRuntimeOptions,
+    [avatarRuntimeOptions],
+  )
+  const handleAvatarPerfSnapshot = useCallback(
+    (snapshot: PerfBudgetSnapshot | null) => {
+      setAvatarPerfSnapshot(snapshot)
+    },
+    [],
+  )
 
   const handleSimulateZap = () => {
     const pair = findSimulationPair()
@@ -803,6 +1078,14 @@ export default function GraphAppV2() {
               tuning={physicsTuning}
             />
 
+            <RenderOptionsPanel
+              avatarRuntimeOptions={avatarRuntimeOptions}
+              avatarPerfSnapshot={avatarPerfSnapshot}
+              hideAvatarsOnMove={hideAvatarsOnMove}
+              onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+              onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
+            />
+
             {isDragFixtureLab ? (
               <DragTuningPanel
                 onChange={updateDragInfluenceTuning}
@@ -889,9 +1172,12 @@ export default function GraphAppV2() {
               </header>
               <div className="min-h-0 flex-1">
                 <SigmaCanvasHost
+                  avatarRuntimeOptions={stableAvatarRuntimeOptions}
                   callbacks={callbacks}
                   dragInfluenceTuning={dragInfluenceTuning}
                   enableDebugProbe={isTestMode}
+                  hideAvatarsOnMove={hideAvatarsOnMove}
+                  onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
                   physicsTuning={physicsTuning}
                   ref={sigmaHostRef}
                   scene={deferredScene}

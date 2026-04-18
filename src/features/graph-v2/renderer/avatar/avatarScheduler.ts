@@ -24,17 +24,20 @@ interface InflightEntry {
 export interface AvatarSchedulerDeps {
   cache: AvatarBitmapCache
   loader: AvatarLoader
+  onSettled?: () => void
 }
 
 export class AvatarScheduler {
   private readonly cache: AvatarBitmapCache
   private readonly loader: AvatarLoader
+  private readonly onSettled: () => void
   private readonly inflight = new Map<AvatarUrlKey, InflightEntry>()
   private disposed = false
 
-  constructor({ cache, loader }: AvatarSchedulerDeps) {
+  constructor({ cache, loader, onSettled }: AvatarSchedulerDeps) {
     this.cache = cache
     this.loader = loader
+    this.onSettled = onSettled ?? (() => {})
   }
 
   public reconcile(candidates: readonly AvatarCandidate[], budget: AvatarBudget) {
@@ -138,6 +141,9 @@ export class AvatarScheduler {
         const current = this.inflight.get(candidate.urlKey)
         if (current && current.controller === controller) {
           this.inflight.delete(candidate.urlKey)
+        }
+        if (!this.disposed) {
+          this.onSettled()
         }
       })
   }

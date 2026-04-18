@@ -34,10 +34,26 @@ export interface AvatarBudget {
   readonly concurrency: number
   readonly maxBucket: ImageLodBucket
   readonly lruCap: number
+  readonly maxAvatarDrawsPerFrame: number
+  readonly maxImageDrawsPerFrame: number
   readonly drawAvatars: boolean
 }
 
+export interface AvatarRuntimeOptions {
+  readonly sizeThreshold: number
+  readonly zoomThreshold: number
+  readonly hideImagesOnFastNodes: boolean
+  readonly fastNodeVelocityThreshold: number
+}
+
 export type DeviceTier = 'low' | 'mid' | 'high'
+
+export const DEFAULT_AVATAR_RUNTIME_OPTIONS: AvatarRuntimeOptions = {
+  sizeThreshold: 15,
+  zoomThreshold: 2.1,
+  hideImagesOnFastNodes: false,
+  fastNodeVelocityThreshold: 240,
+}
 
 export const DEFAULT_BUDGETS: Record<DeviceTier, AvatarBudget> = {
   low: {
@@ -46,6 +62,8 @@ export const DEFAULT_BUDGETS: Record<DeviceTier, AvatarBudget> = {
     concurrency: 2,
     maxBucket: 64,
     lruCap: 192,
+    maxAvatarDrawsPerFrame: 96,
+    maxImageDrawsPerFrame: 36,
     drawAvatars: true,
   },
   mid: {
@@ -54,6 +72,8 @@ export const DEFAULT_BUDGETS: Record<DeviceTier, AvatarBudget> = {
     concurrency: 4,
     maxBucket: 128,
     lruCap: 384,
+    maxAvatarDrawsPerFrame: 180,
+    maxImageDrawsPerFrame: 72,
     drawAvatars: true,
   },
   high: {
@@ -62,6 +82,8 @@ export const DEFAULT_BUDGETS: Record<DeviceTier, AvatarBudget> = {
     concurrency: 6,
     maxBucket: 256,
     lruCap: 512,
+    maxAvatarDrawsPerFrame: 280,
+    maxImageDrawsPerFrame: 120,
     drawAvatars: true,
   },
 }

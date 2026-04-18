@@ -21,12 +21,19 @@ export interface AvatarLoaderDeps {
 const hasCreateImageBitmap = () =>
   typeof globalThis !== 'undefined' && typeof globalThis.createImageBitmap === 'function'
 
+const hasDocumentImageElement = () =>
+  typeof document !== 'undefined' &&
+  typeof document.createElement === 'function'
+
+const isImageElement = (source: CanvasImageSource): source is HTMLImageElement =>
+  typeof HTMLImageElement !== 'undefined' && source instanceof HTMLImageElement
+
 const composeCircularBitmap = async (
-  source: ImageBitmap,
+  source: CanvasImageSource,
   bucket: ImageLodBucket,
 ): Promise<AvatarBitmap> => {
   const canvas =
-    typeof OffscreenCanvas !== 'undefined'
+    typeof OffscreenCanvas !== 'undefined' && !isImageElement(source)
       ? new OffscreenCanvas(bucket, bucket)
       : (() => {
           const c = document.createElement('canvas')
@@ -53,7 +60,9 @@ const composeCircularBitmap = async (
   ctx.restore()
 
   try {
-    source.close()
+    if (typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap) {
+      source.close()
+    }
   } catch {
     // ignore
   }
@@ -120,6 +129,24 @@ export class AvatarLoader {
       throw new Error('unsafe_url')
     }
 
+    try {
+      return await this.loadViaFetch(url, bucket, signal)
+    } catch (err) {
+      if (signal.aborted || isAbortError(err) || isTimeoutError(err)) {
+        throw err
+      }
+      if (!hasDocumentImageElement()) {
+        throw err
+      }
+      return this.loadViaImageElement(url, bucket, signal)
+    }
+  }
+
+  private async loadViaFetch(
+    url: string,
+    bucket: ImageLodBucket,
+    signal: AbortSignal,
+  ): Promise<LoadedAvatar> {
     const timeoutCtrl = new AbortController()
     const timeoutId = setTimeout(() => timeoutCtrl.abort('timeout'), FETCH_TIMEOUT_MS)
     const composite = mergeSignals(signal, timeoutCtrl.signal)
@@ -154,9 +181,24 @@ export class AvatarLoader {
       const bitmap = await composeCircularBitmap(raw, bucket)
       const bytes = bucket * bucket * 4
       return { bitmap, bytes }
+    } catch (err) {
+      if (timeoutCtrl.signal.aborted && !signal.aborted) {
+        throw new Error('timeout')
+      }
+      throw err
     } finally {
       clearTimeout(timeoutId)
     }
+  }
+
+  private async loadViaImageElement(
+    url: string,
+    bucket: ImageLodBucket,
+    signal: AbortSignal,
+  ): Promise<LoadedAvatar> {
+    const image = await loadHtmlImage(url, signal)
+    const bitmap = await composeCircularBitmap(image, bucket)
+    return { bitmap, bytes: bucket * bucket * 4 }
   }
 }
 
@@ -170,3 +212,62 @@ const mergeSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
   b.addEventListener('abort', onAbortB, { once: true })
   return ctrl.signal
 }
+
+const isAbortError = (err: unknown) =>
+  (err as { name?: string } | null)?.name === 'AbortError'
+
+const isTimeoutError = (err: unknown) =>
+  (err as { message?: string } | null)?.message === 'timeout'
+
+const loadHtmlImage = (
+  url: string,
+  signal: AbortSignal,
+): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = document.createElement('img')
+    let settled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+      image.removeEventListener('load', onLoad)
+      image.removeEventListener('error', onError)
+      signal.removeEventListener('abort', onAbort)
+    }
+
+    const finish = (err?: unknown) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      if (err) {
+        image.src = ''
+        reject(err)
+        return
+      }
+      resolve(image)
+    }
+
+    const onLoad = () => finish()
+    const onError = () => finish(new Error('image_load_failed'))
+    const onAbort = () => finish(new DOMException('aborted', 'AbortError'))
+
+    timeoutId = setTimeout(() => {
+      finish(new Error('timeout'))
+    }, FETCH_TIMEOUT_MS)
+
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+
+    image.decoding = 'async'
+    image.referrerPolicy = 'no-referrer'
+    image.addEventListener('load', onLoad, { once: true })
+    image.addEventListener('error', onError, { once: true })
+    signal.addEventListener('abort', onAbort, { once: true })
+    image.src = url
+  })

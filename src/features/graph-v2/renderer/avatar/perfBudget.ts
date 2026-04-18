@@ -20,7 +20,9 @@ const bucketForTier: Record<DeviceTier, ImageLodBucket> = {
 }
 
 export interface PerfBudgetSnapshot {
+  baseTier: DeviceTier
   tier: DeviceTier
+  isDegraded: boolean
   emaFrameMs: number
   budget: AvatarBudget
 }
@@ -75,7 +77,10 @@ export class PerfBudget {
 
   public snapshot(): PerfBudgetSnapshot {
     return {
+      baseTier: this.baseTier,
       tier: this.currentTier,
+      isDegraded:
+        TIER_ORDER.indexOf(this.currentTier) < TIER_ORDER.indexOf(this.baseTier),
       emaFrameMs: this.emaFrameMs,
       budget: this.getBudget(),
     }
@@ -104,6 +109,14 @@ export class PerfBudget {
       concurrency: Math.max(1, current.concurrency - 1),
       maxBucket: Math.min(current.maxBucket, 32) as ImageLodBucket,
       lruCap: Math.max(64, Math.floor(current.lruCap / 2)),
+      maxAvatarDrawsPerFrame: Math.max(
+        32,
+        Math.floor(current.maxAvatarDrawsPerFrame * 0.65),
+      ),
+      maxImageDrawsPerFrame: Math.max(
+        12,
+        Math.floor(current.maxImageDrawsPerFrame * 0.5),
+      ),
     }
   }
 

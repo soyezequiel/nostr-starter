@@ -28,6 +28,19 @@ test('PerfBudget downgrades tier after sustained high frame time', () => {
   assert.equal(budget.snapshot().tier, 'mid')
 })
 
+test('PerfBudget lowers per-frame image caps on downgrade', () => {
+  let now = 0
+  const budget = new PerfBudget('high', () => now)
+  const initial = budget.snapshot().budget
+  for (let i = 0; i < 90; i += 1) {
+    now += 50
+    budget.recordFrame(50)
+  }
+  const downgraded = budget.snapshot().budget
+  assert.ok(downgraded.maxAvatarDrawsPerFrame < initial.maxAvatarDrawsPerFrame)
+  assert.ok(downgraded.maxImageDrawsPerFrame < initial.maxImageDrawsPerFrame)
+})
+
 test('PerfBudget does not downgrade on brief spikes', () => {
   let now = 0
   const budget = new PerfBudget('high', () => now)

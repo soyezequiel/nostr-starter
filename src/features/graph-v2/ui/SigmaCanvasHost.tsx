@@ -6,6 +6,8 @@ import type {
   GraphInteractionCallbacks,
   GraphSceneSnapshot,
 } from '@/features/graph-v2/renderer/contracts'
+import type { AvatarRuntimeOptions } from '@/features/graph-v2/renderer/avatar/types'
+import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
 import { SigmaRendererAdapter } from '@/features/graph-v2/renderer/SigmaRendererAdapter'
 import type { DragNeighborhoodInfluenceTuning } from '@/features/graph-v2/renderer/dragInfluence'
 import type { ForceAtlasPhysicsTuning } from '@/features/graph-v2/renderer/forceAtlasRuntime'
@@ -19,6 +21,9 @@ interface SigmaCanvasHostProps {
   enableDebugProbe?: boolean
   dragInfluenceTuning?: Partial<DragNeighborhoodInfluenceTuning>
   physicsTuning?: Partial<ForceAtlasPhysicsTuning>
+  hideAvatarsOnMove?: boolean
+  avatarRuntimeOptions?: AvatarRuntimeOptions
+  onAvatarPerfSnapshot?: (snapshot: PerfBudgetSnapshot | null) => void
 }
 
 export interface SigmaCanvasHostHandle {
@@ -27,7 +32,16 @@ export interface SigmaCanvasHostHandle {
 
 export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHostProps>(
   function SigmaCanvasHost(
-    { scene, callbacks, enableDebugProbe = false, dragInfluenceTuning, physicsTuning },
+    {
+      scene,
+      callbacks,
+      enableDebugProbe = false,
+      dragInfluenceTuning,
+      physicsTuning,
+      hideAvatarsOnMove = false,
+      avatarRuntimeOptions,
+      onAvatarPerfSnapshot,
+    },
     ref,
   ) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -35,6 +49,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   const overlayRef = useRef<ZapElectronOverlay | null>(null)
   const initialSceneRef = useRef(scene)
   const sceneRef = useRef(scene)
+  const lastAvatarPerfSnapshotKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -89,6 +104,37 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   useEffect(() => {
     adapterRef.current?.setPhysicsTuning(physicsTuning ?? {})
   }, [physicsTuning])
+
+  useEffect(() => {
+    adapterRef.current?.setHideAvatarsOnMove(hideAvatarsOnMove)
+  }, [hideAvatarsOnMove])
+
+  useEffect(() => {
+    if (!avatarRuntimeOptions) {
+      return
+    }
+    adapterRef.current?.setAvatarRuntimeOptions(avatarRuntimeOptions)
+  }, [avatarRuntimeOptions])
+
+  useEffect(() => {
+    if (!onAvatarPerfSnapshot) {
+      return
+    }
+
+    const emitSnapshot = () => {
+      const snapshot = adapterRef.current?.getAvatarPerfSnapshot() ?? null
+      const key = getAvatarPerfSnapshotKey(snapshot)
+      if (key === lastAvatarPerfSnapshotKeyRef.current) {
+        return
+      }
+      lastAvatarPerfSnapshotKeyRef.current = key
+      onAvatarPerfSnapshot(snapshot)
+    }
+
+    emitSnapshot()
+    const intervalId = window.setInterval(emitSnapshot, 500)
+    return () => window.clearInterval(intervalId)
+  }, [onAvatarPerfSnapshot])
 
   useEffect(() => {
     sceneRef.current = scene
@@ -168,3 +214,23 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   )
   },
 )
+
+const getAvatarPerfSnapshotKey = (snapshot: PerfBudgetSnapshot | null) => {
+  if (!snapshot) {
+    return 'none'
+  }
+
+  return [
+    snapshot.baseTier,
+    snapshot.tier,
+    snapshot.isDegraded ? 'degraded' : 'base',
+    Math.round(snapshot.emaFrameMs),
+    snapshot.budget.sizeThreshold,
+    snapshot.budget.zoomThreshold,
+    snapshot.budget.concurrency,
+    snapshot.budget.maxBucket,
+    snapshot.budget.lruCap,
+    snapshot.budget.maxAvatarDrawsPerFrame,
+    snapshot.budget.maxImageDrawsPerFrame,
+  ].join('|')
+}

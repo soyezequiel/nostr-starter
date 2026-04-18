@@ -46,3 +46,84 @@ test('AvatarLoader.load rejects unsafe URL', async () => {
     /unsafe_url/,
   )
 })
+
+test('AvatarLoader.load falls back to img when fetch is blocked by CORS', async () => {
+  const originalDocument = globalThis.document
+  const originalImageElement = globalThis.HTMLImageElement
+
+  class MockImageElement extends EventTarget {
+    decoding = ''
+    referrerPolicy = ''
+    private currentSrc = ''
+
+    set src(value: string) {
+      this.currentSrc = value
+      if (value) {
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event('load'))
+        })
+      }
+    }
+
+    get src() {
+      return this.currentSrc
+    }
+  }
+
+  Object.defineProperty(globalThis, 'HTMLImageElement', {
+    configurable: true,
+    value: MockImageElement,
+  })
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement: (tag: string) => {
+        if (tag === 'img') {
+          return new MockImageElement()
+        }
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            save: () => undefined,
+            beginPath: () => undefined,
+            arc: () => undefined,
+            closePath: () => undefined,
+            clip: () => undefined,
+            drawImage: () => undefined,
+            restore: () => undefined,
+          }),
+        }
+      },
+    },
+  })
+
+  try {
+    const loader = new AvatarLoader({
+      fetchImpl: (async () => {
+        throw new TypeError('Failed to fetch')
+      }) as unknown as typeof fetch,
+      createImageBitmapImpl: (async () => {
+        throw new Error('not used')
+      }) as unknown as typeof createImageBitmap,
+    })
+
+    const loaded = await loader.load(
+      'https://images.example/avatar.png',
+      64,
+      new AbortController().signal,
+    )
+
+    assert.equal(loaded.bytes, 64 * 64 * 4)
+    assert.ok(loaded.bitmap)
+  } finally {
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: originalDocument,
+    })
+    Object.defineProperty(globalThis, 'HTMLImageElement', {
+      configurable: true,
+      value: originalImageElement,
+    })
+  }
+})

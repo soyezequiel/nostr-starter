@@ -37,7 +37,12 @@ import { AvatarOverlayRenderer } from '@/features/graph-v2/renderer/avatar/avata
 import { AvatarScheduler } from '@/features/graph-v2/renderer/avatar/avatarScheduler'
 import { detectDeviceTier } from '@/features/graph-v2/renderer/avatar/deviceTier'
 import { PerfBudget } from '@/features/graph-v2/renderer/avatar/perfBudget'
-import { DEFAULT_BUDGETS } from '@/features/graph-v2/renderer/avatar/types'
+import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
+import {
+  DEFAULT_AVATAR_RUNTIME_OPTIONS,
+  DEFAULT_BUDGETS,
+} from '@/features/graph-v2/renderer/avatar/types'
+import type { AvatarRuntimeOptions } from '@/features/graph-v2/renderer/avatar/types'
 import {
   createSuppressedNodeClick,
   createPendingNodeDragGesture,
@@ -66,6 +71,12 @@ const HOVER_DIM_EDGE_COLOR = '#10171f'
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const NODE_ZOOM_OUT_MIN_SCALE = 0.42
 const NODE_ZOOM_OUT_SCALE_EXPONENT = 0.55
+const AVATAR_MIN_SIZE_THRESHOLD = 4
+const AVATAR_MAX_SIZE_THRESHOLD = 48
+const AVATAR_MIN_ZOOM_THRESHOLD = 0.5
+const AVATAR_MAX_ZOOM_THRESHOLD = 6
+const AVATAR_MIN_FAST_NODE_VELOCITY = 40
+const AVATAR_MAX_FAST_NODE_VELOCITY = 2000
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
@@ -148,6 +159,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private motionClearTimer: ReturnType<typeof setTimeout> | null = null
 
   private readonly MOTION_RESUME_MS = 140
+
+  private hideAvatarsOnMove = false
+
+  private avatarRuntimeOptions: AvatarRuntimeOptions =
+    DEFAULT_AVATAR_RUNTIME_OPTIONS
 
   private readonly handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') {
@@ -302,6 +318,54 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   public setPhysicsTuning(tuning: Partial<ForceAtlasPhysicsTuning>) {
     this.forceRuntime?.setPhysicsTuning(tuning)
+  }
+
+  public setHideAvatarsOnMove(enabled: boolean) {
+    if (this.hideAvatarsOnMove === enabled) {
+      return
+    }
+
+    this.hideAvatarsOnMove = enabled
+    this.sigma?.refresh()
+  }
+
+  public setAvatarRuntimeOptions(options: AvatarRuntimeOptions) {
+    const nextOptions: AvatarRuntimeOptions = {
+      sizeThreshold: clampNumber(
+        options.sizeThreshold,
+        AVATAR_MIN_SIZE_THRESHOLD,
+        AVATAR_MAX_SIZE_THRESHOLD,
+      ),
+      zoomThreshold: clampNumber(
+        options.zoomThreshold,
+        AVATAR_MIN_ZOOM_THRESHOLD,
+        AVATAR_MAX_ZOOM_THRESHOLD,
+      ),
+      hideImagesOnFastNodes: options.hideImagesOnFastNodes,
+      fastNodeVelocityThreshold: clampNumber(
+        options.fastNodeVelocityThreshold,
+        AVATAR_MIN_FAST_NODE_VELOCITY,
+        AVATAR_MAX_FAST_NODE_VELOCITY,
+      ),
+    }
+
+    if (
+      this.avatarRuntimeOptions.sizeThreshold === nextOptions.sizeThreshold &&
+      this.avatarRuntimeOptions.zoomThreshold === nextOptions.zoomThreshold &&
+      this.avatarRuntimeOptions.hideImagesOnFastNodes ===
+        nextOptions.hideImagesOnFastNodes &&
+      this.avatarRuntimeOptions.fastNodeVelocityThreshold ===
+        nextOptions.fastNodeVelocityThreshold
+    ) {
+      return
+    }
+
+    this.avatarRuntimeOptions = nextOptions
+    this.sigma?.refresh()
+  }
+
+  public getAvatarPerfSnapshot(): PerfBudgetSnapshot | null {
+    return this.avatarBudget?.snapshot() ?? null
   }
 
   public setDragInfluenceTuning(
@@ -619,6 +683,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.avatarScheduler = new AvatarScheduler({
         cache: this.avatarCache,
         loader: this.avatarLoader,
+        onSettled: () => {
+          this.sigma?.refresh()
+        },
       })
       this.avatarBudget = new PerfBudget(tier)
       this.avatarOverlay = new AvatarOverlayRenderer({
@@ -626,7 +693,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
         cache: this.avatarCache,
         scheduler: this.avatarScheduler,
         budget: this.avatarBudget,
-        isMoving: () => this.motionActive,
+        isMoving: () => this.hideAvatarsOnMove && this.motionActive,
+        getRuntimeOptions: () => this.avatarRuntimeOptions,
       })
 
       sigma.getCamera().on('updated', () => {

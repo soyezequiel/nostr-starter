@@ -58,23 +58,30 @@ export class AvatarBitmapCache {
   private readonly monograms = new Map<string, HTMLCanvasElement>()
   private totalBytes = 0
   private cap: number
+  private monogramCap: number
 
   constructor(cap: number) {
     this.cap = Math.max(16, cap)
+    this.monogramCap = this.cap * 2
   }
 
   public setCap(nextCap: number) {
     this.cap = Math.max(16, nextCap)
+    this.monogramCap = this.cap * 2
     this.evictIfNeeded()
+    this.evictMonogramsIfNeeded()
   }
 
   public getMonogram(pubkey: string, input: MonogramInput): HTMLCanvasElement {
     const existing = this.monograms.get(pubkey)
     if (existing) {
+      this.monograms.delete(pubkey)
+      this.monograms.set(pubkey, existing)
       return existing
     }
     const canvas = renderMonogramCanvas(input)
     this.monograms.set(pubkey, canvas)
+    this.evictMonogramsIfNeeded()
     return canvas
   }
 
@@ -199,6 +206,21 @@ export class AvatarBitmapCache {
     }
     for (const key of toEvict) {
       this.delete(key)
+    }
+  }
+
+  private evictMonogramsIfNeeded() {
+    if (this.monograms.size <= this.monogramCap) {
+      return
+    }
+    const overflow = this.monograms.size - this.monogramCap
+    const iterator = this.monograms.keys()
+    for (let i = 0; i < overflow; i += 1) {
+      const next = iterator.next()
+      if (next.done) {
+        break
+      }
+      this.monograms.delete(next.value)
     }
   }
 }
