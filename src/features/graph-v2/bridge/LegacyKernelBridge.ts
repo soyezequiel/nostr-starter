@@ -1,4 +1,8 @@
-import type { AppStoreApi, UiLayer } from '@/features/graph/app/store/types'
+import type {
+  AppStoreApi,
+  ConnectionsSourceLayer,
+  UiLayer,
+} from '@/features/graph/app/store/types'
 import {
   browserAppKernel,
   browserAppStore,
@@ -84,6 +88,10 @@ export class LegacyKernelBridge {
 
   public toggleLayer(layer: GraphV2Layer) {
     return this.runtime.toggleLayer(layer as UiLayer)
+  }
+
+  public setConnectionsSourceLayer(layer: ConnectionsSourceLayer) {
+    this.store.getState().setConnectionsSourceLayer(layer)
   }
 
   public selectNode(pubkey: string | null) {

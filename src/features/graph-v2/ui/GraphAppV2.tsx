@@ -19,6 +19,7 @@ import AvatarFallback from '@/components/AvatarFallback'
 import { useAppStore } from '@/features/graph/app/store'
 import type {
   AppStore,
+  ConnectionsSourceLayer,
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph/app/store/types'
@@ -58,16 +59,74 @@ import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
 
 const LAYER_LABELS: Record<(typeof GRAPH_V2_LAYERS)[number], string> = {
-  graph: 'Graph',
-  connections: 'Connections',
-  following: 'Following',
-  followers: 'Followers',
-  mutuals: 'Mutuals',
-  'following-non-followers': 'Following / Non Followers',
-  'nonreciprocal-followers': 'Followers / Non Reciprocal',
+  graph: 'Grafo',
+  connections: 'Conexiones',
+  following: 'Sigo',
+  followers: 'Me siguen',
+  mutuals: 'Mutuos',
+  'following-non-followers': 'Sigo sin reciprocidad',
+  'nonreciprocal-followers': 'Me siguen sin reciprocidad',
 }
 
 type SigmaSettingsTab = 'renderer' | 'physics' | 'layers' | 'relays' | 'internal'
+
+interface RelationshipToggleState {
+  following: boolean
+  followers: boolean
+  onlyNonReciprocal: boolean
+}
+
+const isRelationshipLayer = (
+  layer: (typeof GRAPH_V2_LAYERS)[number] | ConnectionsSourceLayer,
+) =>
+  layer === 'following' ||
+  layer === 'following-non-followers' ||
+  layer === 'mutuals' ||
+  layer === 'followers' ||
+  layer === 'nonreciprocal-followers'
+
+const resolveRelationshipControlLayer = (
+  activeLayer: (typeof GRAPH_V2_LAYERS)[number],
+  connectionsSourceLayer: ConnectionsSourceLayer,
+) => (activeLayer === 'connections' ? connectionsSourceLayer : activeLayer)
+
+const getRelationshipToggleState = (
+  layer: (typeof GRAPH_V2_LAYERS)[number] | ConnectionsSourceLayer,
+): RelationshipToggleState => ({
+  following:
+    layer === 'following' ||
+    layer === 'following-non-followers' ||
+    layer === 'mutuals',
+  followers:
+    layer === 'followers' ||
+    layer === 'nonreciprocal-followers' ||
+    layer === 'mutuals',
+  onlyNonReciprocal:
+    layer === 'following-non-followers' ||
+    layer === 'nonreciprocal-followers',
+})
+
+const resolveConnectionFilterLabel = (
+  relationshipToggleState: RelationshipToggleState,
+) => {
+  if (relationshipToggleState.following && relationshipToggleState.followers) {
+    return 'Filtro: mutuos'
+  }
+
+  if (relationshipToggleState.following) {
+    return relationshipToggleState.onlyNonReciprocal
+      ? 'Filtro: sigo sin reciprocidad'
+      : 'Filtro: sigo'
+  }
+
+  if (relationshipToggleState.followers) {
+    return relationshipToggleState.onlyNonReciprocal
+      ? 'Filtro: me siguen sin reciprocidad'
+      : 'Filtro: me siguen'
+  }
+
+  return 'Filtro: vecindario visible'
+}
 
 const SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Renderer' },
@@ -977,6 +1036,31 @@ export default function GraphAppV2() {
     )
   }
 
+  const relationshipControlLayer = useMemo(
+    () =>
+      resolveRelationshipControlLayer(
+        domainState.activeLayer,
+        domainState.connectionsSourceLayer,
+      ),
+    [domainState.activeLayer, domainState.connectionsSourceLayer],
+  )
+  const relationshipToggleState = useMemo(
+    () => getRelationshipToggleState(relationshipControlLayer),
+    [relationshipControlLayer],
+  )
+  const onlyOneRelationshipSideActive =
+    relationshipToggleState.following !== relationshipToggleState.followers
+  const canToggleOnlyNonReciprocal =
+    isRelationshipLayer(relationshipControlLayer) &&
+    (relationshipToggleState.following || relationshipToggleState.followers)
+  const isNonReciprocalAvailable =
+    canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
+  const isNonReciprocalActive =
+    isNonReciprocalAvailable && relationshipToggleState.onlyNonReciprocal
+  const connectionFilterLabel = resolveConnectionFilterLabel(
+    relationshipToggleState,
+  )
+
   useEffect(() => {
     if (!savedRootsHydrated || savedRoots.length === 0) {
       return
@@ -1070,8 +1154,124 @@ export default function GraphAppV2() {
       ...current,
       activeLayer: layer,
       connectionsSourceLayer:
-        layer === 'connections' ? 'mutuals' : current.connectionsSourceLayer,
+        layer === 'connections' && current.activeLayer !== 'connections'
+          ? 'mutuals'
+          : current.connectionsSourceLayer,
     }))
+  }
+
+  const handleToggleConnections = () => {
+    toggleLayer(domainState.activeLayer === 'connections' ? 'graph' : 'connections')
+  }
+
+  const setConnectionsSourceLayer = (layer: ConnectionsSourceLayer) => {
+    if (!isFixtureMode) {
+      bridge.setConnectionsSourceLayer(layer)
+      return
+    }
+
+    updateFixtureState((current) => ({
+      ...current,
+      connectionsSourceLayer: layer,
+    }))
+  }
+
+  const handleToggleRelationship = (role: 'following' | 'followers') => {
+    const current = getRelationshipToggleState(relationshipControlLayer)
+    const nextFollowing =
+      role === 'following' ? !current.following : current.following
+    const nextFollowers =
+      role === 'followers' ? !current.followers : current.followers
+
+    if (domainState.activeLayer === 'connections') {
+      if (!nextFollowing && !nextFollowers) {
+        toggleLayer('graph')
+        return
+      }
+
+      if (nextFollowing && nextFollowers) {
+        setConnectionsSourceLayer('mutuals')
+        return
+      }
+
+      if (nextFollowing) {
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal ? 'following-non-followers' : 'following',
+        )
+        return
+      }
+
+      setConnectionsSourceLayer(
+        current.onlyNonReciprocal
+          ? 'nonreciprocal-followers'
+          : 'followers',
+      )
+      return
+    }
+
+    if (!nextFollowing && !nextFollowers) {
+      toggleLayer('graph')
+      return
+    }
+
+    if (nextFollowing && nextFollowers) {
+      toggleLayer('mutuals')
+      return
+    }
+
+    if (nextFollowing) {
+      toggleLayer(
+        current.onlyNonReciprocal ? 'following-non-followers' : 'following',
+      )
+      return
+    }
+
+    toggleLayer(
+      current.onlyNonReciprocal
+        ? 'nonreciprocal-followers'
+        : 'followers',
+    )
+  }
+
+  const handleToggleOnlyNonReciprocal = () => {
+    const current = getRelationshipToggleState(relationshipControlLayer)
+
+    if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) {
+      return
+    }
+
+    if (domainState.activeLayer === 'connections') {
+      if (current.following) {
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal ? 'following' : 'following-non-followers',
+        )
+        return
+      }
+
+      if (current.followers) {
+        setConnectionsSourceLayer(
+          current.onlyNonReciprocal
+            ? 'followers'
+            : 'nonreciprocal-followers',
+        )
+      }
+      return
+    }
+
+    if (current.following) {
+      toggleLayer(
+        current.onlyNonReciprocal ? 'following' : 'following-non-followers',
+      )
+      return
+    }
+
+    if (current.followers) {
+      toggleLayer(
+        current.onlyNonReciprocal
+          ? 'followers'
+          : 'nonreciprocal-followers',
+      )
+    }
   }
 
   const updateDragInfluenceTuning = <
@@ -1301,6 +1501,13 @@ export default function GraphAppV2() {
   const settingsStatusItems = [
     { label: 'Root', value: domainState.rootPubkey ? 'loaded' : 'empty' },
     { label: 'Layer', value: domainState.activeLayer },
+    {
+      label: 'Filtro',
+      value:
+        domainState.activeLayer === 'connections'
+          ? domainState.connectionsSourceLayer
+          : 'directo',
+    },
     {
       label: 'Relays',
       value: `${domainState.relayState.urls.length} ${
@@ -1600,9 +1807,9 @@ export default function GraphAppV2() {
                 />
               </div>
             </div>
-            {visibleLoadFeedback || validationFeedback || actionFeedback ? (
+            {visibleLoadFeedback || validationFeedback ? (
               <p className="root-entry-sheet__fineprint">
-                {visibleLoadFeedback ?? validationFeedback ?? actionFeedback}
+                {visibleLoadFeedback ?? validationFeedback}
               </p>
             ) : null}
             <p className="root-entry-sheet__fineprint">
@@ -1823,46 +2030,149 @@ export default function GraphAppV2() {
           </aside>
         ) : null}
 
+        {actionFeedback ? (
+          <p className="sigma-lab-action-feedback" role="status">
+            {actionFeedback}
+          </p>
+        ) : null}
+
         <section className="sigma-lab-control-bar">
           <div className="sigma-lab-control-summary">
-            <span className="graph-panel__stream-eyebrow">Sigma renderer</span>
-            <strong>Graphology + ForceAtlas2</strong>
+            <span className="graph-panel__control-summary-label">
+              {domainState.activeLayer === 'connections' ? 'Conexiones' : 'Vista'}
+            </span>
+            <strong className="graph-panel__control-summary-value">
+              {domainState.activeLayer === 'connections'
+                ? connectionFilterLabel
+                : LAYER_LABELS[domainState.activeLayer]}
+            </strong>
             <span>
               {deferredScene.diagnostics.visibleEdgeCount} visibles /{' '}
               {deferredScene.diagnostics.forceEdgeCount} fuerza
             </span>
           </div>
           <div className="sigma-lab-control-actions">
-            <button
-              className="graph-panel__control-btn graph-panel__control-btn--primary"
-              onClick={() => openSettingsTab('layers')}
-              type="button"
+            <div
+              className="graph-panel__control-group graph-panel__control-group--primary"
+              data-relationship-mode={
+                domainState.activeLayer === 'connections'
+                  ? relationshipControlLayer
+                  : undefined
+              }
+              role="group"
+              aria-label="Vista principal del grafo Sigma"
             >
-              {domainState.activeLayer}
-            </button>
-            <button
-              className="graph-panel__control-btn"
-              onClick={() => openSettingsTab('renderer')}
-              type="button"
+              <button
+                aria-pressed={domainState.activeLayer === 'graph'}
+                className={`graph-panel__control-btn${
+                  domainState.activeLayer === 'graph'
+                    ? ' graph-panel__control-btn--primary'
+                    : ''
+                }`}
+                data-control-tone="neutral"
+                onClick={() => toggleLayer('graph')}
+                type="button"
+              >
+                Grafo
+              </button>
+              <button
+                aria-pressed={domainState.activeLayer === 'connections'}
+                aria-label={
+                  domainState.activeLayer === 'connections'
+                    ? 'Salir de conexiones'
+                    : 'Activar conexiones'
+                }
+                className={`graph-panel__control-btn${
+                  domainState.activeLayer === 'connections'
+                    ? ' graph-panel__control-btn--primary'
+                    : ''
+                }`}
+                data-control-tone="connections"
+                onClick={handleToggleConnections}
+                type="button"
+              >
+                {domainState.activeLayer === 'connections' ? 'Salir' : 'Conexiones'}
+              </button>
+              <button
+                aria-pressed={relationshipToggleState.following}
+                className={`graph-panel__control-btn${
+                  relationshipToggleState.following
+                    ? ' graph-panel__control-btn--primary'
+                    : ''
+                }`}
+                data-control-tone="relationship"
+                onClick={() => handleToggleRelationship('following')}
+                type="button"
+              >
+                Sigo
+              </button>
+              <button
+                aria-pressed={relationshipToggleState.followers}
+                className={`graph-panel__control-btn${
+                  relationshipToggleState.followers
+                    ? ' graph-panel__control-btn--primary'
+                    : ''
+                }`}
+                data-control-tone="relationship"
+                onClick={() => handleToggleRelationship('followers')}
+                type="button"
+              >
+                Me siguen
+              </button>
+              {domainState.activeLayer === 'connections' ? (
+                <span className="graph-panel__control-filter-state">
+                  {connectionFilterLabel}
+                </span>
+              ) : null}
+            </div>
+            <div
+              aria-hidden={!isNonReciprocalAvailable}
+              className="graph-panel__control-group graph-panel__control-group--aux"
+              data-available={isNonReciprocalAvailable ? 'true' : 'false'}
+              role="group"
+              aria-label="Filtro de reciprocidad Sigma"
             >
-              {avatarPerfSnapshot?.isDegraded
-                ? `degradado a ${avatarPerfSnapshot.tier}`
-                : `base ${avatarPerfSnapshot?.tier ?? 'n/a'}`}
-            </button>
-            <button
-              className="graph-panel__control-btn"
-              onClick={() => openSettingsTab('physics')}
-              type="button"
+              <button
+                aria-pressed={isNonReciprocalActive}
+                className={`graph-panel__control-btn graph-panel__control-btn--aux${
+                  isNonReciprocalActive ? ' graph-panel__control-btn--primary' : ''
+                }`}
+                data-control-tone="relationship"
+                disabled={!isNonReciprocalAvailable}
+                onClick={handleToggleOnlyNonReciprocal}
+                tabIndex={isNonReciprocalAvailable ? 0 : -1}
+                type="button"
+              >
+                Sin reciprocidad
+              </button>
+            </div>
+            <div
+              className="graph-panel__control-group sigma-lab-control-group--settings"
+              role="group"
+              aria-label="Ajustes de Sigma"
             >
-              Physics
-            </button>
-            <button
-              className="graph-panel__control-btn"
-              onClick={() => openSettingsTab('internal')}
-              type="button"
-            >
-              {isTestMode ? 'Test mode' : 'Diagnostics'}
-            </button>
+              <button
+                className="graph-panel__control-btn"
+                onClick={() => openSettingsTab('renderer')}
+                type="button"
+              >
+                Renderer
+              </button>
+              <button
+                className="graph-panel__control-btn"
+                onClick={() => openSettingsTab('physics')}
+                type="button"
+              >
+                Ajustes fisica
+              </button>
+              <button
+                className="graph-panel__control-btn"
+                onClick={() => openSettingsTab('internal')}
+                type="button"
+              >
+                Diagnostics
+              </button>
+            </div>
           </div>
         </section>
       </section>

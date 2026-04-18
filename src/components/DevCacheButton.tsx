@@ -10,6 +10,7 @@ export default function DevCacheButton() {
   const [status, setStatus] = useState<'idle' | 'running' | 'failed'>('idle')
   const [message, setMessage] = useState<string | null>(null)
   const [isLocalHost, setIsLocalHost] = useState(false)
+  const [isSigmaLabRoute, setIsSigmaLabRoute] = useState(false)
   const isRunning = status === 'running'
   const shouldShow = IS_DEVELOPMENT_BUILD || isLocalHost
 
@@ -19,6 +20,10 @@ export default function DevCacheButton() {
         window.location.hostname === 'localhost' ||
           window.location.hostname === '127.0.0.1' ||
           window.location.hostname === '0.0.0.0',
+      )
+      setIsSigmaLabRoute(
+        window.location.pathname.startsWith('/labs/sigma') &&
+          window.matchMedia('(max-width: 640px)').matches,
       )
     }, 0)
 
@@ -76,9 +81,9 @@ export default function DevCacheButton() {
       }}
       style={{
         position: 'fixed',
-        top: '18px',
+        top: isSigmaLabRoute ? '76px' : '18px',
         left: '18px',
-        zIndex: 2147483647,
+        zIndex: isSigmaLabRoute ? 42 : 2147483647,
         display: 'inline-flex',
         alignItems: 'center',
         gap: '10px',
