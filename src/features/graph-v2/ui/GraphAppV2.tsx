@@ -58,9 +58,28 @@ import {
 } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import { createDragLocalFixture } from '@/features/graph-v2/testing/fixtures/dragLocalFixture'
 import { SigmaCanvasHost, type SigmaCanvasHostHandle } from '@/features/graph-v2/ui/SigmaCanvasHost'
+import {
+  AtomIcon,
+  ClockIcon,
+  GearIcon,
+  SearchIcon,
+  TargetIcon,
+  ZapIcon,
+} from '@/features/graph-v2/ui/SigmaIcons'
+import { SigmaTopBar } from '@/features/graph-v2/ui/SigmaTopBar'
+import { SigmaFilterBar, type FilterPill } from '@/features/graph-v2/ui/SigmaFilterBar'
+import { SigmaSideRail, type RailButton } from '@/features/graph-v2/ui/SigmaSideRail'
+import { SigmaHud, type HudStat } from '@/features/graph-v2/ui/SigmaHud'
+import { SigmaMinimap } from '@/features/graph-v2/ui/SigmaMinimap'
+import { SigmaSidePanel } from '@/features/graph-v2/ui/SigmaSidePanel'
+import { SigmaRootLoader } from '@/features/graph-v2/ui/SigmaRootLoader'
+import { SigmaEmptyState } from '@/features/graph-v2/ui/SigmaEmptyState'
+import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
 import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
+
+// ── Layer labels ──────────────────────────────────────────────────────────────
 
 const LAYER_LABELS: Record<(typeof GRAPH_V2_LAYERS)[number], string> = {
   graph: 'Grafo',
@@ -110,38 +129,13 @@ const getRelationshipToggleState = (
     layer === 'nonreciprocal-followers',
 })
 
-const resolveConnectionFilterLabel = (
-  relationshipToggleState: RelationshipToggleState,
-) => {
-  if (relationshipToggleState.following && relationshipToggleState.followers) {
-    return 'Filtro: mutuos'
-  }
-
-  if (relationshipToggleState.following) {
-    return relationshipToggleState.onlyNonReciprocal
-      ? 'Filtro: sigo sin reciprocidad'
-      : 'Filtro: sigo'
-  }
-
-  if (relationshipToggleState.followers) {
-    return relationshipToggleState.onlyNonReciprocal
-      ? 'Filtro: me siguen sin reciprocidad'
-      : 'Filtro: me siguen'
-  }
-
-  return 'Filtro: vecindario visible'
-}
-
 const hasVisibleEdgeBetween = (
   scene: GraphSceneSnapshot,
   source: string,
   target: string,
 ) => {
   for (const edge of scene.visibleEdges) {
-    if (edge.hidden) {
-      continue
-    }
-
+    if (edge.hidden) continue
     if (
       (edge.source === source && edge.target === target) ||
       (edge.source === target && edge.target === source)
@@ -149,16 +143,15 @@ const hasVisibleEdgeBetween = (
       return true
     }
   }
-
   return false
 }
 
 const SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Render' },
-  { id: 'physics', label: 'Fisica' },
+  { id: 'physics', label: 'Física' },
   { id: 'layers', label: 'Capas' },
   { id: 'relays', label: 'Relays' },
-  { id: 'internal', label: 'Diagnostico' },
+  { id: 'internal', label: 'Diagnóstico' },
 ]
 
 const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
@@ -173,10 +166,7 @@ const selectSavedRootState = (state: AppStore) => ({
 })
 
 const getInitials = (value: string | null) => {
-  if (!value) {
-    return 'N'
-  }
-
+  if (!value) return 'N'
   return (
     value
       .split(/\s+/)
@@ -223,6 +213,8 @@ const withClientSceneSignature = (
   sceneSignature: createClientSceneSignature(state),
 })
 
+// ── Sub-components (settings/relay content) ───────────────────────────────────
+
 function RelayEditor({
   relayUrls,
   overrideStatus,
@@ -245,79 +237,82 @@ function RelayEditor({
   }, [relaySignature])
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Relays</p>
-          <h2 className="mt-1 text-sm font-semibold text-white">
-            Override del bridge
-          </h2>
-        </div>
-        <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/60">
+    <div className="sg-settings-section">
+      <h4>Relays conectados</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--sg-fg-muted)' }}>Bridge override</span>
+        <span
+          style={{
+            borderRadius: 999,
+            border: '1px solid var(--sg-stroke)',
+            padding: '2px 8px',
+            fontSize: 11,
+            color: 'var(--sg-fg-muted)',
+            fontFamily: 'var(--sg-font-mono)',
+          }}
+        >
           {overrideStatus} / {isGraphStale ? 'stale' : 'live'}
         </span>
       </div>
-
       <textarea
-        className="mt-3 h-32 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
         onChange={(event) => setDraft(event.target.value)}
         placeholder="wss://relay.example"
         spellCheck={false}
+        style={{
+          width: '100%',
+          height: 112,
+          background: 'oklch(100% 0 0 / 0.02)',
+          border: '1px solid var(--sg-stroke)',
+          borderRadius: 8,
+          padding: '8px 10px',
+          color: 'var(--sg-fg)',
+          fontFamily: 'var(--sg-font-mono)',
+          fontSize: 11,
+          outline: 'none',
+          resize: 'vertical',
+        }}
         value={draft}
       />
-
-      <div className="mt-3 flex gap-2">
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
         <button
-          className="rounded-xl bg-[#7dd3a7] px-3 py-2 text-sm font-medium text-black"
+          className="sg-btn sg-btn--primary"
           onClick={() => {
             const nextRelayUrls = draft
               .split(/\s+/)
               .map((entry) => entry.trim())
               .filter(Boolean)
-
             startTransition(() => {
               void onApply(nextRelayUrls)
-                .then(() => {
-                  setMessage(`Aplicados ${nextRelayUrls.length} relays.`)
-                })
+                .then(() => { setMessage(`Aplicados ${nextRelayUrls.length} relays.`) })
                 .catch((error) => {
-                  setMessage(
-                    error instanceof Error
-                      ? error.message
-                      : 'No se pudieron aplicar los relays.',
-                  )
+                  setMessage(error instanceof Error ? error.message : 'No se pudieron aplicar los relays.')
                 })
             })
           }}
+          style={{ flex: 'none' }}
           type="button"
         >
           Aplicar
         </button>
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/80"
+          className="sg-btn"
           onClick={() => {
             startTransition(() => {
               void onRevert()
-                .then(() => {
-                  setMessage('Se revirtio el override de relays.')
-                })
+                .then(() => { setMessage('Se revirtio el override de relays.') })
                 .catch((error) => {
-                  setMessage(
-                    error instanceof Error
-                      ? error.message
-                      : 'No se pudo revertir el override.',
-                  )
+                  setMessage(error instanceof Error ? error.message : 'No se pudo revertir el override.')
                 })
             })
           }}
+          style={{ flex: 'none' }}
           type="button"
         >
           Revertir
         </button>
       </div>
-
-      {message ? <p className="mt-3 text-xs text-white/60">{message}</p> : null}
-    </section>
+      {message ? <p style={{ marginTop: 8, fontSize: 12, color: 'var(--sg-fg-muted)' }}>{message}</p> : null}
+    </div>
   )
 }
 
@@ -329,46 +324,11 @@ const PHYSICS_TUNING_SLIDERS: Array<{
   max: number
   step: number
 }> = [
-  {
-    key: 'centripetalForce',
-    label: 'Fuerza centripeta',
-    description: 'Multiplica gravity: compacta el grafo hacia el centro.',
-    min: 0.25,
-    max: 2.5,
-    step: 0.05,
-  },
-  {
-    key: 'repulsionForce',
-    label: 'Fuerza de repelencia',
-    description: 'Multiplica scalingRatio: separa nodos y clusters.',
-    min: 0.25,
-    max: 5,
-    step: 0.05,
-  },
-  {
-    key: 'linkForce',
-    label: 'Fuerza de enlace',
-    description: 'Multiplica edgeWeightInfluence: cohesion por aristas.',
-    min: 0.25,
-    max: 2.5,
-    step: 0.05,
-  },
-  {
-    key: 'linkDistance',
-    label: 'Distancia de enlace',
-    description: 'Aproxima distancia: mas alto abre enlaces sin cambiar FA2.',
-    min: 0.5,
-    max: 2,
-    step: 0.05,
-  },
-  {
-    key: 'damping',
-    label: 'Amortiguacion',
-    description: 'Multiplica slowDown: controla velocidad e inercia.',
-    min: 0.25,
-    max: 2.5,
-    step: 0.05,
-  },
+  { key: 'centripetalForce', label: 'Fuerza centrípeta', description: 'Multiplica gravity: compacta el grafo.', min: 0.25, max: 2.5, step: 0.05 },
+  { key: 'repulsionForce', label: 'Repulsión', description: 'Multiplica scalingRatio: separa nodos.', min: 0.25, max: 5, step: 0.05 },
+  { key: 'linkForce', label: 'Fuerza de enlace', description: 'Multiplica edgeWeightInfluence.', min: 0.25, max: 2.5, step: 0.05 },
+  { key: 'linkDistance', label: 'Distancia de enlace', description: 'Aproxima distancia sin cambiar FA2.', min: 0.5, max: 2, step: 0.05 },
+  { key: 'damping', label: 'Amortiguación', description: 'Multiplica slowDown: velocidad e inercia.', min: 0.25, max: 2.5, step: 0.05 },
 ]
 
 function PhysicsTuningPanel({
@@ -377,65 +337,39 @@ function PhysicsTuningPanel({
   onReset,
 }: {
   tuning: ForceAtlasPhysicsTuning
-  onChange: <K extends keyof ForceAtlasPhysicsTuning>(
-    key: K,
-    value: ForceAtlasPhysicsTuning[K],
-  ) => void
+  onChange: <K extends keyof ForceAtlasPhysicsTuning>(key: K, value: ForceAtlasPhysicsTuning[K]) => void
   onReset: () => void
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Physics</p>
-          <h2 className="mt-1 text-sm font-semibold text-white">
-            Preset Obsidian
-          </h2>
-        </div>
-        <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:border-white/20"
-          onClick={onReset}
-          type="button"
-        >
-          Reset
-        </button>
+    <div className="sg-settings-section">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h4 style={{ margin: 0 }}>ForceAtlas2</h4>
+        <button className="sg-btn" onClick={onReset} style={{ flex: 'none', padding: '4px 10px', fontSize: 11 }} type="button">Reset</button>
       </div>
-
-      <div className="mt-4 grid gap-4">
-        {PHYSICS_TUNING_SLIDERS.map((slider) => {
-          const value = tuning[slider.key]
-          return (
-            <label className="block" key={slider.key}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-white/85">{slider.label}</span>
-                <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-                  {value.toFixed(2)}x
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-white/50">{slider.description}</p>
-              <input
-                className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
-                max={slider.max}
-                min={slider.min}
-                onChange={(event) => {
-                  onChange(
-                    slider.key,
-                    Number.parseFloat(event.target.value) as ForceAtlasPhysicsTuning[typeof slider.key],
-                  )
-                }}
-                step={slider.step}
-                type="range"
-                value={value}
-              />
-              <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
-                <span>{slider.min.toFixed(2)}x</span>
-                <span>{slider.max.toFixed(2)}x</span>
-              </div>
-            </label>
-          )
-        })}
-      </div>
-    </section>
+      {PHYSICS_TUNING_SLIDERS.map((slider) => {
+        const value = tuning[slider.key]
+        return (
+          <div className="sg-slider-row" key={slider.key}>
+            <div className="sg-slider-row__head">
+              <span className="sg-slider-row__lbl">{slider.label}</span>
+              <span className="sg-slider-row__val">{(value as number).toFixed(2)}×</span>
+            </div>
+            <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>{slider.description}</p>
+            <input
+              className="sg-slider"
+              max={slider.max}
+              min={slider.min}
+              onChange={(event) => {
+                onChange(slider.key, Number.parseFloat(event.target.value) as ForceAtlasPhysicsTuning[typeof slider.key])
+              }}
+              step={slider.step}
+              type="range"
+              value={value as number}
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -447,30 +381,9 @@ const DRAG_TUNING_SLIDERS: Array<{
   max: number
   step: number
 }> = [
-  {
-    key: 'edgeStiffness',
-    label: 'Edge stiffness',
-    description: 'Cuanto se propaga el tiron por las aristas reales.',
-    min: 0.01,
-    max: 0.12,
-    step: 0.002,
-  },
-  {
-    key: 'anchorStiffnessPerHop',
-    label: 'Anchor por hop',
-    description: 'Cuanto vuelve cada hop a su posicion inicial.',
-    min: 0.001,
-    max: 0.02,
-    step: 0.0005,
-  },
-  {
-    key: 'baseDamping',
-    label: 'Base damping',
-    description: 'Amortiguacion de velocidad; mas alto, mas inercia.',
-    min: 0.75,
-    max: 0.95,
-    step: 0.005,
-  },
+  { key: 'edgeStiffness', label: 'Edge stiffness', description: 'Cuanto se propaga el tirón por las aristas.', min: 0.01, max: 0.12, step: 0.002 },
+  { key: 'anchorStiffnessPerHop', label: 'Anchor por hop', description: 'Cuanto vuelve cada hop a su posición inicial.', min: 0.001, max: 0.02, step: 0.0005 },
+  { key: 'baseDamping', label: 'Base damping', description: 'Amortiguación de velocidad.', min: 0.75, max: 0.95, step: 0.005 },
 ]
 
 function DragTuningPanel({
@@ -479,151 +392,39 @@ function DragTuningPanel({
   onReset,
 }: {
   tuning: DragNeighborhoodInfluenceTuning
-  onChange: <K extends keyof DragNeighborhoodInfluenceTuning>(
-    key: K,
-    value: DragNeighborhoodInfluenceTuning[K],
-  ) => void
+  onChange: <K extends keyof DragNeighborhoodInfluenceTuning>(key: K, value: DragNeighborhoodInfluenceTuning[K]) => void
   onReset: () => void
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Drag tuning</p>
-          <h2 className="mt-1 text-sm font-semibold text-white">
-            Springs del laboratorio
-          </h2>
-          <p className="mt-2 text-xs leading-5 text-white/55">
-            Ajusta el feel del drag en vivo. Esto no toca el dominio ni persiste fuera de la pagina.
-          </p>
-        </div>
-        <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:border-white/20"
-          onClick={onReset}
-          type="button"
-        >
-          Reset
-        </button>
+    <div className="sg-settings-section">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h4 style={{ margin: 0 }}>Drag springs lab</h4>
+        <button className="sg-btn" onClick={onReset} style={{ flex: 'none', padding: '4px 10px', fontSize: 11 }} type="button">Reset</button>
       </div>
-
-      <div className="mt-4 grid gap-4">
-        {DRAG_TUNING_SLIDERS.map((slider) => {
-          const value = tuning[slider.key]
-          return (
-            <label className="block" key={slider.key}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-white/85">{slider.label}</span>
-                <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-                  {value.toFixed(3)}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-white/50">{slider.description}</p>
-              <input
-                className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
-                max={slider.max}
-                min={slider.min}
-                onChange={(event) => {
-                  onChange(
-                    slider.key,
-                    Number.parseFloat(event.target.value) as DragNeighborhoodInfluenceTuning[typeof slider.key],
-                  )
-                }}
-                step={slider.step}
-                type="range"
-                value={value}
-              />
-              <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
-                <span>{slider.min.toFixed(3)}</span>
-                <span>{slider.max.toFixed(3)}</span>
-              </div>
-            </label>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-function mapNostrProfileToSavedRootProfile(
-  profile: NostrProfile,
-): SavedRootProfileSnapshot {
-  return {
-    displayName: profile.displayName ?? null,
-    name: profile.name ?? null,
-    picture: profile.picture ?? null,
-    about: profile.about ?? null,
-    nip05: profile.nip05 ?? null,
-    lud16: profile.lud16 ?? null,
-  }
-}
-
-function mapCanonicalNodeToSavedRootProfile(
-  node: CanonicalNode,
-): SavedRootProfileSnapshot {
-  return {
-    displayName: node.label ?? null,
-    name: node.label ?? null,
-    picture: node.picture ?? null,
-    about: node.about ?? null,
-    nip05: node.nip05 ?? null,
-    lud16: node.lud16 ?? null,
-  }
-}
-
-function IdentityIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      fill="none"
-      height="18"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-      viewBox="0 0 24 24"
-      width="18"
-    >
-      <path d="M12 12.4a4.2 4.2 0 1 0 0-8.4 4.2 4.2 0 0 0 0 8.4Z" />
-      <path d="M4.6 20a7.8 7.8 0 0 1 14.8 0" />
-    </svg>
-  )
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      fill="none"
-      height="18"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-      viewBox="0 0 24 24"
-      width="18"
-    >
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.84l.05.05a2 2 0 0 1-2.82 2.83l-.06-.06a1.7 1.7 0 0 0-1.84-.33 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.84.33l-.06.06a2 2 0 1 1-2.82-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.08A1.7 1.7 0 0 0 4.64 8.4a1.7 1.7 0 0 0-.33-1.84l-.06-.06a2 2 0 1 1 2.83-2.82l.06.05a1.7 1.7 0 0 0 1.84.34h.02a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.84-.34l.06-.05a2 2 0 1 1 2.82 2.82l-.05.06A1.7 1.7 0 0 0 19.4 8.4v.02a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
-    </svg>
-  )
-}
-
-function CloseIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      fill="none"
-      height="18"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.9"
-      viewBox="0 0 24 24"
-      width="18"
-    >
-      <path d="m6.5 6.5 11 11" />
-      <path d="m17.5 6.5-11 11" />
-    </svg>
+      {DRAG_TUNING_SLIDERS.map((slider) => {
+        const value = tuning[slider.key]
+        return (
+          <div className="sg-slider-row" key={slider.key}>
+            <div className="sg-slider-row__head">
+              <span className="sg-slider-row__lbl">{slider.label}</span>
+              <span className="sg-slider-row__val">{(value as number).toFixed(3)}</span>
+            </div>
+            <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>{slider.description}</p>
+            <input
+              className="sg-slider"
+              max={slider.max}
+              min={slider.min}
+              onChange={(event) => {
+                onChange(slider.key, Number.parseFloat(event.target.value) as DragNeighborhoodInfluenceTuning[typeof slider.key])
+              }}
+              step={slider.step}
+              type="range"
+              value={value as number}
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -649,237 +450,126 @@ function RenderOptionsPanel({
     ? avatarPerfSnapshot.isDegraded || avatarPerfSnapshot.budget.maxBucket <= 64
     : false
   const effectiveSizeThreshold = avatarPerfSnapshot && adaptiveVisualsActive
-    ? Math.max(
-      avatarRuntimeOptions.sizeThreshold,
-      avatarPerfSnapshot.budget.sizeThreshold,
-    )
+    ? Math.max(avatarRuntimeOptions.sizeThreshold, avatarPerfSnapshot.budget.sizeThreshold)
     : avatarRuntimeOptions.sizeThreshold
   const effectiveZoomThreshold = avatarPerfSnapshot && adaptiveVisualsActive
-    ? Math.min(
-      avatarRuntimeOptions.zoomThreshold,
-      avatarPerfSnapshot.budget.zoomThreshold,
-    )
+    ? Math.min(avatarRuntimeOptions.zoomThreshold, avatarPerfSnapshot.budget.zoomThreshold)
     : avatarRuntimeOptions.zoomThreshold
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="sg-settings-section">
+      <h4>Avatares y monogramas</h4>
+      <div className="sg-setting-row">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-white/50">Render</p>
-          <h2 className="mt-1 text-sm font-semibold text-white">
-            Avatares
-          </h2>
+          <div className="sg-setting-row__lbl">Ocultar durante pan/drag</div>
+          <div className="sg-setting-row__desc">Cambia a monograma durante movimiento</div>
         </div>
-        <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/60">
-          {hideAvatarsOnMove ? 'fluido' : 'visible'}
-        </span>
-      </div>
-
-      <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-        <span className="text-sm text-white/80">
-          Ocultar durante pan, zoom y drag
-        </span>
-        <input
-          checked={hideAvatarsOnMove}
-          className="h-4 w-4 accent-[#7dd3a7]"
-          onChange={(event) => {
-            onHideAvatarsOnMoveChange(event.target.checked)
-          }}
-          type="checkbox"
-        />
-      </label>
-
-      <div className="mt-4 grid gap-4">
-        <label className="block">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-white/85">Radio minimo</span>
-            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-              {avatarRuntimeOptions.sizeThreshold.toFixed(0)}px
-            </span>
-          </div>
-          <input
-            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
-            max={32}
-            min={4}
-            onChange={(event) => {
-              onAvatarRuntimeOptionsChange({
-                ...avatarRuntimeOptions,
-                sizeThreshold: Number.parseInt(event.target.value, 10),
-              })
-            }}
-            step={1}
-            type="range"
-            value={avatarRuntimeOptions.sizeThreshold}
-          />
-          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
-            <span>4px</span>
-            <span>32px</span>
-          </div>
-        </label>
-
-        <label className="block">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-white/85">Zoom max</span>
-            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-              {avatarRuntimeOptions.zoomThreshold.toFixed(2)}x
-            </span>
-          </div>
-          <input
-            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7]"
-            max={4}
-            min={0.6}
-            onChange={(event) => {
-              onAvatarRuntimeOptionsChange({
-                ...avatarRuntimeOptions,
-                zoomThreshold: Number.parseFloat(event.target.value),
-              })
-            }}
-            step={0.05}
-            type="range"
-            value={avatarRuntimeOptions.zoomThreshold}
-          />
-          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
-            <span>0.60x</span>
-            <span>4.00x</span>
-          </div>
-        </label>
-
-        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-          <span className="text-sm text-white/80">
-            Monograma si se mueve rapido
-          </span>
-          <input
-            checked={avatarRuntimeOptions.hideImagesOnFastNodes}
-            className="h-4 w-4 accent-[#7dd3a7]"
-            onChange={(event) => {
-              onAvatarRuntimeOptionsChange({
-                ...avatarRuntimeOptions,
-                hideImagesOnFastNodes: event.target.checked,
-              })
-            }}
-            type="checkbox"
-          />
-        </label>
-
-        <label className="block">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-white/85">Velocidad max</span>
-            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-              {avatarRuntimeOptions.fastNodeVelocityThreshold.toFixed(0)}px/s
-            </span>
-          </div>
-          <input
-            className="mt-3 h-2 w-full cursor-pointer accent-[#7dd3a7] disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!avatarRuntimeOptions.hideImagesOnFastNodes}
-            max={1000}
-            min={40}
-            onChange={(event) => {
-              onAvatarRuntimeOptionsChange({
-                ...avatarRuntimeOptions,
-                fastNodeVelocityThreshold: Number.parseInt(
-                  event.target.value,
-                  10,
-                ),
-              })
-            }}
-            step={20}
-            type="range"
-            value={avatarRuntimeOptions.fastNodeVelocityThreshold}
-          />
-          <div className="mt-1 flex items-center justify-between text-[11px] text-white/35">
-            <span>40px/s</span>
-            <span>1000px/s</span>
-          </div>
-        </label>
-
         <button
-          className="rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:border-white/20"
-          onClick={() => {
-            onAvatarRuntimeOptionsChange(DEFAULT_AVATAR_RUNTIME_OPTIONS)
-          }}
+          className={`sg-toggle${hideAvatarsOnMove ? ' sg-toggle--on' : ''}`}
+          onClick={() => onHideAvatarsOnMoveChange(!hideAvatarsOnMove)}
           type="button"
-        >
-          Reset
-        </button>
-
-        <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-white/80">Adaptivo</span>
-            <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[11px] text-[#7dd3a7]">
-              {perfStatusLabel}
-            </span>
-          </div>
-          <dl className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Frame EMA</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot
-                  ? `${avatarPerfSnapshot.emaFrameMs.toFixed(1)}ms`
-                  : 'n/a'}
-              </dd>
+        />
+      </div>
+      <div className="sg-slider-row">
+        <div className="sg-slider-row__head">
+          <span className="sg-slider-row__lbl">Radio mínimo</span>
+          <span className="sg-slider-row__val">{avatarRuntimeOptions.sizeThreshold.toFixed(0)}px</span>
+        </div>
+        <input
+          className="sg-slider"
+          max={32}
+          min={4}
+          onChange={(event) => {
+            onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, sizeThreshold: Number.parseInt(event.target.value, 10) })
+          }}
+          step={1}
+          type="range"
+          value={avatarRuntimeOptions.sizeThreshold}
+        />
+      </div>
+      <div className="sg-slider-row">
+        <div className="sg-slider-row__head">
+          <span className="sg-slider-row__lbl">Zoom máx para fotos</span>
+          <span className="sg-slider-row__val">{avatarRuntimeOptions.zoomThreshold.toFixed(2)}×</span>
+        </div>
+        <input
+          className="sg-slider"
+          max={4}
+          min={0.6}
+          onChange={(event) => {
+            onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, zoomThreshold: Number.parseFloat(event.target.value) })
+          }}
+          step={0.05}
+          type="range"
+          value={avatarRuntimeOptions.zoomThreshold}
+        />
+      </div>
+      <div className="sg-setting-row">
+        <div>
+          <div className="sg-setting-row__lbl">Monograma si se mueve rápido</div>
+        </div>
+        <button
+          className={`sg-toggle${avatarRuntimeOptions.hideImagesOnFastNodes ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, hideImagesOnFastNodes: !avatarRuntimeOptions.hideImagesOnFastNodes })}
+          type="button"
+        />
+      </div>
+      <button
+        className="sg-btn"
+        onClick={() => { onAvatarRuntimeOptionsChange(DEFAULT_AVATAR_RUNTIME_OPTIONS) }}
+        style={{ width: '100%', marginTop: 8 }}
+        type="button"
+      >
+        Reset avatares
+      </button>
+      <div style={{ marginTop: 12, border: '1px solid var(--sg-stroke)', borderRadius: 8, padding: '10px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: 'var(--sg-fg-muted)' }}>Adaptivo</span>
+          <span style={{ fontFamily: 'var(--sg-font-mono)', fontSize: 11, color: 'var(--sg-fg-muted)' }}>{perfStatusLabel}</span>
+        </div>
+        <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          {[
+            ['Frame EMA', avatarPerfSnapshot ? `${avatarPerfSnapshot.emaFrameMs.toFixed(1)}ms` : 'n/a'],
+            ['Base', avatarPerfSnapshot?.baseTier ?? 'n/a'],
+            ['Loads', avatarPerfSnapshot?.budget.concurrency ?? 'n/a'],
+            ['Bucket', avatarPerfSnapshot ? `${avatarPerfSnapshot.budget.maxBucket}px` : 'n/a'],
+            ['Radio eff', `${effectiveSizeThreshold.toFixed(0)}px`],
+            ['Zoom eff', `${effectiveZoomThreshold.toFixed(2)}×`],
+          ].map(([k, v]) => (
+            <div key={k as string} style={{ background: 'oklch(100% 0 0 / 0.03)', borderRadius: 6, padding: '4px 8px' }}>
+              <div style={{ fontSize: 10, color: 'var(--sg-fg-faint)' }}>{k}</div>
+              <div style={{ fontFamily: 'var(--sg-font-mono)', fontSize: 11, color: 'var(--sg-fg-muted)', marginTop: 2 }}>{v}</div>
             </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Base</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.baseTier ?? 'n/a'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Loads</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.budget.concurrency ?? 'n/a'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Bucket</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot
-                  ? `${avatarPerfSnapshot.budget.maxBucket}px`
-                  : 'n/a'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">LRU</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.budget.lruCap ?? 'n/a'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Draw</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.budget.drawAvatars ?? false ? 'on' : 'off'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Radio eff</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {`${effectiveSizeThreshold.toFixed(0)}px`}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Zoom eff</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {`${effectiveZoomThreshold.toFixed(2)}x`}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Avatars cap</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.budget.maxAvatarDrawsPerFrame ?? 'n/a'}
-              </dd>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] px-2 py-1">
-              <dt className="text-white/35">Fotos cap</dt>
-              <dd className="mt-0.5 font-mono text-white/70">
-                {avatarPerfSnapshot?.budget.maxImageDrawsPerFrame ?? 'n/a'}
-              </dd>
-            </div>
-          </dl>
+          ))}
         </div>
       </div>
-    </section>
+    </div>
   )
 }
+
+function mapNostrProfileToSavedRootProfile(profile: NostrProfile): SavedRootProfileSnapshot {
+  return {
+    displayName: profile.displayName ?? null,
+    name: profile.name ?? null,
+    picture: profile.picture ?? null,
+    about: profile.about ?? null,
+    nip05: profile.nip05 ?? null,
+    lud16: profile.lud16 ?? null,
+  }
+}
+
+function mapCanonicalNodeToSavedRootProfile(node: CanonicalNode): SavedRootProfileSnapshot {
+  return {
+    displayName: node.label ?? null,
+    name: node.label ?? null,
+    picture: node.picture ?? null,
+    about: node.about ?? null,
+    nip05: node.nip05 ?? null,
+    lud16: node.lud16 ?? null,
+  }
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function GraphAppV2() {
   const searchParams = useSearchParams()
@@ -892,28 +582,20 @@ export default function GraphAppV2() {
     isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
   )
   const [actionFeedback, setActionFeedback] = useState<string | null>(null)
-  const liveDomainState = useSyncExternalStore(
-    bridge.subscribe,
-    bridge.getState,
-    bridge.getState,
-  )
+  const liveDomainState = useSyncExternalStore(bridge.subscribe, bridge.getState, bridge.getState)
   const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
     () => (isFixtureMode ? createDragLocalFixture().state : null),
   )
   const [lastViewportRatio, setLastViewportRatio] = useState<number | null>(null)
   const [dragInfluenceTuning, setDragInfluenceTuning] =
-    useState<DragNeighborhoodInfluenceTuning>(
-      DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING,
-    )
+    useState<DragNeighborhoodInfluenceTuning>(DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING)
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(false)
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
-  const [avatarPerfSnapshot, setAvatarPerfSnapshot] =
-    useState<PerfBudgetSnapshot | null>(null)
-  const [activeSettingsTab, setActiveSettingsTab] =
-    useState<SigmaSettingsTab>('renderer')
+  const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('renderer')
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
@@ -925,9 +607,9 @@ export default function GraphAppV2() {
     removeSavedRoot,
     setSavedRootProfile,
   } = useAppStore(useShallow(selectSavedRootState))
+
   useEffect(() => {
     bridge.connect()
-
     return () => bridge.dispose()
   }, [bridge])
 
@@ -956,18 +638,23 @@ export default function GraphAppV2() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') {
+      if (event.key === 'Escape') {
+        if (isSettingsOpen) { setIsSettingsOpen(false); return }
+        if (isRootSheetOpen && domainState.rootPubkey) { setIsRootSheetOpen(false); return }
         return
       }
-      if (isSettingsOpen) {
-        setIsSettingsOpen(false)
-        return
-      }
-      if (isRootSheetOpen && domainState.rootPubkey) {
-        setIsRootSheetOpen(false)
+      if (event.key === '/') {
+        // Don't hijack '/' when typing into an input, textarea, or contenteditable.
+        const target = event.target as HTMLElement | null
+        if (target) {
+          const tag = target.tagName
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
+        }
+        if (isRootSheetOpen) return
+        event.preventDefault()
+        setIsRootSheetOpen(true)
       }
     }
-
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [domainState.rootPubkey, isRootSheetOpen, isSettingsOpen])
@@ -978,22 +665,12 @@ export default function GraphAppV2() {
         ? {
             onNodeClick: (pubkey: string) => {
               setFixtureState((current) =>
-                current
-                  ? {
-                      ...current,
-                      selectedNodePubkey: pubkey,
-                    }
-                  : current,
+                current ? { ...current, selectedNodePubkey: pubkey } : current,
               )
             },
             onClearSelection: () => {
               setFixtureState((current) =>
-                current
-                  ? {
-                      ...current,
-                      selectedNodePubkey: null,
-                    }
-                  : current,
+                current ? { ...current, selectedNodePubkey: null } : current,
               )
             },
             onNodeHover: () => {},
@@ -1007,6 +684,7 @@ export default function GraphAppV2() {
         : controller.callbacks,
     [controller, isFixtureMode],
   )
+
   const prevSignatureRef = useRef<string | null>(null)
   useEffect(() => {
     if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
@@ -1015,22 +693,7 @@ export default function GraphAppV2() {
     if (prev !== null && prev !== sig) {
       const prevParts = prev.split('|')
       const nextParts = sig.split('|')
-      const KEYS = [
-        'rootPubkey',
-        'activeLayer',
-        'connectionsSourceLayer',
-        'selectedNodePubkey',
-        'nodeVisuals',
-        'expandedNodePubkeys',
-        'nodeCount',
-        'edgeCount',
-        'graphRevision',
-        'inboundGraphRevision',
-        'connectionsLinksRevision',
-        'relayUrls',
-        'relayFreshness',
-        'pinnedNodePubkeys',
-      ]
+      const KEYS = ['rootPubkey','activeLayer','connectionsSourceLayer','selectedNodePubkey','nodeVisuals','expandedNodePubkeys','nodeCount','edgeCount','graphRevision','inboundGraphRevision','connectionsLinksRevision','relayUrls','relayFreshness','pinnedNodePubkeys']
       const changed = KEYS.filter((k, i) => prevParts[i] !== nextParts[i])
       console.info('[graph-v2 perf] sceneSignature changed:', changed.join(', '))
     }
@@ -1039,8 +702,6 @@ export default function GraphAppV2() {
 
   const scene = useMemo(
     () => buildGraphSceneSnapshot(domainState),
-    // domainState also carries relay/progress objects; sceneSignature is the
-    // structural key that decides when Sigma must receive a new scene.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [domainState.sceneSignature],
   )
@@ -1057,33 +718,13 @@ export default function GraphAppV2() {
   const isDragFixtureLab = fixtureName === 'drag-local'
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
-  const rootEntryTitle = domainState.rootPubkey === null
-    ? shouldShowSavedRootsSection
-      ? 'Identidades guardadas'
-      : 'Cargar identidad'
-    : shouldShowSavedRootsSection
-      ? 'Cambiar identidad'
-      : 'Cambiar root'
-  const rootEntryEyebrow = domainState.rootPubkey === null
-    ? shouldShowSavedRootsSection
-      ? 'Guardadas'
-      : 'Identidad'
-    : 'Identidad'
 
-  const updateFixtureState = (
-    updater: (current: CanonicalGraphState) => CanonicalGraphState,
-  ) => {
-    setFixtureState((current) =>
-      current ? withClientSceneSignature(updater(current)) : current,
-    )
+  const updateFixtureState = (updater: (current: CanonicalGraphState) => CanonicalGraphState) => {
+    setFixtureState((current) => current ? withClientSceneSignature(updater(current)) : current)
   }
 
   const relationshipControlLayer = useMemo(
-    () =>
-      resolveRelationshipControlLayer(
-        domainState.activeLayer,
-        domainState.connectionsSourceLayer,
-      ),
+    () => resolveRelationshipControlLayer(domainState.activeLayer, domainState.connectionsSourceLayer),
     [domainState.activeLayer, domainState.connectionsSourceLayer],
   )
   const relationshipToggleState = useMemo(
@@ -1095,68 +736,31 @@ export default function GraphAppV2() {
   const canToggleOnlyNonReciprocal =
     isRelationshipLayer(relationshipControlLayer) &&
     (relationshipToggleState.following || relationshipToggleState.followers)
-  const isNonReciprocalAvailable =
-    canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
-  const isNonReciprocalActive =
-    isNonReciprocalAvailable && relationshipToggleState.onlyNonReciprocal
-  const connectionFilterLabel = resolveConnectionFilterLabel(
-    relationshipToggleState,
-  )
-
+  const isNonReciprocalAvailable = canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
+  const isNonReciprocalActive = isNonReciprocalAvailable && relationshipToggleState.onlyNonReciprocal
   useEffect(() => {
-    if (!savedRootsHydrated || savedRoots.length === 0) {
-      return
-    }
-
+    if (!savedRootsHydrated || savedRoots.length === 0) return
     const rootsNeedingRefresh = savedRoots
-      .filter(
-        (savedRoot) =>
-          savedRoot.profileFetchedAt === null ||
-          Date.now() - savedRoot.profileFetchedAt > SAVED_ROOT_PROFILE_STALE_MS,
+      .filter((savedRoot) =>
+        savedRoot.profileFetchedAt === null ||
+        Date.now() - savedRoot.profileFetchedAt > SAVED_ROOT_PROFILE_STALE_MS,
       )
       .slice(0, MAX_SAVED_ROOT_REFRESHES)
-
-    if (rootsNeedingRefresh.length === 0) {
-      return
-    }
-
+    if (rootsNeedingRefresh.length === 0) return
     let cancelled = false
-
     void Promise.allSettled(
       rootsNeedingRefresh.map(async (savedRoot) => {
         const profile = await fetchProfileByPubkey(savedRoot.pubkey)
-        if (cancelled) {
-          return
-        }
-
-        setSavedRootProfile(
-          savedRoot.pubkey,
-          mapNostrProfileToSavedRootProfile(profile),
-          Date.now(),
-        )
+        if (cancelled) return
+        setSavedRootProfile(savedRoot.pubkey, mapNostrProfileToSavedRootProfile(profile), Date.now())
       }),
     )
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [savedRoots, savedRootsHydrated, setSavedRootProfile])
 
   useEffect(() => {
-    if (!domainState.rootPubkey || !currentRootNode) {
-      return
-    }
-
-    if (
-      !currentRootNode.label &&
-      !currentRootNode.picture &&
-      !currentRootNode.nip05 &&
-      !currentRootNode.about &&
-      !currentRootNode.lud16
-    ) {
-      return
-    }
-
+    if (!domainState.rootPubkey || !currentRootNode) return
+    if (!currentRootNode.label && !currentRootNode.picture && !currentRootNode.nip05 && !currentRootNode.about && !currentRootNode.lud16) return
     setSavedRootProfile(
       domainState.rootPubkey,
       mapCanonicalNodeToSavedRootProfile(currentRootNode),
@@ -1165,33 +769,17 @@ export default function GraphAppV2() {
   }, [currentRootNode, domainState.rootPubkey, setSavedRootProfile])
 
   const togglePinnedNode = (pubkey: string) => {
-    if (!isFixtureMode) {
-      bridge.togglePinnedNode(pubkey)
-      return
-    }
-
+    if (!isFixtureMode) { bridge.togglePinnedNode(pubkey); return }
     updateFixtureState((current) => {
       const pinnedNodePubkeys = new Set(current.pinnedNodePubkeys)
-
-      if (pinnedNodePubkeys.has(pubkey)) {
-        pinnedNodePubkeys.delete(pubkey)
-      } else {
-        pinnedNodePubkeys.add(pubkey)
-      }
-
-      return {
-        ...current,
-        pinnedNodePubkeys,
-      }
+      if (pinnedNodePubkeys.has(pubkey)) pinnedNodePubkeys.delete(pubkey)
+      else pinnedNodePubkeys.add(pubkey)
+      return { ...current, pinnedNodePubkeys }
     })
   }
 
   const toggleLayer = (layer: (typeof GRAPH_V2_LAYERS)[number]) => {
-    if (!isFixtureMode) {
-      bridge.toggleLayer(layer)
-      return
-    }
-
+    if (!isFixtureMode) { bridge.toggleLayer(layer); return }
     updateFixtureState((current) => ({
       ...current,
       activeLayer: layer,
@@ -1202,164 +790,64 @@ export default function GraphAppV2() {
     }))
   }
 
-  const handleToggleConnections = () => {
-    toggleLayer(domainState.activeLayer === 'connections' ? 'graph' : 'connections')
-  }
-
   const setConnectionsSourceLayer = (layer: ConnectionsSourceLayer) => {
-    if (!isFixtureMode) {
-      bridge.setConnectionsSourceLayer(layer)
-      return
-    }
-
-    updateFixtureState((current) => ({
-      ...current,
-      connectionsSourceLayer: layer,
-    }))
+    if (!isFixtureMode) { bridge.setConnectionsSourceLayer(layer); return }
+    updateFixtureState((current) => ({ ...current, connectionsSourceLayer: layer }))
   }
 
   const handleToggleRelationship = (role: 'following' | 'followers') => {
     const current = getRelationshipToggleState(relationshipControlLayer)
-    const nextFollowing =
-      role === 'following' ? !current.following : current.following
-    const nextFollowers =
-      role === 'followers' ? !current.followers : current.followers
+    const nextFollowing = role === 'following' ? !current.following : current.following
+    const nextFollowers = role === 'followers' ? !current.followers : current.followers
 
     if (domainState.activeLayer === 'connections') {
-      if (!nextFollowing && !nextFollowers) {
-        toggleLayer('graph')
-        return
-      }
-
-      if (nextFollowing && nextFollowers) {
-        setConnectionsSourceLayer('mutuals')
-        return
-      }
-
-      if (nextFollowing) {
-        setConnectionsSourceLayer(
-          current.onlyNonReciprocal ? 'following-non-followers' : 'following',
-        )
-        return
-      }
-
-      setConnectionsSourceLayer(
-        current.onlyNonReciprocal
-          ? 'nonreciprocal-followers'
-          : 'followers',
-      )
+      if (!nextFollowing && !nextFollowers) { toggleLayer('graph'); return }
+      if (nextFollowing && nextFollowers) { setConnectionsSourceLayer('mutuals'); return }
+      if (nextFollowing) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'following-non-followers' : 'following'); return }
+      setConnectionsSourceLayer(current.onlyNonReciprocal ? 'nonreciprocal-followers' : 'followers')
       return
     }
-
-    if (!nextFollowing && !nextFollowers) {
-      toggleLayer('graph')
-      return
-    }
-
-    if (nextFollowing && nextFollowers) {
-      toggleLayer('mutuals')
-      return
-    }
-
-    if (nextFollowing) {
-      toggleLayer(
-        current.onlyNonReciprocal ? 'following-non-followers' : 'following',
-      )
-      return
-    }
-
-    toggleLayer(
-      current.onlyNonReciprocal
-        ? 'nonreciprocal-followers'
-        : 'followers',
-    )
+    if (!nextFollowing && !nextFollowers) { toggleLayer('graph'); return }
+    if (nextFollowing && nextFollowers) { toggleLayer('mutuals'); return }
+    if (nextFollowing) { toggleLayer(current.onlyNonReciprocal ? 'following-non-followers' : 'following'); return }
+    toggleLayer(current.onlyNonReciprocal ? 'nonreciprocal-followers' : 'followers')
   }
 
   const handleToggleOnlyNonReciprocal = () => {
     const current = getRelationshipToggleState(relationshipControlLayer)
-
-    if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) {
-      return
-    }
-
+    if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) return
     if (domainState.activeLayer === 'connections') {
-      if (current.following) {
-        setConnectionsSourceLayer(
-          current.onlyNonReciprocal ? 'following' : 'following-non-followers',
-        )
-        return
-      }
-
-      if (current.followers) {
-        setConnectionsSourceLayer(
-          current.onlyNonReciprocal
-            ? 'followers'
-            : 'nonreciprocal-followers',
-        )
-      }
+      if (current.following) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'following' : 'following-non-followers'); return }
+      if (current.followers) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'followers' : 'nonreciprocal-followers') }
       return
     }
-
-    if (current.following) {
-      toggleLayer(
-        current.onlyNonReciprocal ? 'following' : 'following-non-followers',
-      )
-      return
-    }
-
-    if (current.followers) {
-      toggleLayer(
-        current.onlyNonReciprocal
-          ? 'followers'
-          : 'nonreciprocal-followers',
-      )
-    }
+    if (current.following) { toggleLayer(current.onlyNonReciprocal ? 'following' : 'following-non-followers'); return }
+    if (current.followers) { toggleLayer(current.onlyNonReciprocal ? 'followers' : 'nonreciprocal-followers') }
   }
 
-  const updateDragInfluenceTuning = <
-    K extends keyof DragNeighborhoodInfluenceTuning,
-  >(
-    key: K,
-    value: DragNeighborhoodInfluenceTuning[K],
-  ) => {
-    setDragInfluenceTuning((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }
+  const updateDragInfluenceTuning = <K extends keyof DragNeighborhoodInfluenceTuning>(
+    key: K, value: DragNeighborhoodInfluenceTuning[K],
+  ) => { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }
 
-  const visiblePubkeys = useMemo(
-    () => deferredScene.nodes.map((node) => node.pubkey),
-    [deferredScene],
-  )
-  const visibleNodeSet = useMemo(
-    () => new Set(visiblePubkeys),
-    [visiblePubkeys],
-  )
+  const visiblePubkeys = useMemo(() => deferredScene.nodes.map((node) => node.pubkey), [deferredScene])
+  const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
 
   const handleZap = (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     if (!visibleNodeSet.has(zap.fromPubkey)) return false
     if (!visibleNodeSet.has(zap.toPubkey)) return false
-    if (!hasVisibleEdgeBetween(deferredScene, zap.fromPubkey, zap.toPubkey)) {
-      return false
-    }
+    if (!hasVisibleEdgeBetween(deferredScene, zap.fromPubkey, zap.toPubkey)) return false
     return sigmaHostRef.current?.playZap(zap) ?? false
   }
-  const shouldEnableLiveZapFeed =
-    !isFixtureMode && domainState.activeLayer !== 'connections'
 
+  const shouldEnableLiveZapFeed = !isFixtureMode && domainState.activeLayer !== 'connections'
   useLiveZapFeed({
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
-    onZap: (zap) => {
-      handleZap(zap)
-    },
+    onZap: (zap) => { handleZap(zap) },
   })
 
   const isDev = process.env.NODE_ENV === 'development'
-  const findSimulationPair = ():
-    | { from: string; to: string }
-    | null => {
+  const findSimulationPair = (): { from: string; to: string } | null => {
     for (const edge of deferredScene.visibleEdges) {
       if (edge.hidden) continue
       if (!visibleNodeSet.has(edge.source)) continue
@@ -1369,66 +857,39 @@ export default function GraphAppV2() {
     return null
   }
   const simulationPair = isDev ? findSimulationPair() : null
-  const stableAvatarRuntimeOptions = useMemo(
-    () => avatarRuntimeOptions,
-    [avatarRuntimeOptions],
-  )
+
+  const stableAvatarRuntimeOptions = useMemo(() => avatarRuntimeOptions, [avatarRuntimeOptions])
   const handleAvatarPerfSnapshot = useCallback(
-    (snapshot: PerfBudgetSnapshot | null) => {
-      setAvatarPerfSnapshot(snapshot)
-    },
+    (snapshot: PerfBudgetSnapshot | null) => { setAvatarPerfSnapshot(snapshot) },
     [],
   )
 
   const handleSimulateZap = () => {
     const pair = findSimulationPair()
-    if (!pair) {
-      setZapFeedback('Sin pares visibles conectados para simular.')
-      return
-    }
-    // Random direction so sender/receiver alternate on repeated clicks.
+    if (!pair) { setZapFeedback('Sin pares visibles conectados para simular.'); return }
     const flipped = Math.random() < 0.5
     const fromPubkey = flipped ? pair.to : pair.from
     const toPubkey = flipped ? pair.from : pair.to
-    // Skewed sats sample to exercise the radius scale across its range.
     const buckets = [21, 210, 2_100, 21_000, 210_000]
     const sats = buckets[Math.floor(Math.random() * buckets.length)]
     const played = handleZap({ fromPubkey, toPubkey, sats })
     setZapFeedback(
       played
         ? `Zap simulado: ${sats} sats ${fromPubkey.slice(0, 8)}… → ${toPubkey.slice(0, 8)}…`
-        : 'No se pudo reproducir el zap simulado (nodos o arista ya no visibles).',
+        : 'No se pudo reproducir el zap simulado.',
     )
   }
 
   const updatePhysicsTuning = <K extends keyof ForceAtlasPhysicsTuning>(
-    key: K,
-    value: ForceAtlasPhysicsTuning[K],
-  ) => {
-    setPhysicsTuning((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }
+    key: K, value: ForceAtlasPhysicsTuning[K],
+  ) => { setPhysicsTuning((current) => ({ ...current, [key]: value })) }
 
   const handleApplyRelays = async (relayUrls: string[]) => {
     if (isFixtureMode) {
-      updateFixtureState((current) => ({
-        ...current,
-        relayState: {
-          ...current.relayState,
-          urls: relayUrls,
-        },
-      }))
+      updateFixtureState((current) => ({ ...current, relayState: { ...current.relayState, urls: relayUrls } }))
       setActionFeedback(`Fixture actualizado con ${relayUrls.length} relays.`)
-      return {
-        relayUrls,
-        overrideStatus: 'idle',
-        isGraphStale: false,
-        message: `Fixture actualizado con ${relayUrls.length} relays.`,
-      }
+      return { relayUrls, overrideStatus: 'idle', isGraphStale: false, message: `Fixture actualizado con ${relayUrls.length} relays.` }
     }
-
     const result = await bridge.setRelays(relayUrls)
     setActionFeedback(result.message)
     return result
@@ -1436,21 +897,12 @@ export default function GraphAppV2() {
 
   const handleRevertRelays = async () => {
     if (isFixtureMode) {
-      updateFixtureState((current) => ({
-        ...current,
-        relayState: {
-          ...current.relayState,
-          urls: ['wss://fixture.local'],
-        },
-      }))
+      updateFixtureState((current) => ({ ...current, relayState: { ...current.relayState, urls: ['wss://fixture.local'] } }))
       setActionFeedback('Fixture de relays revertido.')
       return
     }
-
     const result = await bridge.revertRelays()
-    setActionFeedback(
-      result?.message ?? 'No habia override activo para revertir.',
-    )
+    setActionFeedback(result?.message ?? 'No había override activo para revertir.')
   }
 
   const openSettingsTab = (tab: SigmaSettingsTab) => {
@@ -1476,37 +928,15 @@ export default function GraphAppV2() {
     }) => {
       setValidationFeedback(null)
       setLoadFeedback('Cargando root...')
-
       startTransition(() => {
-        if (isFixtureMode) {
-          setLoadFeedback('El fixture no admite cargar roots manuales.')
-          return
-        }
-
+        if (isFixtureMode) { setLoadFeedback('El fixture no admite cargar roots manuales.'); return }
         const encodedNpub = npub ?? nip19.npubEncode(pubkey)
-        upsertSavedRoot({
-          pubkey,
-          npub: encodedNpub,
-          openedAt: Date.now(),
-          relayHints: relays,
-          profile,
-          profileFetchedAt,
-        })
-
+        upsertSavedRoot({ pubkey, npub: encodedNpub, openedAt: Date.now(), relayHints: relays, profile, profileFetchedAt })
         void bridge
-          .loadRoot(pubkey, {
-            bootstrapRelayUrls: relays,
-          })
-          .then((result) => {
-            setLoadFeedback(result.message)
-            setIsRootSheetOpen(false)
-          })
+          .loadRoot(pubkey, { bootstrapRelayUrls: relays })
+          .then((result) => { setLoadFeedback(result.message); setIsRootSheetOpen(false) })
           .catch((error) => {
-            setLoadFeedback(
-              error instanceof Error
-                ? error.message
-                : 'No se pudo cargar el root.',
-            )
+            setLoadFeedback(error instanceof Error ? error.message : 'No se pudo cargar el root.')
           })
       })
     },
@@ -1515,706 +945,509 @@ export default function GraphAppV2() {
 
   const handleSelectSavedRoot = useCallback(
     (savedRoot: SavedRootEntry) => {
-      loadRootFromPointer({
-        pubkey: savedRoot.pubkey,
-        kind: 'npub',
-        npub: savedRoot.npub,
-        relays: savedRoot.relayHints ?? [],
-        profile: savedRoot.profile,
-        profileFetchedAt: savedRoot.profileFetchedAt,
-      })
+      loadRootFromPointer({ pubkey: savedRoot.pubkey, kind: 'npub', npub: savedRoot.npub, relays: savedRoot.relayHints ?? [], profile: savedRoot.profile, profileFetchedAt: savedRoot.profileFetchedAt })
     },
     [loadRootFromPointer],
   )
 
   const handleDeleteSavedRoot = useCallback(
-    (savedRoot: SavedRootEntry) => {
-      removeSavedRoot(savedRoot.pubkey)
-    },
+    (savedRoot: SavedRootEntry) => { removeSavedRoot(savedRoot.pubkey) },
     [removeSavedRoot],
   )
 
-  const settingsStatusItems = [
-    { label: 'Root', value: domainState.rootPubkey ? 'loaded' : 'empty' },
-    { label: 'Vista', value: domainState.activeLayer },
+  // ── Derived values for UI components ───────────────────────────────────────
+
+  const hasRoot = domainState.rootPubkey !== null
+
+  const rootDisplayName = currentRootNode?.label ?? null
+  const rootPictureUrl = currentRootNode?.picture ?? null
+  const rootNpubEncoded = useMemo(() => {
+    const pk = domainState.rootPubkey
+    if (!pk || !/^[0-9a-f]{64}$/i.test(pk)) return null
+    try { return nip19.npubEncode(pk) } catch { return null }
+  }, [domainState.rootPubkey])
+
+  // Filter bar: active pill maps from active layer
+  const filterActiveId = useMemo((): FilterPill['id'] => {
+    const layer = domainState.activeLayer
+    if (layer === 'following') return 'following'
+    if (layer === 'followers') return 'followers'
+    if (layer === 'mutuals') return 'mutuals'
+    if (layer === 'following-non-followers' || layer === 'nonreciprocal-followers') return 'oneway'
+    return 'all'
+  }, [domainState.activeLayer])
+
+  const filterPills: FilterPill[] = [
+    { id: 'all',       label: 'Todos',            count: deferredScene.diagnostics.nodeCount, swatch: 'oklch(55% 0.02 230)' },
+    { id: 'following', label: 'Sigo',             count: null, swatch: 'oklch(65% 0.10 220)' },
+    { id: 'followers', label: 'Me siguen',        count: null, swatch: 'oklch(65% 0.08 300)' },
+    { id: 'mutuals',   label: 'Mutuos',           count: null, swatch: 'oklch(72% 0.06 220)' },
+    { id: 'oneway',    label: 'Sin reciprocidad', count: null, swatch: 'oklch(60% 0.06 80)' },
+  ]
+
+  const handleFilterSelect = (id: FilterPill['id']) => {
+    if (id === 'all')       { toggleLayer('graph'); return }
+    if (id === 'following') { toggleLayer('following'); return }
+    if (id === 'followers') { toggleLayer('followers'); return }
+    if (id === 'mutuals')   { toggleLayer('mutuals'); return }
+    if (id === 'oneway') {
+      const cur = domainState.activeLayer
+      if (cur === 'following-non-followers' || cur === 'nonreciprocal-followers') return
+      toggleLayer('following-non-followers')
+    }
+  }
+
+  // HUD stats
+  const hudStats: HudStat[] = [
+    { k: 'Nodos',   v: String(deferredScene.diagnostics.nodeCount) },
+    { k: 'Aristas', v: String(deferredScene.diagnostics.forceEdgeCount) },
+    { k: 'Visibles', v: String(deferredScene.diagnostics.visibleEdgeCount) },
     {
-      label: 'Filtro',
-      value:
-        domainState.activeLayer === 'connections'
-          ? domainState.connectionsSourceLayer
-          : 'directo',
+      k: 'Física',
+      v: 'activa',
+      tone: 'good',
     },
     {
-      label: 'Relays',
-      value: `${domainState.relayState.urls.length} ${
-        domainState.relayState.isGraphStale ? 'stale' : 'live'
-      }`,
+      k: 'Relays',
+      v: `${domainState.relayState.isGraphStale ? Math.max(0, deferredScene.diagnostics.relayCount - 1) : deferredScene.diagnostics.relayCount}/${deferredScene.diagnostics.relayCount}`,
+      tone: domainState.relayState.isGraphStale ? 'warn' : 'good',
+    },
+    {
+      k: 'Frame',
+      v: avatarPerfSnapshot ? `${avatarPerfSnapshot.emaFrameMs.toFixed(1)}ms` : '—',
+      tone: avatarPerfSnapshot && avatarPerfSnapshot.emaFrameMs > 20 ? 'warn' : 'default',
     },
   ]
+
+  // Rail buttons
+  const railButtons: RailButton[] = [
+    {
+      id: 'settings',
+      tip: 'Ajustes',
+      icon: <GearIcon />,
+      active: isSettingsOpen,
+      onClick: () => openSettingsTab('renderer'),
+    },
+    {
+      id: 'physics',
+      tip: 'Física',
+      icon: <AtomIcon />,
+      active: isSettingsOpen && activeSettingsTab === 'physics',
+      onClick: () => openSettingsTab('physics'),
+    },
+    {
+      id: 'zaps',
+      tip: 'Zaps',
+      icon: <ZapIcon />,
+      active: isSettingsOpen && activeSettingsTab === 'layers',
+      onClick: () => openSettingsTab('layers'),
+      dividerAfter: true,
+    },
+    {
+      id: 'recenter',
+      tip: 'Recentrar',
+      icon: <TargetIcon />,
+      onClick: () => {
+        setActionFeedback('Recentrar: usa zoom y pan manual.')
+      },
+    },
+    {
+      id: 'stale',
+      tip: 'Estado de relays',
+      icon: <ClockIcon />,
+      active: domainState.relayState.isGraphStale,
+      onClick: () => {
+        void handleRevertRelays()
+      },
+      dividerAfter: true,
+    },
+    {
+      id: 'search',
+      tip: 'Cargar identidad (/)',
+      icon: <SearchIcon />,
+      onClick: () => setIsRootSheetOpen(true),
+    },
+  ]
+
+  // Toasts — combine feedback sources
+  const toastEntries: SigmaToast[] = useMemo(() => {
+    const entries: SigmaToast[] = []
+    if (actionFeedback) entries.push({ id: 'action', msg: actionFeedback, tone: 'default' })
+    if (zapFeedback)    entries.push({ id: 'zap', msg: zapFeedback, tone: 'zap' })
+    if (validationFeedback) entries.push({ id: 'validation', msg: validationFeedback, tone: 'warn' })
+    return entries
+  }, [actionFeedback, zapFeedback, validationFeedback])
+
+  // Minimap viewport info
+  const viewportRatio = isFixtureMode
+    ? lastViewportRatio
+    : controller.getLastViewport()?.ratio ?? null
+
+  // ── Settings panel content ─────────────────────────────────────────────────
 
   const renderSettingsContent = () => {
     switch (activeSettingsTab) {
       case 'renderer':
         return (
-          <section className="settings-panel">
-            <div className="settings-panel__header">
-              <p className="settings-panel__eyebrow">Render</p>
-              <h2>Avatares Sigma</h2>
-              <p className="settings-panel__copy">
-                Ajusta fotos, fallback y degradacion sin reiniciar la fisica.
-              </p>
-            </div>
-            <RenderOptionsPanel
-              avatarRuntimeOptions={avatarRuntimeOptions}
-              avatarPerfSnapshot={avatarPerfSnapshot}
-              hideAvatarsOnMove={hideAvatarsOnMove}
-              onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
-              onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
-            />
-          </section>
+          <RenderOptionsPanel
+            avatarPerfSnapshot={avatarPerfSnapshot}
+            avatarRuntimeOptions={avatarRuntimeOptions}
+            hideAvatarsOnMove={hideAvatarsOnMove}
+            onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+            onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
+          />
         )
       case 'physics':
         return (
-          <section className="settings-panel">
-            <div className="settings-panel__header">
-              <p className="settings-panel__eyebrow">Fisica</p>
-              <h2>ForceAtlas2</h2>
-              <p className="settings-panel__copy">
-                Tunea el feel del grafo vivo sin tocar el dominio.
-              </p>
-            </div>
+          <>
             <PhysicsTuningPanel
               onChange={updatePhysicsTuning}
-              onReset={() => {
-                setPhysicsTuning(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
-              }}
+              onReset={() => setPhysicsTuning(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)}
               tuning={physicsTuning}
             />
             {isDragFixtureLab ? (
               <DragTuningPanel
                 onChange={updateDragInfluenceTuning}
-                onReset={() => {
-                  setDragInfluenceTuning(
-                    DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING,
-                  )
-                }}
+                onReset={() => setDragInfluenceTuning(DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING)}
                 tuning={dragInfluenceTuning}
               />
             ) : null}
-          </section>
+          </>
         )
       case 'layers':
         return (
-          <section className="settings-panel">
-            <div className="settings-panel__header">
-              <p className="settings-panel__eyebrow">Capas</p>
-              <h2>Proyeccion activa</h2>
-              <p className="settings-panel__copy">
-                Cambia la lectura del vecindario visible en Sigma.
-              </p>
-            </div>
-            <section className="settings-card sigma-lab-layer-list">
+          <div className="sg-settings-section">
+            <h4>Proyección activa</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {GRAPH_V2_LAYERS.map((layer) => {
                 const isActive = layer === domainState.activeLayer
                 return (
                   <button
                     aria-pressed={isActive}
-                    className={`settings-pill${
-                      isActive ? ' settings-pill--active' : ''
-                    }`}
+                    className={`sg-btn${isActive ? ' sg-btn--primary' : ''}`}
                     key={layer}
-                    onClick={() => {
-                      toggleLayer(layer)
-                    }}
+                    onClick={() => toggleLayer(layer)}
+                    style={{ justifyContent: 'flex-start' }}
                     type="button"
                   >
                     {LAYER_LABELS[layer]}
                   </button>
                 )
               })}
-            </section>
-          </section>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <h4>Filtros de relación</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="sg-setting-row">
+                  <span className="sg-setting-row__lbl">Sigo</span>
+                  <button
+                    className={`sg-toggle${relationshipToggleState.following ? ' sg-toggle--on' : ''}`}
+                    onClick={() => handleToggleRelationship('following')}
+                    type="button"
+                  />
+                </div>
+                <div className="sg-setting-row">
+                  <span className="sg-setting-row__lbl">Me siguen</span>
+                  <button
+                    className={`sg-toggle${relationshipToggleState.followers ? ' sg-toggle--on' : ''}`}
+                    onClick={() => handleToggleRelationship('followers')}
+                    type="button"
+                  />
+                </div>
+                {isNonReciprocalAvailable ? (
+                  <div className="sg-setting-row">
+                    <span className="sg-setting-row__lbl">Solo sin reciprocidad</span>
+                    <button
+                      className={`sg-toggle${isNonReciprocalActive ? ' sg-toggle--on' : ''}`}
+                      onClick={handleToggleOnlyNonReciprocal}
+                      type="button"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
         )
       case 'relays':
         return (
-          <section className="settings-panel">
-            <div className="settings-panel__header">
-              <p className="settings-panel__eyebrow">Relays</p>
-              <h2>Bridge override</h2>
-              <p className="settings-panel__copy">
-                Cambia relays manteniendo estados parciales visibles.
-              </p>
-            </div>
-            <RelayEditor
-              isGraphStale={domainState.relayState.isGraphStale}
-              onApply={handleApplyRelays}
-              onRevert={handleRevertRelays}
-              overrideStatus={domainState.relayState.overrideStatus}
-              relayUrls={domainState.relayState.urls}
-            />
-          </section>
+          <RelayEditor
+            isGraphStale={domainState.relayState.isGraphStale}
+            onApply={handleApplyRelays}
+            onRevert={handleRevertRelays}
+            overrideStatus={domainState.relayState.overrideStatus}
+            relayUrls={domainState.relayState.urls}
+          />
         )
       case 'internal':
         return (
-          <section className="settings-panel">
-            <div className="settings-panel__header">
-              <p className="settings-panel__eyebrow">Diagnostico</p>
-              <h2>Runtime Sigma</h2>
-              <p className="settings-panel__copy">
-                Lectura tecnica compacta del render, topologia y viewport.
-              </p>
+          <div>
+            <div className="sg-settings-section">
+              <h4>Diagnóstico runtime</h4>
+              {[
+                ['Topología',    deferredScene.diagnostics.topologySignature],
+                ['Relays',       String(deferredScene.diagnostics.relayCount)],
+                ['Pinned',       String(domainState.pinnedNodePubkeys.size)],
+                ['Viewport',     isFixtureMode
+                  ? (lastViewportRatio ? `${lastViewportRatio.toFixed(2)}×` : 'idle')
+                  : (controller.getLastViewport() ? `${controller.getLastViewport()?.ratio.toFixed(2)}×` : 'idle')],
+                ['Capa activa',  domainState.activeLayer],
+                ['Root',         domainState.rootPubkey ? 'cargado' : 'vacío'],
+              ].map(([k, v]) => (
+                <div className="sg-diag-row" key={k as string}>
+                  <span className="sg-diag-row__k">{k}</span>
+                  <span className="sg-diag-row__v">{v}</span>
+                </div>
+              ))}
             </div>
-            <section className="dev-panel dev-panel--sidebar">
-              <p className="dev-panel__title">Diagnostico</p>
-              <dl>
-                <div>
-                  <dt>Topologia</dt>
-                  <dd>{deferredScene.diagnostics.topologySignature}</dd>
-                </div>
-                <div>
-                  <dt>Relays</dt>
-                  <dd>{deferredScene.diagnostics.relayCount}</dd>
-                </div>
-                <div>
-                  <dt>Pinned</dt>
-                  <dd>{domainState.pinnedNodePubkeys.size}</dd>
-                </div>
-                <div>
-                  <dt>Viewport</dt>
-                  <dd>
-                    {isFixtureMode
-                      ? lastViewportRatio
-                        ? `${lastViewportRatio.toFixed(2)}x`
-                        : 'idle'
-                      : controller.getLastViewport()
-                        ? `${controller.getLastViewport()?.ratio.toFixed(2)}x`
-                        : 'idle'}
-                  </dd>
-                </div>
-              </dl>
-            </section>
             {isDev ? (
-              <section className="settings-card">
-                <p className="settings-card__label">Zaps dev</p>
-                <h3 className="sigma-lab-settings-title">Simulador</h3>
-                <p className="settings-panel__fineprint">
-                  Reproduce el pipeline visual de zaps sobre una arista visible.
-                </p>
+              <div className="sg-settings-section">
+                <h4>Zaps dev</h4>
                 <button
-                  className="settings-primary-btn sigma-lab-full-button"
+                  className={`sg-btn${!simulationPair ? ' ' : ' sg-btn--primary'}`}
                   disabled={!simulationPair}
                   onClick={handleSimulateZap}
+                  style={{ width: '100%' }}
                   type="button"
                 >
                   {simulationPair ? 'Simular zap' : 'Sin pares conectados'}
                 </button>
                 {zapFeedback ? (
-                  <p className="settings-panel__fineprint">{zapFeedback}</p>
+                  <p style={{ marginTop: 8, fontSize: 11, color: 'var(--sg-fg-muted)' }}>{zapFeedback}</p>
                 ) : null}
-              </section>
+              </div>
             ) : null}
-          </section>
+          </div>
         )
     }
   }
 
-  return (
-    <main className="app-shell app-shell--immersive sigma-lab-shell">
-      <section
-        className="workspace-shell sigma-lab-workspace"
-        data-root-open={isRootSheetOpen ? 'true' : 'false'}
-        data-settings-open={isSettingsOpen ? 'true' : 'false'}
-      >
-        <header className="workspace-topbar sigma-lab-topbar">
-          <div className="workspace-topbar__actions">
-            <button
-              aria-expanded={isRootSheetOpen}
-              aria-label="Abrir selector de root"
-              className={`workspace-icon-btn${
-                isRootSheetOpen ? ' workspace-icon-btn--active' : ''
-              }`}
-              onClick={() => {
-                setIsSettingsOpen(false)
-                setIsRootSheetOpen((value) => !value)
-              }}
-              type="button"
-            >
-              <IdentityIcon />
-              <span className="sigma-lab-topbar-label">Root</span>
-            </button>
-            <button
-              aria-expanded={isSettingsOpen}
-              aria-label="Abrir configuracion Sigma"
-              className={`workspace-icon-btn${
-                isSettingsOpen ? ' workspace-icon-btn--active' : ''
-              }`}
-              onClick={() => {
-                if (isSettingsOpen) {
-                  setIsSettingsOpen(false)
-                  return
-                }
+  // ── Detail panel content ───────────────────────────────────────────────────
 
-                openSettingsTab('renderer')
-              }}
-              type="button"
-            >
-              <SettingsIcon />
-              <span className="sigma-lab-topbar-label">Ajustes</span>
-            </button>
+  const renderDetailContent = () => {
+    if (!detail.node) return null
+
+    const isRootNode = detail.pubkey === domainState.rootPubkey
+    const relBadge = isRootNode ? 'IDENTIDAD RAÍZ' :
+      (detail.mutualCount > 0) ? 'MUTUO' :
+      detail.followingCount > 0 ? 'LO SIGO' :
+      detail.followerCount > 0 ? 'ME SIGUE' : 'SIN RECIPROCIDAD'
+
+    const relBadgeClass = isRootNode ? 'sg-badge--accent' :
+      (detail.mutualCount > 0) ? 'sg-badge--ok' :
+      detail.followingCount > 0 ? 'sg-badge--accent' :
+      detail.followerCount > 0 ? '' : 'sg-badge--warn'
+
+    return (
+      <div>
+        <div className="sg-node-hero">
+          <div style={{ position: 'relative' }}>
+            <div className="sg-node-hero__avatar">
+              {detail.pictureUrl ? (
+                <img alt="" src={detail.pictureUrl} />
+              ) : (
+                <AvatarFallback
+                  initials={getInitials(detail.displayName)}
+                  labelClassName=""
+                />
+              )}
+            </div>
+            {detail.isPinned && (
+              <div className="sg-node-hero__pin">◆</div>
+            )}
           </div>
-        </header>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2>{detail.displayName ?? '—'}</h2>
+            <div className="sg-node-hero__handle">{detail.pubkey?.slice(0, 12)}…</div>
+            <div className="sg-node-hero__badges">
+              <span className={`sg-badge ${relBadgeClass}`}>{relBadge}</span>
+              {detail.nip05 && <span className="sg-badge sg-badge--ok">nip05</span>}
+              {detail.isExpanded && <span className="sg-badge">expandido</span>}
+            </div>
+          </div>
+        </div>
 
-        {(isSettingsOpen || isRootSheetOpen) && (
-          <button
-            aria-hidden="true"
-            className="workspace-scrim sigma-lab-scrim"
-            onClick={() => {
-              setIsSettingsOpen(false)
-              if (domainState.rootPubkey) {
-                setIsRootSheetOpen(false)
-              }
-            }}
-            tabIndex={-1}
-            type="button"
-          />
+        <p className={`sg-bio${detail.about?.trim() ? '' : ' sg-bio--empty'}`}>
+          {detail.about?.trim() || 'Sin bio conocida.'}
+        </p>
+
+        <div className="sg-metric-grid">
+          <div className="sg-metric">
+            <div className="sg-metric__k">Sigo</div>
+            <div className="sg-metric__v">{detail.followingCount}</div>
+          </div>
+          <div className="sg-metric">
+            <div className="sg-metric__k">Me siguen</div>
+            <div className="sg-metric__v">{detail.followerCount}</div>
+          </div>
+          <div className="sg-metric">
+            <div className="sg-metric__k">Mutuos</div>
+            <div className="sg-metric__v">{detail.mutualCount}</div>
+          </div>
+        </div>
+
+        {detail.pubkey && (
+          <div className="sg-key-row">
+            <span className="sg-key-row__lbl">pubkey</span>
+            <span>{detail.pubkey.slice(0, 12)}…{detail.pubkey.slice(-8)}</span>
+          </div>
         )}
 
-        {isRootSheetOpen ? (
-          <section
-            aria-labelledby="sigma-root-title"
-            aria-modal={domainState.rootPubkey ? 'true' : undefined}
-            className={`root-entry-sheet sigma-lab-root-sheet${
-              domainState.rootPubkey ? '' : ' root-entry-sheet--inline'
-            }${shouldShowSavedRootsSection ? ' root-entry-sheet--chooser' : ''}`}
-            role={domainState.rootPubkey ? 'dialog' : 'region'}
-          >
-            <div className="root-entry-sheet__header">
-              <div>
-                <p className="root-entry-sheet__eyebrow">{rootEntryEyebrow}</p>
-                <h2 id="sigma-root-title">{rootEntryTitle}</h2>
-              </div>
-              {domainState.rootPubkey ? (
-                <button
-                  aria-label="Cerrar selector de root"
-                  className="root-entry-sheet__close"
-                  onClick={() => setIsRootSheetOpen(false)}
-                  type="button"
-                >
-                  <CloseIcon />
-                </button>
-              ) : null}
-            </div>
+        <div className="sg-section-label">Identidad</div>
+        <div className="sg-field">
+          <span className="sg-field__k">nip05</span>
+          <span className={`sg-field__v${detail.nip05 ? '' : ' sg-field__v--missing'}`}>
+            {detail.nip05?.trim() || '—'}
+          </span>
+        </div>
+        <div className="sg-field">
+          <span className="sg-field__k">lud16</span>
+          <span className={`sg-field__v${detail.lud16 ? '' : ' sg-field__v--missing'}`}>
+            {detail.lud16?.trim() || '—'}
+          </span>
+        </div>
+        <div className="sg-field">
+          <span className="sg-field__k">Expansión</span>
+          <span className="sg-field__v">
+            {detail.node.nodeExpansionState?.status ?? 'idle'}
+          </span>
+        </div>
 
-            <div className="root-entry-sheet__body sigma-lab-root-body">
+        <div className="sg-actions">
+          <button
+            className={`sg-btn${detail.isExpanded ? '' : ' sg-btn--primary'}`}
+            disabled={detail.isExpanded}
+            onClick={() => {
+              const selectedPubkey = detail.pubkey
+              if (!selectedPubkey) return
+              startTransition(() => {
+                if (isFixtureMode) { setActionFeedback('El fixture no expande nodos por relay.'); return }
+                void bridge.expandNode(selectedPubkey).then((result) => { setActionFeedback(result.message) })
+              })
+            }}
+            type="button"
+          >
+            {detail.isExpanded ? 'Expandido' : 'Expandir 1 salto'}
+          </button>
+          <button
+            className="sg-btn"
+            onClick={() => {
+              if (!detail.pubkey) return
+              togglePinnedNode(detail.pubkey)
+            }}
+            type="button"
+          >
+            {detail.isPinned ? 'Liberar' : 'Fijar'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <main className="sg-app" data-graph-v2="">
+      {/* Canvas — always present, full bleed under all chrome */}
+      <SigmaCanvasHost
+        avatarRuntimeOptions={stableAvatarRuntimeOptions}
+        callbacks={callbacks}
+        dragInfluenceTuning={dragInfluenceTuning}
+        enableDebugProbe={isTestMode}
+        hideAvatarsOnMove={hideAvatarsOnMove}
+        onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
+        physicsTuning={physicsTuning}
+        ref={sigmaHostRef}
+        scene={deferredScene}
+      />
+
+      {/* Top bar: root chip (left) + brand (right) */}
+      <SigmaTopBar
+        onSwitchRoot={() => setIsRootSheetOpen(true)}
+        rootDisplayName={hasRoot ? (rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null) : null}
+        rootNpub={rootNpubEncoded}
+        rootPictureUrl={rootPictureUrl}
+      />
+
+      {/* Filter bar + rail + HUD + minimap — only when a root is loaded */}
+      {hasRoot && (
+        <>
+          <SigmaFilterBar
+            activeId={filterActiveId}
+            onSelect={handleFilterSelect}
+            pills={filterPills}
+          />
+          <SigmaSideRail buttons={railButtons} />
+          <SigmaHud stats={hudStats} />
+          <SigmaMinimap
+            onFit={() => setActionFeedback('Usa zoom y pan para ajustar la vista.')}
+            onZoomIn={() => setActionFeedback('Zoom: usa la rueda del mouse.')}
+            onZoomOut={() => setActionFeedback('Zoom: usa la rueda del mouse.')}
+            zoomRatio={viewportRatio}
+          />
+        </>
+      )}
+
+      {/* Side panel — detail (right) or settings (right), one at a time */}
+      {(isSettingsOpen || (detail.node !== null && !isRootSheetOpen)) && (
+        <SigmaSidePanel
+          eyebrow={isSettingsOpen ? 'AJUSTES' : 'IDENTIDAD'}
+          onClose={() => {
+            if (isSettingsOpen) { setIsSettingsOpen(false); return }
+            if (!isFixtureMode) bridge.selectNode(null)
+          }}
+          tabs={
+            isSettingsOpen ? (
+              <div className="sg-panel-tabs">
+                {SIGMA_SETTINGS_TABS.map((tab) => (
+                  <button
+                    className={`sg-tab${activeSettingsTab === tab.id ? ' sg-tab--active' : ''}`}
+                    key={tab.id}
+                    onClick={() => setActiveSettingsTab(tab.id)}
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
+        >
+          {isSettingsOpen ? renderSettingsContent() : renderDetailContent()}
+        </SigmaSidePanel>
+      )}
+
+      {/* Root loader modal */}
+      {isRootSheetOpen && (
+        <SigmaRootLoader
+          canClose={hasRoot}
+          feedback={visibleLoadFeedback ?? validationFeedback}
+          manualInputSlot={
+            <NpubInput
+              onInvalidRoot={(payload) => setValidationFeedback(payload.message)}
+              onValidRoot={loadRootFromPointer}
+            />
+          }
+          onClose={() => setIsRootSheetOpen(false)}
+          savedRootsSlot={
+            shouldShowSavedRootsSection ? (
               <SavedRootsPanel
                 entries={savedRoots}
                 isHydrated={savedRootsHydrated}
                 onDelete={handleDeleteSavedRoot}
                 onSelect={handleSelectSavedRoot}
               />
+            ) : null
+          }
+        />
+      )}
 
-              {shouldShowSavedRootsSection ? (
-                <div className="root-entry-sheet__divider" aria-hidden="true">
-                  <span>Otra npub</span>
-                </div>
-              ) : null}
+      {/* Empty state — when no root and loader not open */}
+      {!hasRoot && !isRootSheetOpen && (
+        <SigmaEmptyState onLoadIdentity={() => setIsRootSheetOpen(true)} />
+      )}
 
-              <div className="sigma-lab-root-copy">
-                <p>
-                  Elegi una identidad guardada o pega una npub/nprofile para
-                  abrir el grafo Sigma.
-                </p>
-                <dl className="sigma-lab-root-stats">
-                  <div>
-                    <dt>Root</dt>
-                    <dd>{domainState.rootPubkey ?? 'sin root'}</dd>
-                  </div>
-                  <div>
-                    <dt>Estado</dt>
-                    <dd>{domainState.discoveryState.rootLoad.status}</dd>
-                  </div>
-                  <div>
-                    <dt>Nodos</dt>
-                    <dd>{scene.diagnostics.nodeCount}</dd>
-                  </div>
-                  <div>
-                    <dt>Conexiones</dt>
-                    <dd>{scene.diagnostics.forceEdgeCount}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div className="root-entry-sheet__manual">
-                <NpubInput
-                  onInvalidRoot={(payload) => {
-                    setValidationFeedback(payload.message)
-                  }}
-                  onValidRoot={loadRootFromPointer}
-                />
-              </div>
-            </div>
-            {visibleLoadFeedback || validationFeedback ? (
-              <p className="root-entry-sheet__fineprint">
-                {visibleLoadFeedback ?? validationFeedback}
-              </p>
-            ) : null}
-            <p className="root-entry-sheet__fineprint">
-              {shouldShowSavedRootsSection
-                ? 'Solo se guardan npub publicas en este navegador.'
-                : domainState.rootPubkey === null
-                  ? 'Pega una identidad para abrir el grafo Sigma.'
-                  : 'El grafo Sigma muestra vecindario descubierto.'}
-            </p>
-          </section>
-        ) : null}
-
-        {isSettingsOpen ? (
-          <aside
-            className="settings-drawer settings-drawer--open sigma-lab-settings"
-            data-settings-drawer
-          >
-            <div className="settings-drawer__hero">
-              <div className="settings-drawer__hero-copy">
-                <p className="settings-drawer__eyebrow">Workspace controls</p>
-                <h2 className="settings-drawer__title">Sigma Lab</h2>
-                <p className="settings-drawer__intro">
-                  Ajusta render, fisica, relays y diagnostico sin salir del
-                  grafo.
-                </p>
-              </div>
-              <button
-                aria-label="Cerrar configuracion Sigma"
-                className="settings-drawer__close"
-                onClick={() => setIsSettingsOpen(false)}
-                type="button"
-              >
-                <CloseIcon />
-              </button>
-            </div>
-
-            <div
-              className="settings-drawer__status"
-              aria-label="Estado actual de Sigma"
-            >
-              {settingsStatusItems.map((item) => (
-                <div className="settings-status-pill" key={item.label}>
-                  <span className="settings-status-pill__label">
-                    {item.label}
-                  </span>
-                  <span className="settings-status-pill__value">
-                    {item.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="settings-drawer__layout">
-              <nav
-                className="settings-nav"
-                aria-label="Secciones de configuracion Sigma"
-              >
-                <div className="settings-nav__section">
-                  <span className="settings-nav__label">Main</span>
-                  <div className="settings-tabs">
-                    {SIGMA_SETTINGS_TABS.map((tab) => {
-                      const isActive = activeSettingsTab === tab.id
-                      return (
-                        <button
-                          className={`settings-tab${
-                            isActive ? ' settings-tab--active' : ''
-                          }`}
-                          key={tab.id}
-                          onClick={() => setActiveSettingsTab(tab.id)}
-                          type="button"
-                        >
-                          {tab.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              </nav>
-
-              <div className="settings-drawer__body">
-                {renderSettingsContent()}
-              </div>
-            </div>
-          </aside>
-        ) : null}
-
-        <section className="sigma-lab-canvas-frame" data-graph-panel>
-          <SigmaCanvasHost
-            avatarRuntimeOptions={stableAvatarRuntimeOptions}
-            callbacks={callbacks}
-            dragInfluenceTuning={dragInfluenceTuning}
-            enableDebugProbe={isTestMode}
-            hideAvatarsOnMove={hideAvatarsOnMove}
-            onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
-            physicsTuning={physicsTuning}
-            ref={sigmaHostRef}
-            scene={deferredScene}
-          />
-          {domainState.rootPubkey === null ? (
-            <div className="sigma-lab-empty-scene" aria-hidden="true">
-              <div className="sigma-lab-empty-scene__map">
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="sigma-lab-empty-scene__copy">
-                <p className="sigma-lab-empty-scene__eyebrow">Sigma listo</p>
-                <p>Carga una identidad para proyectar su vecindario.</p>
-              </div>
-            </div>
-          ) : null}
-        </section>
-
-        {detail.node ? (
-          <aside className="node-detail-panel sigma-lab-node-panel">
-            <div className="node-detail-panel__header">
-              <div className="node-detail-panel__title-block">
-                <p className="node-detail-panel__eyebrow">Node Detail</p>
-                <h2>{detail.displayName}</h2>
-              </div>
-            </div>
-
-            <div className="node-detail-panel__hero">
-              <div className="node-detail-panel__avatar">
-                {detail.pictureUrl ? (
-                  <img
-                    alt=""
-                    className="node-detail-panel__avatar-image"
-                    src={detail.pictureUrl}
-                  />
-                ) : (
-                  <AvatarFallback
-                    initials={getInitials(detail.displayName)}
-                    labelClassName="node-detail-panel__avatar-fallback"
-                  />
-                )}
-              </div>
-              <div className="node-detail-panel__hero-copy">
-                <span className="node-detail-panel__pubkey-label">Pubkey</span>
-                <p className="node-detail-panel__pubkey">{detail.pubkey}</p>
-              </div>
-            </div>
-
-            <p className="node-detail-panel__about">
-              {detail.about?.trim() || 'Sin bio conocida.'}
-            </p>
-
-            <dl className="node-detail-panel__grid">
-              <div>
-                <dt>Following</dt>
-                <dd>{detail.followingCount}</dd>
-              </div>
-              <div>
-                <dt>Followers</dt>
-                <dd>{detail.followerCount}</dd>
-              </div>
-              <div>
-                <dt>Mutuals</dt>
-                <dd>{detail.mutualCount}</dd>
-              </div>
-            </dl>
-
-            <div className="node-detail-panel__actions">
-              <button
-                className="node-detail-panel__primary-action"
-                onClick={() => {
-                  const selectedPubkey = detail.pubkey
-
-                  if (!selectedPubkey) {
-                    return
-                  }
-
-                  startTransition(() => {
-                    if (isFixtureMode) {
-                      setActionFeedback('El fixture no expande nodos por relay.')
-                      return
-                    }
-
-                    void bridge.expandNode(selectedPubkey).then((result) => {
-                      setActionFeedback(result.message)
-                    })
-                  })
-                }}
-                type="button"
-              >
-                {detail.isExpanded ? 'Nodo expandido' : 'Expandir nodo'}
-              </button>
-              <button
-                className={`node-detail-panel__secondary-action${
-                  detail.isPinned
-                    ? ' node-detail-panel__secondary-action--active'
-                    : ''
-                }`}
-                onClick={() => {
-                  const selectedPubkey = detail.pubkey
-
-                  if (!selectedPubkey) {
-                    return
-                  }
-
-                  togglePinnedNode(selectedPubkey)
-                }}
-                type="button"
-              >
-                {detail.isPinned ? 'Quitar pin' : 'Fijar nodo'}
-              </button>
-            </div>
-
-            <dl className="node-detail-panel__identity">
-              <div>
-                <span className="node-detail-panel__metric-label">nip05</span>
-                <span className="node-detail-panel__metric-value">
-                  {detail.nip05?.trim() || 'n/a'}
-                </span>
-              </div>
-              <div>
-                <span className="node-detail-panel__metric-label">lud16</span>
-                <span className="node-detail-panel__metric-value">
-                  {detail.lud16?.trim() || 'n/a'}
-                </span>
-              </div>
-              <div>
-                <span className="node-detail-panel__metric-label">
-                  expansion
-                </span>
-                <span className="node-detail-panel__metric-value">
-                  {detail.node.nodeExpansionState?.status ?? 'idle'}
-                </span>
-              </div>
-            </dl>
-          </aside>
-        ) : null}
-
-        {actionFeedback ? (
-          <p className="sigma-lab-action-feedback" role="status">
-            {actionFeedback}
-          </p>
-        ) : null}
-
-        <section className="sigma-lab-control-bar">
-          <div className="sigma-lab-control-summary">
-            <span className="graph-panel__control-summary-label">
-              {domainState.activeLayer === 'connections' ? 'Conexiones' : 'Vista'}
-            </span>
-            <strong className="graph-panel__control-summary-value">
-              {domainState.activeLayer === 'connections'
-                ? connectionFilterLabel
-                : LAYER_LABELS[domainState.activeLayer]}
-            </strong>
-            <span>
-              {deferredScene.diagnostics.visibleEdgeCount} visibles /{' '}
-              {deferredScene.diagnostics.forceEdgeCount} fuerza
-            </span>
-          </div>
-          <div className="sigma-lab-control-actions">
-            <div
-              className="graph-panel__control-group sigma-lab-control-group--mode"
-              role="group"
-              aria-label="Vista principal del grafo Sigma"
-            >
-              <button
-                aria-pressed={domainState.activeLayer === 'graph'}
-                className={`graph-panel__control-btn${
-                  domainState.activeLayer === 'graph'
-                    ? ' graph-panel__control-btn--primary'
-                    : ''
-                }`}
-                data-control-tone="neutral"
-                onClick={() => toggleLayer('graph')}
-                type="button"
-              >
-                Grafo
-              </button>
-              <button
-                aria-pressed={domainState.activeLayer === 'connections'}
-                aria-label={
-                  domainState.activeLayer === 'connections'
-                    ? 'Salir de conexiones'
-                    : 'Activar conexiones'
-                }
-                className={`graph-panel__control-btn${
-                  domainState.activeLayer === 'connections'
-                    ? ' graph-panel__control-btn--primary'
-                    : ''
-                }`}
-                data-control-tone="connections"
-                onClick={handleToggleConnections}
-                type="button"
-              >
-                {domainState.activeLayer === 'connections' ? 'Salir' : 'Conexiones'}
-              </button>
-            </div>
-            <div
-              className="graph-panel__control-group sigma-lab-control-group--filters"
-              data-relationship-mode={
-                domainState.activeLayer === 'connections'
-                  ? relationshipControlLayer
-                  : undefined
-              }
-              role="group"
-              aria-label="Filtros de relacion Sigma"
-            >
-              <button
-                aria-pressed={relationshipToggleState.following}
-                className={`graph-panel__control-btn${
-                  relationshipToggleState.following
-                    ? ' graph-panel__control-btn--primary'
-                    : ''
-                }`}
-                data-control-tone="relationship"
-                onClick={() => handleToggleRelationship('following')}
-                type="button"
-              >
-                Sigo
-              </button>
-              <button
-                aria-pressed={relationshipToggleState.followers}
-                className={`graph-panel__control-btn${
-                  relationshipToggleState.followers
-                    ? ' graph-panel__control-btn--primary'
-                    : ''
-                }`}
-                data-control-tone="relationship"
-                onClick={() => handleToggleRelationship('followers')}
-                type="button"
-              >
-                Me siguen
-              </button>
-              {domainState.activeLayer === 'connections' ? (
-                <span className="graph-panel__control-filter-state">
-                  {connectionFilterLabel}
-                </span>
-              ) : null}
-            </div>
-            <div
-              aria-hidden={!isNonReciprocalAvailable}
-              className="graph-panel__control-group graph-panel__control-group--aux"
-              data-available={isNonReciprocalAvailable ? 'true' : 'false'}
-              role="group"
-              aria-label="Filtro de reciprocidad Sigma"
-            >
-              <button
-                aria-pressed={isNonReciprocalActive}
-                className={`graph-panel__control-btn graph-panel__control-btn--aux${
-                  isNonReciprocalActive ? ' graph-panel__control-btn--primary' : ''
-                }`}
-                data-control-tone="relationship"
-                disabled={!isNonReciprocalAvailable}
-                onClick={handleToggleOnlyNonReciprocal}
-                tabIndex={isNonReciprocalAvailable ? 0 : -1}
-                type="button"
-              >
-                Sin reciprocidad
-              </button>
-            </div>
-          </div>
-        </section>
-      </section>
+      {/* Toasts */}
+      <SigmaToasts toasts={toastEntries} />
     </main>
   )
 }

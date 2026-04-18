@@ -1,6 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import './ui/graph-v2.css'
 
 const GraphAppV2 = dynamic(() => import('@/features/graph-v2/ui/GraphAppV2'), {
   ssr: false,
