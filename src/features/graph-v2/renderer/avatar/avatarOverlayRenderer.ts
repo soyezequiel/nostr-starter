@@ -112,6 +112,16 @@ export const selectAvatarDrawItemsForFrame = <
     : [...selected, ...persistentItems]
 }
 
+export const selectAvatarDrawContext = <T>(
+  itemPubkey: string,
+  forcedPubkey: string | null,
+  baseContext: T,
+  forcedContext: T | null,
+) =>
+  itemPubkey === forcedPubkey && forcedContext
+    ? forcedContext
+    : baseContext
+
 export class AvatarOverlayRenderer {
   private readonly sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>
   private readonly cache: AvatarBitmapCache
@@ -164,6 +174,10 @@ export class AvatarOverlayRenderer {
     const ctx = this.getOverlayContext()
     if (!ctx) {
       return
+    }
+    const forcedCtx = this.getForcedOverlayContext()
+    if (forcedCtx) {
+      this.clearForcedOverlayContext(forcedCtx)
     }
 
     const forcedAvatarPubkey = this.getForcedAvatarPubkey()
@@ -235,6 +249,8 @@ export class AvatarOverlayRenderer {
         label: nodeAttrs.label || pubkey.slice(0, 2),
         color: nodeAttrs.color || '#7dd3a7',
         paletteKey: pubkey,
+        showBackground: budget.showMonogramBackgrounds,
+        showText: budget.showMonogramText,
       }
       const priority = resolvePriority(nodeAttrs, viewport, this.sigma)
       drawItems.push({
@@ -287,6 +303,9 @@ export class AvatarOverlayRenderer {
     for (const item of orderedDrawItems) {
       const isPersistentAvatar = item.isPersistentAvatar
       const selectedForImage = selectedPubkeys.has(item.pubkey)
+      const hasVisibleMonogramPart =
+        item.monogramInput.showBackground !== false ||
+        item.monogramInput.showText !== false
       const disableImage =
         !selectedForImage ||
         (!isPersistentAvatar &&
@@ -295,7 +314,12 @@ export class AvatarOverlayRenderer {
             item.fastMoving ||
             imageDrawCount >= budget.maxImageDrawsPerFrame))
       const drewImage = this.drawAvatarCircle({
-        ctx,
+        ctx: selectAvatarDrawContext(
+          item.pubkey,
+          forcedAvatarPubkey,
+          ctx,
+          forcedCtx,
+        ),
         x: item.x,
         y: item.y,
         r: item.r,
@@ -303,6 +327,7 @@ export class AvatarOverlayRenderer {
         pubkey: item.pubkey,
         url: item.url,
         disableImage,
+        hasVisibleMonogramPart,
       })
       if (drewImage) {
         imageDrawCount += 1
@@ -359,6 +384,7 @@ export class AvatarOverlayRenderer {
     pubkey,
     url,
     disableImage,
+    hasVisibleMonogramPart,
   }: {
     ctx: CanvasRenderingContext2D
     x: number
@@ -368,6 +394,7 @@ export class AvatarOverlayRenderer {
     pubkey: string
     url: string | null
     disableImage?: boolean
+    hasVisibleMonogramPart: boolean
   }): boolean {
     let drawable: CanvasImageSource = monogram
     let isImage = false
@@ -379,12 +406,15 @@ export class AvatarOverlayRenderer {
         isImage = true
       }
     }
+    if (!isImage && !hasVisibleMonogramPart) {
+      return false
+    }
     const size = r * 2
     try {
       ctx.drawImage(drawable, x - r, y - r, size, size)
       return isImage
     } catch {
-      if (isImage) {
+      if (isImage && hasVisibleMonogramPart) {
         try {
           ctx.drawImage(monogram, x - r, y - r, size, size)
         } catch {
@@ -403,6 +433,8 @@ export class AvatarOverlayRenderer {
       return {
         ...budget,
         showZoomedOutMonograms: true,
+        showMonogramBackgrounds: true,
+        showMonogramText: true,
         hideImagesOnFastNodes: false,
         fastNodeVelocityThreshold: Number.POSITIVE_INFINITY,
       }
@@ -417,6 +449,8 @@ export class AvatarOverlayRenderer {
         ? Math.min(runtimeOptions.zoomThreshold, budget.zoomThreshold)
         : runtimeOptions.zoomThreshold,
       showZoomedOutMonograms: runtimeOptions.showZoomedOutMonograms,
+      showMonogramBackgrounds: runtimeOptions.showMonogramBackgrounds,
+      showMonogramText: runtimeOptions.showMonogramText,
       hideImagesOnFastNodes:
         runtimeOptions.hideImagesOnFastNodes || snapshot.isDegraded,
       fastNodeVelocityThreshold: snapshot.isDegraded
@@ -488,6 +522,20 @@ export class AvatarOverlayRenderer {
       return null
     }
     return labels.getContext('2d')
+  }
+
+  private getForcedOverlayContext(): CanvasRenderingContext2D | null {
+    const canvases = this.sigma.getCanvases()
+    const mouse = canvases.mouse ?? null
+    if (!mouse) {
+      return null
+    }
+    return mouse.getContext('2d')
+  }
+
+  private clearForcedOverlayContext(ctx: CanvasRenderingContext2D) {
+    const container = this.sigma.getContainer()
+    ctx.clearRect(0, 0, container.clientWidth, container.clientHeight)
   }
 }
 

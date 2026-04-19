@@ -21,6 +21,7 @@ const installDocumentStub = () => {
             }),
             fill: () => undefined,
             stroke: () => undefined,
+            strokeText: () => undefined,
             fillText: () => undefined,
           }),
         }) as unknown as HTMLCanvasElement,
@@ -124,6 +125,39 @@ test('AvatarBitmapCache regenerates monograms when the profile label changes', (
       }),
       second,
     )
+  } finally {
+    restoreDocument()
+  }
+})
+
+test('AvatarBitmapCache regenerates monograms when monogram parts change', () => {
+  const restoreDocument = installDocumentStub()
+  try {
+    const cache = new AvatarBitmapCache(16)
+    const full = cache.getMonogram('same-pubkey', {
+      label: 'Alice Example',
+      color: '#7dd3a7',
+      paletteKey: 'same-pubkey',
+      showBackground: true,
+      showText: true,
+    })
+    const noText = cache.getMonogram('same-pubkey', {
+      label: 'Alice Example',
+      color: '#7dd3a7',
+      paletteKey: 'same-pubkey',
+      showBackground: true,
+      showText: false,
+    })
+    const textOnly = cache.getMonogram('same-pubkey', {
+      label: 'Alice Example',
+      color: '#7dd3a7',
+      paletteKey: 'same-pubkey',
+      showBackground: false,
+      showText: true,
+    })
+
+    assert.notEqual(noText, full)
+    assert.notEqual(textOnly, noText)
   } finally {
     restoreDocument()
   }

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { selectAvatarDrawItemsForFrame } from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
+import {
+  selectAvatarDrawContext,
+  selectAvatarDrawItemsForFrame,
+} from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
 
 test('keeps the forced dragged avatar even when the frame cap is zero', () => {
   const items = [
@@ -42,5 +45,23 @@ test('keeps only direct persistent avatars outside the regular frame cap', () =>
   assert.deepEqual(
     selectAvatarDrawItemsForFrame(items, 0, null).map((item) => item.pubkey),
     ['root', 'pinned', 'selected'],
+  )
+})
+
+test('draws the forced avatar on the forced context when available', () => {
+  const labelContext = { name: 'labels' }
+  const forcedContext = { name: 'mouse' }
+
+  assert.equal(
+    selectAvatarDrawContext('alice', 'alice', labelContext, forcedContext),
+    forcedContext,
+  )
+  assert.equal(
+    selectAvatarDrawContext('bob', 'alice', labelContext, forcedContext),
+    labelContext,
+  )
+  assert.equal(
+    selectAvatarDrawContext('alice', 'alice', labelContext, null),
+    labelContext,
   )
 })

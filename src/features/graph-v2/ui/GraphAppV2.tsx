@@ -531,6 +531,34 @@ function RenderOptionsPanel({
       </div>
       <div className="sg-setting-row">
         <div>
+          <div className="sg-setting-row__lbl">Fondo de monograma</div>
+          <div className="sg-setting-row__desc">Círculo de color cuando no hay foto lista</div>
+        </div>
+        <button
+          className={`sg-toggle${avatarRuntimeOptions.showMonogramBackgrounds ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({
+            ...avatarRuntimeOptions,
+            showMonogramBackgrounds: !avatarRuntimeOptions.showMonogramBackgrounds,
+          })}
+          type="button"
+        />
+      </div>
+      <div className="sg-setting-row">
+        <div>
+          <div className="sg-setting-row__lbl">Letras de monograma</div>
+          <div className="sg-setting-row__desc">Iniciales dentro del fallback</div>
+        </div>
+        <button
+          className={`sg-toggle${avatarRuntimeOptions.showMonogramText ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({
+            ...avatarRuntimeOptions,
+            showMonogramText: !avatarRuntimeOptions.showMonogramText,
+          })}
+          type="button"
+        />
+      </div>
+      <div className="sg-setting-row">
+        <div>
           <div className="sg-setting-row__lbl">Ocultar durante pan/drag</div>
           <div className="sg-setting-row__desc">Cambia a monograma durante movimiento</div>
         </div>
@@ -1885,7 +1913,7 @@ export default function GraphAppV2() {
       {/* Side panel — search, detail, or settings (right), one at a time */}
       {(isSettingsOpen || isPersonSearchPanelOpen || isIdentityPanelOpen) && (
         <SigmaSidePanel
-          closeOnOutsidePointerDown={isPersonSearchPanelOpen}
+          closeOnOutsidePointerDown={isSettingsOpen || isPersonSearchPanelOpen}
           eyebrow={isSettingsOpen ? 'AJUSTES' : isPersonSearchPanelOpen ? 'BUSCAR PERSONA' : 'IDENTIDAD'}
           onClose={handleCloseSidePanel}
           tabs={

@@ -48,4 +48,5 @@ export const nodeLabelTextMetricsCache = new TextMetricsWidthCache()
 export const measureNodeLabelTextWidth = (
   context: CanvasRenderingContext2D,
   label: string,
-) => nodeLabelTextMetricsCache.measureTextWidth(context, label)
+  font = context.font,
+) => nodeLabelTextMetricsCache.measureTextWidth(context, label, font)

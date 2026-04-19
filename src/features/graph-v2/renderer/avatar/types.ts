@@ -43,6 +43,8 @@ export interface AvatarRuntimeOptions {
   readonly sizeThreshold: number
   readonly zoomThreshold: number
   readonly showZoomedOutMonograms: boolean
+  readonly showMonogramBackgrounds: boolean
+  readonly showMonogramText: boolean
   readonly hideImagesOnFastNodes: boolean
   readonly fastNodeVelocityThreshold: number
 }
@@ -53,6 +55,8 @@ export const DEFAULT_AVATAR_RUNTIME_OPTIONS: AvatarRuntimeOptions = {
   sizeThreshold: 15,
   zoomThreshold: 2.1,
   showZoomedOutMonograms: false,
+  showMonogramBackgrounds: true,
+  showMonogramText: true,
   hideImagesOnFastNodes: false,
   fastNodeVelocityThreshold: 240,
 }

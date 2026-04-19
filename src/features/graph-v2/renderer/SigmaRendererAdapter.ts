@@ -6,10 +6,7 @@ import type {
   GraphSceneSnapshot,
   RendererAdapter,
 } from '@/features/graph-v2/renderer/contracts'
-import {
-  drawCachedDiscNodeHover,
-  drawCachedDiscNodeLabel,
-} from '@/features/graph-v2/renderer/cachedNodeLabels'
+import { drawCachedDiscNodeLabel } from '@/features/graph-v2/renderer/cachedNodeLabels'
 import { ForceAtlasRuntime } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import type { ForceAtlasPhysicsTuning } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import {
@@ -60,6 +57,7 @@ import {
   installStrictNodeHitTesting,
   type SpatialNodeHitTester,
 } from '@/features/graph-v2/renderer/spatialNodeHitTest'
+import { noopNodeHoverProgram } from '@/features/graph-v2/renderer/noopNodeHoverProgram'
 import type {
   DebugDragCandidate,
   DebugNeighborGroups,
@@ -73,6 +71,8 @@ const HOVER_NEIGHBOR_NODE_COLOR = '#f8f2a2'
 const HOVER_DIM_NODE_COLOR = '#121a22'
 const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
 const HOVER_DIM_EDGE_COLOR = '#10171f'
+const HIGHLIGHT_TRANSITION_MS = 180
+const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const NODE_ZOOM_OUT_MIN_SCALE = 0.42
 const NODE_ZOOM_OUT_SCALE_EXPONENT = 0.55
@@ -85,6 +85,61 @@ const AVATAR_MAX_FAST_NODE_VELOCITY = 2000
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
+
+const easeInOut = (value: number) => {
+  const t = clampNumber(value, 0, 1)
+  return t * t * (3 - 2 * t)
+}
+
+const lerpNumber = (from: number, to: number, amount: number) =>
+  from + (to - from) * amount
+
+const parseHexRgb = (color: string) => {
+  const normalized = color.trim()
+  if (!normalized.startsWith('#')) {
+    return null
+  }
+
+  const hex =
+    normalized.length === 4
+      ? normalized
+          .slice(1)
+          .split('')
+          .map((part) => `${part}${part}`)
+          .join('')
+      : normalized.slice(1)
+
+  if (!/^[\da-f]{6}$/i.test(hex)) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(hex.slice(0, 2), 16),
+    g: Number.parseInt(hex.slice(2, 4), 16),
+    b: Number.parseInt(hex.slice(4, 6), 16),
+  }
+}
+
+const toHexChannel = (value: number) =>
+  Math.round(clampNumber(value, 0, 255))
+    .toString(16)
+    .padStart(2, '0')
+
+const mixColor = (from: string, to: string, amount: number) => {
+  if (from === to) {
+    return to
+  }
+
+  const fromRgb = parseHexRgb(from)
+  const toRgb = parseHexRgb(to)
+  if (!fromRgb || !toRgb) {
+    return amount < 1 ? from : to
+  }
+
+  return `#${toHexChannel(lerpNumber(fromRgb.r, toRgb.r, amount))}${toHexChannel(
+    lerpNumber(fromRgb.g, toRgb.g, amount),
+  )}${toHexChannel(lerpNumber(fromRgb.b, toRgb.b, amount))}`
+}
 
 const resolveZoomOutNodeScale = (cameraRatio: number) =>
   clampNumber(
@@ -115,6 +170,101 @@ const isControlModifierPressed = (
       'ctrlKey' in event.original &&
       event.original.ctrlKey,
   )
+
+type HoverFocusSnapshot = {
+  pubkey: string | null
+  neighbors: Set<string>
+}
+
+type HighlightTransition = {
+  from: HoverFocusSnapshot
+  to: HoverFocusSnapshot
+  startedAt: number
+  durationMs: number
+}
+
+type NodeVisualStyle = Pick<
+  RenderNodeAttributes,
+  'color' | 'size' | 'zIndex' | 'highlighted' | 'forceLabel' | 'label'
+>
+
+type EdgeVisualStyle = Pick<
+  RenderEdgeAttributes,
+  'color' | 'size' | 'zIndex' | 'hidden'
+>
+
+type SceneFocusTransition = {
+  nodes: Map<string, NodeVisualStyle>
+  edges: Map<string, EdgeVisualStyle>
+  startedAt: number
+  durationMs: number
+}
+
+const pickNodeVisualStyle = (
+  attributes: RenderNodeAttributes,
+): NodeVisualStyle => ({
+  color: attributes.color,
+  size: attributes.size,
+  zIndex: attributes.zIndex,
+  highlighted: attributes.highlighted,
+  forceLabel: attributes.forceLabel,
+  label: attributes.label,
+})
+
+const pickEdgeVisualStyle = (
+  attributes: RenderEdgeAttributes,
+): EdgeVisualStyle => ({
+  color: attributes.color,
+  size: attributes.size,
+  zIndex: attributes.zIndex,
+  hidden: attributes.hidden,
+})
+
+const hasNodeVisualStyleChange = (
+  from: NodeVisualStyle,
+  to: NodeVisualStyle,
+) =>
+  from.color !== to.color ||
+  from.size !== to.size ||
+  from.zIndex !== to.zIndex ||
+  from.highlighted !== to.highlighted ||
+  from.forceLabel !== to.forceLabel ||
+  from.label !== to.label
+
+const hasEdgeVisualStyleChange = (
+  from: EdgeVisualStyle,
+  to: EdgeVisualStyle,
+) =>
+  from.color !== to.color ||
+  from.size !== to.size ||
+  from.zIndex !== to.zIndex ||
+  from.hidden !== to.hidden
+
+const mixNodeVisualAttributes = (
+  from: RenderNodeAttributes | NodeVisualStyle,
+  to: RenderNodeAttributes,
+  amount: number,
+): RenderNodeAttributes => ({
+  ...to,
+  color: mixColor(from.color, to.color, amount),
+  size: lerpNumber(from.size, to.size, amount),
+  zIndex: Math.round(lerpNumber(from.zIndex, to.zIndex, amount)),
+  highlighted: amount < 0.5 ? from.highlighted : to.highlighted,
+  forceLabel: from.forceLabel || to.forceLabel,
+  label: from.forceLabel && !to.forceLabel && amount < 0.75 ? from.label : to.label,
+})
+
+const mixEdgeVisualAttributes = (
+  from: RenderEdgeAttributes | EdgeVisualStyle,
+  to: RenderEdgeAttributes,
+  amount: number,
+): RenderEdgeAttributes => ({
+  ...to,
+  color: mixColor(from.color, to.color, amount),
+  size: lerpNumber(from.size, to.size, amount),
+  zIndex: Math.round(lerpNumber(from.zIndex, to.zIndex, amount)),
+  hidden: amount < 0.5 ? from.hidden : to.hidden,
+})
 
 export class SigmaRendererAdapter implements RendererAdapter {
   private sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes> | null = null
@@ -181,6 +331,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private hoveredNodePubkey: string | null = null
 
   private hoveredNeighbors: Set<string> = new Set()
+
+  private currentHoverFocus: HoverFocusSnapshot = {
+    pubkey: null,
+    neighbors: this.hoveredNeighbors,
+  }
+
+  private highlightTransition: HighlightTransition | null = null
+
+  private sceneFocusTransition: SceneFocusTransition | null = null
+
+  private pendingHighlightTransitionFrame: number | null = null
 
   private hasMountedCamera = false
 
@@ -613,6 +774,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
       showZoomedOutMonograms:
         options.showZoomedOutMonograms ??
         DEFAULT_AVATAR_RUNTIME_OPTIONS.showZoomedOutMonograms,
+      showMonogramBackgrounds:
+        options.showMonogramBackgrounds ??
+        DEFAULT_AVATAR_RUNTIME_OPTIONS.showMonogramBackgrounds,
+      showMonogramText:
+        options.showMonogramText ??
+        DEFAULT_AVATAR_RUNTIME_OPTIONS.showMonogramText,
       hideImagesOnFastNodes: options.hideImagesOnFastNodes,
       fastNodeVelocityThreshold: clampNumber(
         options.fastNodeVelocityThreshold,
@@ -626,6 +793,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.avatarRuntimeOptions.zoomThreshold === nextOptions.zoomThreshold &&
       this.avatarRuntimeOptions.showZoomedOutMonograms ===
         nextOptions.showZoomedOutMonograms &&
+      this.avatarRuntimeOptions.showMonogramBackgrounds ===
+        nextOptions.showMonogramBackgrounds &&
+      this.avatarRuntimeOptions.showMonogramText ===
+        nextOptions.showMonogramText &&
       this.avatarRuntimeOptions.hideImagesOnFastNodes ===
         nextOptions.hideImagesOnFastNodes &&
       this.avatarRuntimeOptions.fastNodeVelocityThreshold ===
@@ -868,7 +1039,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       autoCenter: false,
       autoRescale: false,
       defaultDrawNodeLabel: drawCachedDiscNodeLabel,
-      defaultDrawNodeHover: drawCachedDiscNodeHover,
+      defaultDrawNodeHover: () => {},
+      nodeHoverProgramClasses: {
+        circle: noopNodeHoverProgram,
+      },
       nodeReducer: this.nodeReducer,
       edgeReducer: this.edgeReducer,
     })
@@ -904,11 +1078,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const sigma = this.sigma
     const previousScene = this.scene
+    const shouldAnimateSceneFocus =
+      (previousScene?.render.selection.selectedNodePubkey ?? null) !==
+      (scene.render.selection.selectedNodePubkey ?? null)
+    const previousVisualStyles = shouldAnimateSceneFocus
+      ? this.captureRenderVisualStyles()
+      : null
     const draggedNodePubkey = this.draggedNodePubkey
     const draggedNodePosition =
       draggedNodePubkey !== null ? this.lastDragGraphPosition : null
     this.scene = scene
     this.renderStore.applyScene(scene.render)
+    this.startSceneFocusTransition(previousVisualStyles)
     this.physicsStore.applyScene(scene.physics)
     this.nodeHitTester?.markDirty()
 
@@ -968,6 +1149,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.releaseDrag()
     this.cancelPendingDragFrame()
     this.cancelPhysicsPositionBridge()
+    if (this.pendingHighlightTransitionFrame !== null) {
+      cancelAnimationFrame(this.pendingHighlightTransitionFrame)
+      this.pendingHighlightTransitionFrame = null
+    }
     if (this.pendingContainerRefreshFrame !== null) {
       cancelAnimationFrame(this.pendingContainerRefreshFrame)
       this.pendingContainerRefreshFrame = null
@@ -991,6 +1176,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.callbacks = null
     this.scene = null
     this.container = null
+    this.highlightTransition = null
+    this.sceneFocusTransition = null
+    this.hoveredNodePubkey = null
+    this.hoveredNeighbors = new Set()
+    this.currentHoverFocus = {
+      pubkey: null,
+      neighbors: this.hoveredNeighbors,
+    }
   }
 
   private initAvatarPipeline(
@@ -1024,7 +1217,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
         scheduler: this.avatarScheduler,
         budget: this.avatarBudget,
         isMoving: () => this.hideAvatarsOnMove && this.motionActive,
-        getForcedAvatarPubkey: () => this.draggedNodePubkey,
+        getForcedAvatarPubkey: () =>
+          this.draggedNodePubkey ?? this.hoveredNodePubkey,
         getRuntimeOptions: () => this.avatarRuntimeOptions,
       })
 
@@ -1066,6 +1260,141 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.motionClearTimer = null
       this.safeRefresh()
     }, this.MOTION_RESUME_MS)
+  }
+
+  private copyHoverFocusSnapshot(): HoverFocusSnapshot {
+    return {
+      pubkey: this.currentHoverFocus.pubkey,
+      neighbors: new Set(this.currentHoverFocus.neighbors),
+    }
+  }
+
+  private getTransitionAmount(
+    transition: { startedAt: number; durationMs: number },
+    now = performance.now(),
+  ) {
+    return easeInOut((now - transition.startedAt) / transition.durationMs)
+  }
+
+  private scheduleHighlightTransitionFrame() {
+    if (this.pendingHighlightTransitionFrame !== null) {
+      return
+    }
+
+    this.pendingHighlightTransitionFrame = requestAnimationFrame(
+      this.flushHighlightTransitionFrame,
+    )
+  }
+
+  private readonly flushHighlightTransitionFrame = () => {
+    this.pendingHighlightTransitionFrame = null
+
+    const now = performance.now()
+    if (
+      this.highlightTransition &&
+      now - this.highlightTransition.startedAt >=
+        this.highlightTransition.durationMs
+    ) {
+      this.highlightTransition = null
+    }
+
+    if (
+      this.sceneFocusTransition &&
+      now - this.sceneFocusTransition.startedAt >=
+        this.sceneFocusTransition.durationMs
+    ) {
+      this.sceneFocusTransition = null
+    }
+
+    this.safeRefresh()
+
+    if (this.highlightTransition || this.sceneFocusTransition) {
+      this.scheduleHighlightTransitionFrame()
+    }
+  }
+
+  private startHighlightTransition(
+    from: HoverFocusSnapshot,
+    to: HoverFocusSnapshot,
+  ) {
+    this.highlightTransition = {
+      from,
+      to,
+      startedAt: performance.now(),
+      durationMs: HIGHLIGHT_TRANSITION_MS,
+    }
+    this.scheduleHighlightTransitionFrame()
+  }
+
+  private captureRenderVisualStyles(): SceneFocusTransition | null {
+    if (!this.renderStore) {
+      return null
+    }
+
+    const graph = this.renderStore.getGraph()
+    const nodes = new Map<string, NodeVisualStyle>()
+    const edges = new Map<string, EdgeVisualStyle>()
+
+    graph.forEachNode((pubkey, attributes) => {
+      nodes.set(pubkey, pickNodeVisualStyle(attributes))
+    })
+
+    graph.forEachEdge((edgeId, attributes) => {
+      edges.set(edgeId, pickEdgeVisualStyle(attributes))
+    })
+
+    return {
+      nodes,
+      edges,
+      startedAt: performance.now(),
+      durationMs: SCENE_FOCUS_TRANSITION_MS,
+    }
+  }
+
+  private startSceneFocusTransition(
+    previousStyles: SceneFocusTransition | null,
+  ) {
+    if (!previousStyles || !this.renderStore) {
+      return
+    }
+
+    const graph = this.renderStore.getGraph()
+    const changedNodes = new Map<string, NodeVisualStyle>()
+    const changedEdges = new Map<string, EdgeVisualStyle>()
+
+    for (const [pubkey, previousStyle] of previousStyles.nodes) {
+      if (!graph.hasNode(pubkey)) {
+        continue
+      }
+
+      const currentStyle = pickNodeVisualStyle(graph.getNodeAttributes(pubkey))
+      if (hasNodeVisualStyleChange(previousStyle, currentStyle)) {
+        changedNodes.set(pubkey, previousStyle)
+      }
+    }
+
+    for (const [edgeId, previousStyle] of previousStyles.edges) {
+      if (!graph.hasEdge(edgeId)) {
+        continue
+      }
+
+      const currentStyle = pickEdgeVisualStyle(graph.getEdgeAttributes(edgeId))
+      if (hasEdgeVisualStyleChange(previousStyle, currentStyle)) {
+        changedEdges.set(edgeId, previousStyle)
+      }
+    }
+
+    if (changedNodes.size === 0 && changedEdges.size === 0) {
+      return
+    }
+
+    this.sceneFocusTransition = {
+      nodes: changedNodes,
+      edges: changedEdges,
+      startedAt: performance.now(),
+      durationMs: SCENE_FOCUS_TRANSITION_MS,
+    }
+    this.scheduleHighlightTransitionFrame()
   }
 
   private bindEvents() {
@@ -1172,14 +1501,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
     window.addEventListener('keydown', this.handleKeyDown)
   }
 
-  private readonly nodeReducer = (
+  private resolveNodeHoverAttributes(
     node: string,
     data: RenderNodeAttributes,
-  ) => {
+    focus: HoverFocusSnapshot,
+  ): RenderNodeAttributes {
     const cameraRatio = this.sigma?.getCamera().getState().ratio ?? 1
     const zoomScaledSize = data.size * resolveZoomOutNodeScale(cameraRatio)
 
-    if (!this.hoveredNodePubkey) {
+    if (!focus.pubkey) {
       return applySelectedLabelVisibility(
         zoomScaledSize === data.size
           ? data
@@ -1190,7 +1520,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       )
     }
 
-    if (node === this.hoveredNodePubkey) {
+    if (node === focus.pubkey) {
       return {
         ...data,
         size: zoomScaledSize,
@@ -1201,34 +1531,31 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
     }
 
-    if (this.hoveredNeighbors.has(node)) {
-      return applySelectedLabelVisibility(
-        {
-          ...data,
-          size: zoomScaledSize,
-          color: HOVER_NEIGHBOR_NODE_COLOR,
-          highlighted: true,
-          zIndex: Math.max(data.zIndex, 8),
-        },
-      )
-    }
-
-    return applySelectedLabelVisibility(
-      {
+    if (focus.neighbors.has(node)) {
+      return applySelectedLabelVisibility({
         ...data,
         size: zoomScaledSize,
-        color: HOVER_DIM_NODE_COLOR,
-        highlighted: false,
-        zIndex: Math.min(data.zIndex, -3),
-      },
-    )
+        color: HOVER_NEIGHBOR_NODE_COLOR,
+        highlighted: true,
+        zIndex: Math.max(data.zIndex, 8),
+      })
+    }
+
+    return applySelectedLabelVisibility({
+      ...data,
+      size: zoomScaledSize,
+      color: HOVER_DIM_NODE_COLOR,
+      highlighted: false,
+      zIndex: Math.min(data.zIndex, -3),
+    })
   }
 
-  private readonly edgeReducer = (
+  private resolveEdgeHoverAttributes(
     edge: string,
     data: RenderEdgeAttributes,
-  ) => {
-    if (!this.hoveredNodePubkey || !this.sigma) {
+    focus: HoverFocusSnapshot,
+  ): RenderEdgeAttributes {
+    if (!focus.pubkey || !this.sigma) {
       return data
     }
 
@@ -1239,7 +1566,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const source = graph.source(edge)
     const target = graph.target(edge)
-    if (source !== this.hoveredNodePubkey && target !== this.hoveredNodePubkey) {
+    if (source !== focus.pubkey && target !== focus.pubkey) {
       return {
         ...data,
         color: HOVER_DIM_EDGE_COLOR,
@@ -1257,6 +1584,102 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  private applyNodeSceneFocusTransition(
+    node: string,
+    target: RenderNodeAttributes,
+  ) {
+    if (!this.sceneFocusTransition || this.hoveredNodePubkey) {
+      return target
+    }
+
+    const previousStyle = this.sceneFocusTransition.nodes.get(node)
+    if (!previousStyle) {
+      return target
+    }
+
+    return mixNodeVisualAttributes(
+      previousStyle,
+      target,
+      this.getTransitionAmount(this.sceneFocusTransition),
+    )
+  }
+
+  private applyEdgeSceneFocusTransition(
+    edge: string,
+    target: RenderEdgeAttributes,
+  ) {
+    if (!this.sceneFocusTransition || this.hoveredNodePubkey) {
+      return target
+    }
+
+    const previousStyle = this.sceneFocusTransition.edges.get(edge)
+    if (!previousStyle) {
+      return target
+    }
+
+    return mixEdgeVisualAttributes(
+      previousStyle,
+      target,
+      this.getTransitionAmount(this.sceneFocusTransition),
+    )
+  }
+
+  private readonly nodeReducer = (
+    node: string,
+    data: RenderNodeAttributes,
+  ) => {
+    if (this.highlightTransition) {
+      const amount = this.getTransitionAmount(this.highlightTransition)
+      const from = this.resolveNodeHoverAttributes(
+        node,
+        data,
+        this.highlightTransition.from,
+      )
+      const to = this.resolveNodeHoverAttributes(
+        node,
+        data,
+        this.highlightTransition.to,
+      )
+
+      return mixNodeVisualAttributes(from, to, amount)
+    }
+
+    const target = this.resolveNodeHoverAttributes(
+      node,
+      data,
+      this.currentHoverFocus,
+    )
+    return this.applyNodeSceneFocusTransition(node, target)
+  }
+
+  private readonly edgeReducer = (
+    edge: string,
+    data: RenderEdgeAttributes,
+  ) => {
+    if (this.highlightTransition) {
+      const amount = this.getTransitionAmount(this.highlightTransition)
+      const from = this.resolveEdgeHoverAttributes(
+        edge,
+        data,
+        this.highlightTransition.from,
+      )
+      const to = this.resolveEdgeHoverAttributes(
+        edge,
+        data,
+        this.highlightTransition.to,
+      )
+
+      return mixEdgeVisualAttributes(from, to, amount)
+    }
+
+    const target = this.resolveEdgeHoverAttributes(
+      edge,
+      data,
+      this.currentHoverFocus,
+    )
+    return this.applyEdgeSceneFocusTransition(edge, target)
+  }
+
   private readonly setHoveredNode = (
     pubkey: string | null,
     force = false,
@@ -1271,18 +1694,28 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
+    const previousFocus = this.copyHoverFocusSnapshot()
     this.hoveredNodePubkey = pubkey
-    this.hoveredNeighbors = new Set()
+    const nextNeighbors = new Set<string>()
 
     if (pubkey && this.renderStore) {
       const graph = this.renderStore.getGraph()
       if (graph.hasNode(pubkey)) {
         graph.forEachNeighbor(pubkey, (neighborPubkey) => {
-          this.hoveredNeighbors.add(neighborPubkey)
+          nextNeighbors.add(neighborPubkey)
         })
       }
     }
 
+    this.hoveredNeighbors = nextNeighbors
+    this.currentHoverFocus = {
+      pubkey,
+      neighbors: nextNeighbors,
+    }
+    this.startHighlightTransition(previousFocus, {
+      pubkey,
+      neighbors: new Set(nextNeighbors),
+    })
     this.safeRefresh()
   }
 
@@ -1343,16 +1776,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return false
     }
 
+    const positionLedger = this.positionLedger
+    const renderStore = this.renderStore
     let changed = false
 
     this.physicsStore.getGraph().forEachNode((pubkey, attributes) => {
-      if (this.renderStore.hasNode(pubkey)) {
+      if (renderStore.hasNode(pubkey)) {
         changed =
-          this.renderStore.setNodePosition(pubkey, attributes.x, attributes.y) ||
+          renderStore.setNodePosition(pubkey, attributes.x, attributes.y) ||
           changed
       } else {
         changed =
-          this.positionLedger.set(pubkey, attributes.x, attributes.y) || changed
+          positionLedger.set(pubkey, attributes.x, attributes.y) || changed
       }
     })
 

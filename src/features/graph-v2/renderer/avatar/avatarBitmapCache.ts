@@ -27,6 +27,8 @@ export interface MonogramInput {
   label: string
   color: string
   paletteKey?: string
+  showBackground?: boolean
+  showText?: boolean
 }
 
 interface MonogramCacheEntry {
@@ -34,13 +36,26 @@ interface MonogramCacheEntry {
   signature: string
 }
 
-const createMonogramSignature = ({ label, color, paletteKey }: MonogramInput) =>
-  [label, paletteKey ?? color].join('\0')
+const createMonogramSignature = ({
+  label,
+  color,
+  paletteKey,
+  showBackground,
+  showText,
+}: MonogramInput) =>
+  [
+    label,
+    paletteKey ?? color,
+    showBackground === false ? 'no-bg' : 'bg',
+    showText === false ? 'no-text' : 'text',
+  ].join('\0')
 
 const renderMonogramCanvas = ({
   label,
   color,
   paletteKey,
+  showBackground = true,
+  showText = true,
 }: MonogramInput): HTMLCanvasElement => {
   const canvas = document.createElement('canvas')
   canvas.width = MONOGRAM_SIZE
@@ -54,50 +69,62 @@ const renderMonogramCanvas = ({
   const palette = getAvatarMonogramPalette(paletteKey || label || color)
   const hue = palette.hue
   const hue2 = palette.hue2
-  const grad = ctx.createRadialGradient(
-    r - r * 0.45,
-    r - r * 0.45,
-    r * 0.05,
-    r,
-    r,
-    r * 1.05,
-  )
-  grad.addColorStop(0, `oklch(86% 0.18 ${hue2})`)
-  grad.addColorStop(0.55, `oklch(68% 0.22 ${hue})`)
-  grad.addColorStop(1, `oklch(48% 0.20 ${hue})`)
-  ctx.beginPath()
-  ctx.arc(r, r, r, 0, Math.PI * 2)
-  ctx.closePath()
-  ctx.fillStyle = grad
-  ctx.fill()
+  if (showBackground) {
+    const grad = ctx.createRadialGradient(
+      r - r * 0.45,
+      r - r * 0.45,
+      r * 0.05,
+      r,
+      r,
+      r * 1.05,
+    )
+    grad.addColorStop(0, `oklch(86% 0.18 ${hue2})`)
+    grad.addColorStop(0.55, `oklch(68% 0.22 ${hue})`)
+    grad.addColorStop(1, `oklch(48% 0.20 ${hue})`)
+    ctx.beginPath()
+    ctx.arc(r, r, r, 0, Math.PI * 2)
+    ctx.closePath()
+    ctx.fillStyle = grad
+    ctx.fill()
 
-  const highlight = ctx.createRadialGradient(
-    r - r * 0.4,
-    r - r * 0.55,
-    0,
-    r - r * 0.4,
-    r - r * 0.55,
-    r * 0.9,
-  )
-  highlight.addColorStop(0, `oklch(98% 0.05 ${hue2} / 0.55)`)
-  highlight.addColorStop(1, `oklch(98% 0.05 ${hue2} / 0)`)
-  ctx.fillStyle = highlight
-  ctx.beginPath()
-  ctx.arc(r, r, r, 0, Math.PI * 2)
-  ctx.fill()
+    const highlight = ctx.createRadialGradient(
+      r - r * 0.4,
+      r - r * 0.55,
+      0,
+      r - r * 0.4,
+      r - r * 0.55,
+      r * 0.9,
+    )
+    highlight.addColorStop(0, `oklch(98% 0.05 ${hue2} / 0.55)`)
+    highlight.addColorStop(1, `oklch(98% 0.05 ${hue2} / 0)`)
+    ctx.fillStyle = highlight
+    ctx.beginPath()
+    ctx.arc(r, r, r, 0, Math.PI * 2)
+    ctx.fill()
 
-  ctx.strokeStyle = palette.rim
-  ctx.lineWidth = 0.8
-  ctx.beginPath()
-  ctx.arc(r, r, r - 0.4, 0, Math.PI * 2)
-  ctx.stroke()
+    ctx.strokeStyle = palette.rim
+    ctx.lineWidth = 0.8
+    ctx.beginPath()
+    ctx.arc(r, r, r - 0.4, 0, Math.PI * 2)
+    ctx.stroke()
+  }
 
-  ctx.fillStyle = palette.text
-  ctx.font = `700 ${Math.round(MONOGRAM_SIZE * 0.48)}px Inter Tight, ui-sans-serif, system-ui, sans-serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  const initials = getAvatarMonogram(label)
-  ctx.fillText(initials, r, r + 1)
+  if (showText) {
+    ctx.font = `700 ${Math.round(MONOGRAM_SIZE * 0.48)}px Inter Tight, ui-sans-serif, system-ui, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    const initials = getAvatarMonogram(label)
+    if (!showBackground) {
+      ctx.lineWidth = 3
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = 'rgba(3, 7, 12, 0.82)'
+      ctx.strokeText(initials, r, r + 1)
+      ctx.fillStyle = 'rgba(245, 250, 255, 0.94)'
+    } else {
+      ctx.fillStyle = palette.text
+    }
+    ctx.fillText(initials, r, r + 1)
+  }
 
   return canvas
 }
