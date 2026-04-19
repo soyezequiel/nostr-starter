@@ -40,7 +40,7 @@ Puntos de entrada:
 
 Objetivo:
 
-- cargar una identidad desde `npub` o `nprofile`
+- cargar una identidad desde `npub`, `nprofile`, pubkey hex, NIP-05, links con puntero NIP-19 o la sesion conectada
 - consultar relays con estados parciales, stale y timeouts visibles
 - proyectar el vecindario social con Sigma.js
 - expandir nodos, alternar capas, ver detalle de identidades y zaps
@@ -181,8 +181,8 @@ Ya no existe `physics.worker`: las fisicas v1 fueron eliminadas junto con el ren
 
 A nivel general:
 
-1. La persona usuaria ingresa un `npub` o `nprofile` en `/labs/sigma`.
-2. `SigmaRootInput.tsx` valida y decodifica el puntero raiz.
+1. La persona usuaria ingresa un `npub`, `nprofile`, pubkey hex, NIP-05, link de perfil o usa la sesion conectada en `/labs/sigma`.
+2. `SigmaRootInput.tsx` llama a `resolveRootIdentity()` para resolver el input a una pubkey, relay hints y evidencia de origen.
 3. El bridge llama al runtime compartido para cargar el vecindario raiz desde el set activo de relays.
 4. Los workers parsean eventos y calculan analisis del grafo.
 5. Los slices del store reciben nodos, links, estado de relays, analisis, zaps y export.

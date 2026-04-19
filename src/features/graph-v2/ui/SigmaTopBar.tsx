@@ -2,6 +2,7 @@
 
 import { memo } from 'react'
 import Link from 'next/link'
+import AvatarFallback from '@/components/AvatarFallback'
 import BrandLogo from '@/components/BrandLogo'
 
 interface Props {
@@ -41,7 +42,7 @@ export const SigmaTopBar = memo(function SigmaTopBar({
               // eslint-disable-next-line @next/next/no-img-element
               <img alt="" src={rootPictureUrl} />
             ) : (
-              initials
+              <AvatarFallback initials={initials} seed={rootNpub ?? rootDisplayName} />
             )}
           </div>
           <div className="sg-root-chip__meta">

@@ -8,6 +8,7 @@ interface Props {
   onClose: () => void
   savedRootsSlot: ReactNode
   manualInputSlot: ReactNode
+  sessionSlot?: ReactNode
   title?: string
   copy?: string
 }
@@ -43,8 +44,9 @@ export const SigmaRootLoader = memo(function SigmaRootLoader({
   onClose,
   savedRootsSlot,
   manualInputSlot,
+  sessionSlot,
   title = 'Cargar identidad',
-  copy = 'Pegá un npub o nprofile — Sigma consultará tus relays y proyectará su vecindario.',
+  copy = 'Pega un npub, nprofile, NIP-05, hex o link. Sigma consultara relays y proyectara el vecindario.',
 }: Props) {
   const titleId = useId()
 
@@ -67,6 +69,8 @@ export const SigmaRootLoader = memo(function SigmaRootLoader({
           <p>{copy}</p>
         </div>
         <div className="sg-loader__body">
+          {sessionSlot}
+
           {manualInputSlot}
 
           <div className="sg-loader__divider">Identidades recientes</div>

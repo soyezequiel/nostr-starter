@@ -134,6 +134,10 @@
   object-fit: cover;
 }
 
+[data-graph-v2] .sg-root-chip__avatar .lc-avatar-fallback-liquid__label {
+  font-size: 11px;
+}
+
 [data-graph-v2] .sg-root-chip__meta {
   display: flex;
   flex-direction: column;
@@ -602,6 +606,10 @@
   object-fit: cover;
 }
 
+[data-graph-v2] .sg-node-hero__avatar .lc-avatar-fallback-liquid__label {
+  font-size: 25px;
+}
+
 [data-graph-v2] .sg-node-hero__pin {
   position: absolute;
   top: -4px;
@@ -790,6 +798,101 @@
   color: var(--sg-fg-faint);
   font-family: var(--sg-font-ui);
   font-style: italic;
+}
+
+[data-graph-v2] .sg-person-search {
+  display: grid;
+  gap: 10px;
+}
+
+[data-graph-v2] .sg-person-search__label {
+  color: var(--sg-fg-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+[data-graph-v2] .sg-person-search__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+[data-graph-v2] .sg-person-search__field {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--sg-stroke);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.035);
+  color: var(--sg-fg);
+  font-size: 13px;
+  outline: none;
+  padding: 0 11px;
+}
+
+[data-graph-v2] .sg-person-search__field:focus {
+  border-color: var(--sg-stroke-strong);
+  box-shadow: 0 0 0 3px oklch(78% 0.14 155 / 0.14);
+}
+
+[data-graph-v2] .sg-person-search__field::placeholder {
+  color: var(--sg-fg-faint);
+}
+
+[data-graph-v2] .sg-person-search__status,
+[data-graph-v2] .sg-person-search__hint,
+[data-graph-v2] .sg-person-search__more {
+  margin: 0;
+  color: var(--sg-fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+[data-graph-v2] .sg-person-search__hint {
+  color: var(--sg-fg-faint);
+}
+
+[data-graph-v2] .sg-person-search__results {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+[data-graph-v2] .sg-person-search__result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border: 1px solid var(--sg-stroke);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.025);
+  color: var(--sg-fg);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+[data-graph-v2] .sg-person-search__result:hover,
+[data-graph-v2] .sg-person-search__result:focus-visible {
+  border-color: oklch(78% 0.14 155 / 0.55);
+  background: oklch(78% 0.14 155 / 0.10);
+}
+
+[data-graph-v2] .sg-person-search__result-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+[data-graph-v2] .sg-person-search__result-key {
+  color: var(--sg-fg-faint);
+  font-family: var(--sg-font-mono);
+  font-size: 10px;
 }
 
 [data-graph-v2] .sg-section-label {
@@ -1355,8 +1458,12 @@
   place-items: center;
   width: 100%;
   height: 100%;
-  color: var(--sg-fg-muted);
+  color: var(--lc-avatar-monogram-text);
   font-weight: 700;
+}
+
+[data-graph-v2] .saved-root-card__avatar-fallback .lc-avatar-fallback-liquid__label {
+  font-size: 18px;
 }
 [data-graph-v2] .saved-root-card__content {
   min-width: 0;
@@ -1643,6 +1750,49 @@
   padding: 18px 22px 24px;
 }
 
+[data-graph-v2] .sigma-root-session {
+  width: 100%;
+  min-height: 66px;
+  display: grid;
+  gap: 3px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid oklch(72% 0.14 220 / 0.32);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.045);
+  color: var(--sg-fg);
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+[data-graph-v2] .sigma-root-session:hover,
+[data-graph-v2] .sigma-root-session:focus-visible {
+  border-color: oklch(72% 0.14 220 / 0.56);
+  background: oklch(100% 0 0 / 0.07);
+  transform: translateY(-1px);
+}
+
+[data-graph-v2] .sigma-root-session__eyebrow {
+  color: oklch(72% 0.020 230);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+[data-graph-v2] .sigma-root-session__main {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+[data-graph-v2] .sigma-root-session__meta {
+  overflow: hidden;
+  color: var(--sg-fg-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 [data-graph-v2] .sigma-root-input {
   display: grid;
   gap: 8px;
@@ -1681,6 +1831,10 @@
   box-shadow: 0 0 0 3px oklch(72% 0.14 220 / 0.16);
 }
 
+[data-graph-v2] .sigma-root-input__field:disabled {
+  opacity: 0.66;
+}
+
 [data-graph-v2] .sigma-root-input__submit {
   min-height: 44px;
   border: 0;
@@ -1700,6 +1854,12 @@
 
 [data-graph-v2] .sigma-root-input__submit:active {
   transform: translateY(0);
+}
+
+[data-graph-v2] .sigma-root-input__submit:disabled {
+  cursor: wait;
+  opacity: 0.68;
+  transform: none;
 }
 
 [data-graph-v2] .sigma-root-input__status {
@@ -1754,8 +1914,9 @@
 }
 
 [data-graph-v2] .saved-root-card__avatar-fallback {
-  background: linear-gradient(145deg, oklch(78% 0.16 215), oklch(55% 0.16 180));
-  color: oklch(8% 0.010 230);
+  background: var(--lc-avatar-monogram-bg);
+  border-color: var(--lc-avatar-monogram-rim);
+  color: var(--lc-avatar-monogram-text);
   font-size: 11px;
   font-weight: 800;
 }

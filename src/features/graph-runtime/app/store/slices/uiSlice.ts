@@ -59,6 +59,8 @@ export const createDefaultSavedRootEntries = (
     addedAt: timestamp - index,
     lastOpenedAt: timestamp - index,
     relayHints: [],
+    source: 'npub',
+    evidence: { normalizedInput: root.npub },
     profile: null,
     profileFetchedAt: null,
   }))
@@ -382,6 +384,8 @@ export const createUiSlice: AppStateCreator<UiSlice> = (set) => ({
           entry.relayHints !== undefined
             ? sortRelayHints(entry.relayHints)
             : sortRelayHints(existingEntry?.relayHints),
+        source: entry.source ?? existingEntry?.source ?? 'npub',
+        evidence: entry.evidence ?? existingEntry?.evidence,
         profile: mergeSavedRootProfile(existingEntry?.profile ?? null, entry.profile),
         profileFetchedAt:
           entry.profileFetchedAt ?? existingEntry?.profileFetchedAt ?? null,

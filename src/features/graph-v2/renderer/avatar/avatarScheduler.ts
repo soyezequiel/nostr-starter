@@ -12,6 +12,7 @@ export interface AvatarCandidate {
   url: string
   bucket: ImageLodBucket
   priority: number
+  urgent?: boolean
   monogram: MonogramInput
 }
 
@@ -19,6 +20,8 @@ interface InflightEntry {
   urlKey: AvatarUrlKey
   controller: AbortController
   pubkey: string
+  priority: number
+  urgent: boolean
 }
 
 export interface AvatarSchedulerDeps {
@@ -57,12 +60,24 @@ export class AvatarScheduler {
       }
     }
 
+    this.kickoffCandidates(candidates, budget)
+  }
+
+  public prime(candidates: readonly AvatarCandidate[], budget: AvatarBudget) {
+    if (this.disposed || !budget.drawAvatars) {
+      return
+    }
+
+    this.kickoffCandidates(candidates, budget)
+  }
+
+  private kickoffCandidates(
+    candidates: readonly AvatarCandidate[],
+    budget: AvatarBudget,
+  ) {
     const sorted = [...candidates].sort((a, b) => a.priority - b.priority)
 
     for (const candidate of sorted) {
-      if (this.inflight.size >= budget.concurrency) {
-        break
-      }
       if (this.inflight.has(candidate.urlKey)) {
         continue
       }
@@ -75,6 +90,12 @@ export class AvatarScheduler {
       }
       if (this.loader.isBlocked(candidate.urlKey)) {
         continue
+      }
+      if (
+        this.inflight.size >= budget.concurrency &&
+        !this.abortLowerPriorityInflight(candidate)
+      ) {
+        break
       }
       this.kickoff(candidate, budget)
     }
@@ -103,6 +124,8 @@ export class AvatarScheduler {
       urlKey: candidate.urlKey,
       controller,
       pubkey: candidate.pubkey,
+      priority: candidate.priority,
+      urgent: candidate.urgent ?? false,
     })
 
     const monogram = this.cache.getMonogram(candidate.pubkey, candidate.monogram)
@@ -146,5 +169,30 @@ export class AvatarScheduler {
           this.onSettled()
         }
       })
+  }
+
+  private abortLowerPriorityInflight(candidate: AvatarCandidate) {
+    if (!candidate.urgent) {
+      return false
+    }
+
+    let lowestPriorityEntry: InflightEntry | null = null
+    for (const entry of this.inflight.values()) {
+      if (entry.priority <= candidate.priority) {
+        continue
+      }
+      if (!lowestPriorityEntry || entry.priority > lowestPriorityEntry.priority) {
+        lowestPriorityEntry = entry
+      }
+    }
+
+    if (!lowestPriorityEntry) {
+      return false
+    }
+
+    lowestPriorityEntry.controller.abort('preempted_by_urgent_avatar')
+    this.inflight.delete(lowestPriorityEntry.urlKey)
+    this.cache.delete(lowestPriorityEntry.urlKey)
+    return true
   }
 }

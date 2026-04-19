@@ -3,6 +3,7 @@
 
 import { memo, useState } from 'react'
 
+import AvatarFallback from '@/components/AvatarFallback'
 import type { SavedRootEntry } from '@/features/graph-runtime/app/store/types'
 
 interface Props {
@@ -32,19 +33,29 @@ const getInitials = (entry: SavedRootEntry) => {
 
 const shortenNpub = (npub: string) => `${npub.slice(0, 12)}...${npub.slice(-6)}`
 
+const SOURCE_LABELS = {
+  npub: 'npub',
+  nprofile: 'nprofile',
+  hex: 'hex',
+  nip05: 'NIP-05',
+  session: 'sesion',
+  url: 'link',
+} as const
+
 const getRootTag = (entry: SavedRootEntry) => {
-  const relayHint = entry.relayHints?.[0]
-  if (relayHint) {
-    try {
-      const host = new URL(relayHint).hostname.replace(/^relay\./, '')
-      return host.split('.')[0] || 'relay'
-    } catch {
-      return 'relay'
-    }
+  return SOURCE_LABELS[entry.source ?? 'npub']
+}
+
+const getRootDescription = (entry: SavedRootEntry) => {
+  const primaryIdentifier =
+    entry.evidence?.nip05 ?? entry.profile?.nip05 ?? shortenNpub(entry.npub)
+  const npubLabel = shortenNpub(entry.npub)
+
+  if (primaryIdentifier === npubLabel) {
+    return primaryIdentifier
   }
 
-  const nip05Domain = entry.profile?.nip05?.split('@')[1]
-  return nip05Domain?.split('.')[0] ?? 'root'
+  return [primaryIdentifier, npubLabel].filter(Boolean).join(' · ')
 }
 
 const formatSavedRootTime = (timestamp: number) => {
@@ -120,9 +131,7 @@ export const SigmaSavedRootsPanel = memo(function SigmaSavedRootsPanel({
       <div className="saved-roots-grid">
         {entries.map((entry, index) => {
           const displayName = getDisplayName(entry)
-          const description = [shortenNpub(entry.npub), entry.profile?.nip05]
-            .filter(Boolean)
-            .join(' · ')
+          const description = getRootDescription(entry)
           const picture = entry.profile?.picture ?? null
           const canShowPicture = picture && !failedPictures.has(entry.pubkey)
           const isConfirmingRemoval = pendingRemovalPubkey === entry.pubkey
@@ -153,9 +162,11 @@ export const SigmaSavedRootsPanel = memo(function SigmaSavedRootsPanel({
                       src={picture}
                     />
                   ) : (
-                    <div className="saved-root-card__avatar-fallback">
-                      {getInitials(entry)}
-                    </div>
+                    <AvatarFallback
+                      className="saved-root-card__avatar-fallback"
+                      initials={getInitials(entry)}
+                      seed={entry.pubkey}
+                    />
                   )}
                 </div>
 

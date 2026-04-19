@@ -16,7 +16,11 @@ const installDocumentStub = () => {
             beginPath: () => undefined,
             arc: () => undefined,
             closePath: () => undefined,
+            createRadialGradient: () => ({
+              addColorStop: () => undefined,
+            }),
             fill: () => undefined,
+            stroke: () => undefined,
             fillText: () => undefined,
           }),
         }) as unknown as HTMLCanvasElement,
@@ -89,6 +93,35 @@ test('AvatarBitmapCache keeps monograms bounded and LRU ordered', () => {
     )
     assert.notEqual(
       cache.getMonogram('p1', { label: 'p1', color: '#7dd3a7' }),
+      second,
+    )
+  } finally {
+    restoreDocument()
+  }
+})
+
+test('AvatarBitmapCache regenerates monograms when the profile label changes', () => {
+  const restoreDocument = installDocumentStub()
+  try {
+    const cache = new AvatarBitmapCache(16)
+    const first = cache.getMonogram('same-pubkey', {
+      label: 'npub1234',
+      color: '#7dd3a7',
+      paletteKey: 'same-pubkey',
+    })
+    const second = cache.getMonogram('same-pubkey', {
+      label: 'Alice Example',
+      color: '#7dd3a7',
+      paletteKey: 'same-pubkey',
+    })
+
+    assert.notEqual(second, first)
+    assert.equal(
+      cache.getMonogram('same-pubkey', {
+        label: 'Alice Example',
+        color: '#ffb25b',
+        paletteKey: 'same-pubkey',
+      }),
       second,
     )
   } finally {

@@ -1,6 +1,6 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 
 import { CloseIcon } from '@/features/graph-v2/ui/SigmaIcons'
@@ -11,6 +11,7 @@ interface Props {
   onClose: () => void
   children: ReactNode
   tabs?: ReactNode
+  closeOnOutsidePointerDown?: boolean
 }
 
 export const SigmaSidePanel = memo(function SigmaSidePanel({
@@ -19,9 +20,28 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
   onClose,
   children,
   tabs,
+  closeOnOutsidePointerDown = false,
 }: Props) {
+  const panelRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!closeOnOutsidePointerDown) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const panel = panelRef.current
+      if (!panel) return
+      if (event.composedPath().includes(panel)) return
+      onClose()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+    }
+  }, [closeOnOutsidePointerDown, onClose])
+
   return (
-    <aside className="sg-panel">
+    <aside className="sg-panel" ref={panelRef}>
       <div className="sg-panel__header">
         <div className="sg-panel__eyebrow">
           <span style={{ color: 'var(--sg-fg)' }}>◆</span>

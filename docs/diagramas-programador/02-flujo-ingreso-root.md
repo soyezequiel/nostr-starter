@@ -1,8 +1,12 @@
 flowchart TD
-    A["Usuario pega npub o nprofile<br/>entrada de identidad<br/>Caso principal del producto"] --> B["NpubInput<br/>campo de entrada<br/>Recibe y vigila el texto"]
-    B --> C["decodeRootPointer()<br/>decodificar root<br/>Valida npub o nprofile y extrae pubkey"]
-    C -->|valido / root utilizable| D["GraphApp.handleResolveRoot()<br/>resolver root<br/>Cierra UI auxiliar y dispara la carga"]
+    A["Usuario pega npub, nprofile, hex, NIP-05 o link<br/>entrada de identidad<br/>Caso principal del producto"] --> B["SigmaRootInput<br/>campo de entrada<br/>Recibe y resuelve el texto"]
+    B --> C["resolveRootIdentity()<br/>resolver root<br/>Normaliza input humano hacia pubkey, relays y evidencia"]
+    C -->|NIP-19 o hex directo| C1["parser local<br/>sin red<br/>Extrae pubkey y relay hints si existen"]
+    C -->|NIP-05| C2["resolveNip05Identifier()<br/>alias verificable<br/>Consulta .well-known/nostr.json con timeout"]
+    C1 --> D
+    C2 --> D
     C -->|invalido / root rechazado| X["invalid state<br/>estado invalido<br/>Explica por que no se puede cargar"]
+    D["GraphApp.loadRootFromPointer()<br/>resolver root<br/>Cierra UI auxiliar y dispara la carga"]
     D --> E["upsertSavedRoot()<br/>guardar o actualizar root<br/>Persistencia liviana de roots usados"]
     E --> F["rootLoader.loadRoot(pubkey, options)<br/>cargar root<br/>Entrada al runtime del grafo"]
 

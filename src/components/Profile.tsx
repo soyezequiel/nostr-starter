@@ -250,6 +250,7 @@ export default function Profile() {
                   <AvatarFallback
                     initials={profileInitial}
                     labelClassName="text-4xl font-bold tracking-[0.08em]"
+                    seed={profile.npub}
                   />
                 }
               />
@@ -257,6 +258,7 @@ export default function Profile() {
               <AvatarFallback
                 initials={profileInitial}
                 labelClassName="text-4xl font-bold tracking-[0.08em]"
+                seed={profile.npub}
               />
             )}
           </div>

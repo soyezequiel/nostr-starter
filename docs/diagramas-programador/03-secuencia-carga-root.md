@@ -1,6 +1,6 @@
 sequenceDiagram
     participant U as "Usuario<br/>persona que pega la identidad"
-    participant I as "NpubInput<br/>entrada del root<br/>Valida y decodifica"
+    participant I as "SigmaRootInput<br/>entrada del root<br/>Resuelve identidad"
     participant G as "GraphApp<br/>shell del grafo<br/>Orquesta UI y runtime"
     participant K as "KernelFacade / RootLoader<br/>nucleo de carga<br/>Coordina cache, relays y store"
     participant R as "RelayAdapter<br/>adaptador de relays<br/>Suscripciones y salud"
@@ -9,9 +9,9 @@ sequenceDiagram
     participant S as "AppStore<br/>estado global<br/>Fuente de verdad visible"
     participant C as "GraphCanvas<br/>canvas del grafo<br/>Renderiza la escena"
 
-    U->>I: pega npub o nprofile
-    I->>I: decodeRootPointer()<br/>decodificar root
-    I->>G: onValidRoot(pubkey, kind, relays)<br/>root valido
+    U->>I: pega npub, nprofile, hex, NIP-05 o link
+    I->>I: resolveRootIdentity()<br/>resolver a pubkey, relays y evidencia
+    I->>G: onValidRoot(pubkey, source, relays, evidence)<br/>root valido
     G->>S: upsertSavedRoot()<br/>guardar root usado
     G->>K: loadRoot(pubkey, options)<br/>pedir carga real
     K->>S: rootLoad=start<br/>inicio de carga con relayUrls y reset parcial

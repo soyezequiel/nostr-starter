@@ -289,7 +289,7 @@ test('projects selected neighborhoods into prominent render attributes', () => {
   assert.equal(selected.forceLabel, true)
   assert.equal(selected.zIndex, 8)
   assert.equal(neighbor.highlighted, true)
-  assert.equal(neighbor.forceLabel, true)
+  assert.equal(neighbor.forceLabel, false)
   assert.equal(neighbor.zIndex, 5)
   assert.equal(edge.touchesFocus, true)
   assert.equal(edge.zIndex, 6)
@@ -318,6 +318,6 @@ test('does not promote semantic selection without visual focus state', () => {
 
   assert.equal(semanticSelection.isSelected, true)
   assert.equal(semanticSelection.highlighted, false)
-  assert.equal(semanticSelection.forceLabel, false)
+  assert.equal(semanticSelection.forceLabel, true)
   assert.equal(semanticSelection.zIndex, 0)
 })

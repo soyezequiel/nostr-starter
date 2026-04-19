@@ -4,6 +4,10 @@ import type {
   DiscoveredGraphAnalysisState,
   DiscoveredGraphAnalysisStatus,
 } from '@/features/graph-runtime/analysis/types'
+import type {
+  RootIdentityEvidence,
+  RootIdentitySource,
+} from '@/features/graph-runtime/kernel/rootIdentity'
 
 export type GraphNodeSource = 'root' | 'follow' | 'inbound' | 'zap' | 'keyword'
 export type ProfileDataSource = 'relay' | 'primal-cache'
@@ -377,6 +381,8 @@ export interface SavedRootEntry {
   addedAt: number
   lastOpenedAt: number
   relayHints?: string[]
+  source?: RootIdentitySource
+  evidence?: RootIdentityEvidence
   profile: SavedRootProfileSnapshot | null
   profileFetchedAt: number | null
 }
@@ -427,6 +433,8 @@ export interface UiSlice {
     npub: string
     openedAt?: number
     relayHints?: string[]
+    source?: RootIdentitySource
+    evidence?: RootIdentityEvidence
     profile?: SavedRootProfileSnapshot | null
     profileFetchedAt?: number | null
   }) => void

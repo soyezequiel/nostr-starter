@@ -1,16 +1,17 @@
-﻿'use client'
+'use client'
 
-import { memo, useId, useState } from 'react'
+import { memo, useCallback, useId, useState } from 'react'
 
-import { decodeRootPointer } from '@/features/graph-runtime/kernel/nip19'
+import {
+  resolveRootIdentity,
+  type RootIdentityResolution,
+} from '@/features/graph-runtime/kernel/rootIdentity'
+
+type ValidRootIdentity = Extract<RootIdentityResolution, { status: 'valid' }>
 
 interface Props {
   feedback?: string | null
-  onValidRoot: (payload: {
-    pubkey: string
-    kind: 'npub' | 'nprofile'
-    relays: string[]
-  }) => void
+  onValidRoot: (payload: ValidRootIdentity) => void
 }
 
 export const SigmaRootInput = memo(function SigmaRootInput({
@@ -21,30 +22,35 @@ export const SigmaRootInput = memo(function SigmaRootInput({
   const statusId = useId()
   const [inputValue, setInputValue] = useState('')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [isResolving, setIsResolving] = useState(false)
   const visibleStatus = statusMessage ?? feedback ?? null
 
-  const submit = () => {
+  const submit = useCallback(async () => {
     const normalizedInput = inputValue.trim()
     if (!normalizedInput) {
-      setStatusMessage('Pegá un npub o nprofile para empezar.')
+      setStatusMessage('Pega un npub, nprofile, NIP-05, hex o link de perfil.')
       return
     }
 
-    const result = decodeRootPointer(normalizedInput)
-    if (result.status === 'invalid') {
-      setStatusMessage(result.message)
-      return
-    }
+    setIsResolving(true)
+    setStatusMessage('Resolviendo identidad...')
 
-    if (result.status === 'valid') {
-      setStatusMessage(null)
-      onValidRoot({
-        pubkey: result.pubkey,
-        kind: result.kind,
-        relays: result.relays,
-      })
+    try {
+      const result = await resolveRootIdentity(normalizedInput)
+
+      if (result.status === 'invalid') {
+        setStatusMessage(result.message)
+        return
+      }
+
+      if (result.status === 'valid') {
+        setStatusMessage(null)
+        onValidRoot(result)
+      }
+    } finally {
+      setIsResolving(false)
     }
-  }
+  }, [inputValue, onValidRoot])
 
   return (
     <div className="sigma-root-input">
@@ -56,6 +62,7 @@ export const SigmaRootInput = memo(function SigmaRootInput({
           aria-describedby={visibleStatus ? statusId : undefined}
           autoComplete="off"
           className="sigma-root-input__field"
+          disabled={isResolving}
           id={inputId}
           inputMode="text"
           onChange={(event) => {
@@ -65,20 +72,23 @@ export const SigmaRootInput = memo(function SigmaRootInput({
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
-              submit()
+              void submit()
             }
           }}
-          placeholder="npub1... o nprofile1..."
+          placeholder="npub, nprofile, NIP-05, hex o link"
           spellCheck={false}
           type="text"
           value={inputValue}
         />
         <button
           className="sigma-root-input__submit"
-          onClick={submit}
+          disabled={isResolving}
+          onClick={() => {
+            void submit()
+          }}
           type="button"
         >
-          Explorar →
+          {isResolving ? 'Resolviendo...' : 'Explorar ->'}
         </button>
       </div>
       {visibleStatus ? (

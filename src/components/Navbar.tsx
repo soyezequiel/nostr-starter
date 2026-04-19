@@ -116,6 +116,7 @@ export default function Navbar() {
                           <AvatarFallback
                             initials={profileInitial}
                             labelClassName="text-sm font-semibold"
+                            seed={profile.npub}
                           />
                         }
                       />
@@ -123,6 +124,7 @@ export default function Navbar() {
                       <AvatarFallback
                         initials={profileInitial}
                         labelClassName="text-sm font-semibold"
+                        seed={profile.npub}
                       />
                     )}
                   </div>

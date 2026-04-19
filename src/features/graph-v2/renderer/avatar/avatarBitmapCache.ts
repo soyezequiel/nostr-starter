@@ -1,4 +1,5 @@
-﻿import { getAvatarMonogram, type ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
+import { getAvatarMonogram, getAvatarMonogramPalette } from '@/lib/avatarMonogram'
+import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
 
 import type {
   AvatarBitmap,
@@ -25,9 +26,22 @@ const closeBitmap = (bitmap: AvatarBitmap) => {
 export interface MonogramInput {
   label: string
   color: string
+  paletteKey?: string
 }
 
-const renderMonogramCanvas = ({ label, color }: MonogramInput): HTMLCanvasElement => {
+interface MonogramCacheEntry {
+  canvas: HTMLCanvasElement
+  signature: string
+}
+
+const createMonogramSignature = ({ label, color, paletteKey }: MonogramInput) =>
+  [label, paletteKey ?? color].join('\0')
+
+const renderMonogramCanvas = ({
+  label,
+  color,
+  paletteKey,
+}: MonogramInput): HTMLCanvasElement => {
   const canvas = document.createElement('canvas')
   canvas.width = MONOGRAM_SIZE
   canvas.height = MONOGRAM_SIZE
@@ -37,14 +51,49 @@ const renderMonogramCanvas = ({ label, color }: MonogramInput): HTMLCanvasElemen
   }
 
   const r = MONOGRAM_SIZE / 2
+  const palette = getAvatarMonogramPalette(paletteKey || label || color)
+  const hue = palette.hue
+  const hue2 = palette.hue2
+  const grad = ctx.createRadialGradient(
+    r - r * 0.45,
+    r - r * 0.45,
+    r * 0.05,
+    r,
+    r,
+    r * 1.05,
+  )
+  grad.addColorStop(0, `oklch(86% 0.18 ${hue2})`)
+  grad.addColorStop(0.55, `oklch(68% 0.22 ${hue})`)
+  grad.addColorStop(1, `oklch(48% 0.20 ${hue})`)
   ctx.beginPath()
   ctx.arc(r, r, r, 0, Math.PI * 2)
   ctx.closePath()
-  ctx.fillStyle = color || '#7dd3a7'
+  ctx.fillStyle = grad
   ctx.fill()
 
-  ctx.fillStyle = '#0a1412'
-  ctx.font = `600 ${Math.round(MONOGRAM_SIZE * 0.45)}px ui-sans-serif, system-ui, sans-serif`
+  const highlight = ctx.createRadialGradient(
+    r - r * 0.4,
+    r - r * 0.55,
+    0,
+    r - r * 0.4,
+    r - r * 0.55,
+    r * 0.9,
+  )
+  highlight.addColorStop(0, `oklch(98% 0.05 ${hue2} / 0.55)`)
+  highlight.addColorStop(1, `oklch(98% 0.05 ${hue2} / 0)`)
+  ctx.fillStyle = highlight
+  ctx.beginPath()
+  ctx.arc(r, r, r, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.strokeStyle = palette.rim
+  ctx.lineWidth = 0.8
+  ctx.beginPath()
+  ctx.arc(r, r, r - 0.4, 0, Math.PI * 2)
+  ctx.stroke()
+
+  ctx.fillStyle = palette.text
+  ctx.font = `700 ${Math.round(MONOGRAM_SIZE * 0.48)}px Inter Tight, ui-sans-serif, system-ui, sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   const initials = getAvatarMonogram(label)
@@ -55,7 +104,7 @@ const renderMonogramCanvas = ({ label, color }: MonogramInput): HTMLCanvasElemen
 
 export class AvatarBitmapCache {
   private readonly entries = new Map<AvatarUrlKey, AvatarEntry>()
-  private readonly monograms = new Map<string, HTMLCanvasElement>()
+  private readonly monograms = new Map<string, MonogramCacheEntry>()
   private totalBytes = 0
   private cap: number
   private monogramCap: number
@@ -73,14 +122,15 @@ export class AvatarBitmapCache {
   }
 
   public getMonogram(pubkey: string, input: MonogramInput): HTMLCanvasElement {
+    const signature = createMonogramSignature(input)
     const existing = this.monograms.get(pubkey)
-    if (existing) {
+    if (existing && existing.signature === signature) {
       this.monograms.delete(pubkey)
       this.monograms.set(pubkey, existing)
-      return existing
+      return existing.canvas
     }
     const canvas = renderMonogramCanvas(input)
-    this.monograms.set(pubkey, canvas)
+    this.monograms.set(pubkey, { canvas, signature })
     this.evictMonogramsIfNeeded()
     return canvas
   }

@@ -93,6 +93,20 @@ const resolveZoomOutNodeScale = (cameraRatio: number) =>
     1,
   )
 
+const applySelectedLabelVisibility = (
+  data: RenderNodeAttributes,
+): RenderNodeAttributes =>
+  data.isSelected
+    ? {
+        ...data,
+        forceLabel: true,
+      }
+    : {
+        ...data,
+        label: '',
+        forceLabel: false,
+      }
+
 const isControlModifierPressed = (
   event: { original?: MouseEvent | TouchEvent } | null | undefined,
 ) =>
@@ -596,6 +610,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
         AVATAR_MIN_ZOOM_THRESHOLD,
         AVATAR_MAX_ZOOM_THRESHOLD,
       ),
+      showZoomedOutMonograms:
+        options.showZoomedOutMonograms ??
+        DEFAULT_AVATAR_RUNTIME_OPTIONS.showZoomedOutMonograms,
       hideImagesOnFastNodes: options.hideImagesOnFastNodes,
       fastNodeVelocityThreshold: clampNumber(
         options.fastNodeVelocityThreshold,
@@ -607,6 +624,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     if (
       this.avatarRuntimeOptions.sizeThreshold === nextOptions.sizeThreshold &&
       this.avatarRuntimeOptions.zoomThreshold === nextOptions.zoomThreshold &&
+      this.avatarRuntimeOptions.showZoomedOutMonograms ===
+        nextOptions.showZoomedOutMonograms &&
       this.avatarRuntimeOptions.hideImagesOnFastNodes ===
         nextOptions.hideImagesOnFastNodes &&
       this.avatarRuntimeOptions.fastNodeVelocityThreshold ===
@@ -1005,6 +1024,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         scheduler: this.avatarScheduler,
         budget: this.avatarBudget,
         isMoving: () => this.hideAvatarsOnMove && this.motionActive,
+        getForcedAvatarPubkey: () => this.draggedNodePubkey,
         getRuntimeOptions: () => this.avatarRuntimeOptions,
       })
 
@@ -1160,12 +1180,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const zoomScaledSize = data.size * resolveZoomOutNodeScale(cameraRatio)
 
     if (!this.hoveredNodePubkey) {
-      return zoomScaledSize === data.size
-        ? data
-        : {
-            ...data,
-            size: zoomScaledSize,
-          }
+      return applySelectedLabelVisibility(
+        zoomScaledSize === data.size
+          ? data
+          : {
+              ...data,
+              size: zoomScaledSize,
+            },
+      )
     }
 
     if (node === this.hoveredNodePubkey) {
@@ -1180,24 +1202,26 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     if (this.hoveredNeighbors.has(node)) {
-      return {
-        ...data,
-        size: zoomScaledSize,
-        color: HOVER_NEIGHBOR_NODE_COLOR,
-        forceLabel: true,
-        highlighted: true,
-        zIndex: Math.max(data.zIndex, 8),
-      }
+      return applySelectedLabelVisibility(
+        {
+          ...data,
+          size: zoomScaledSize,
+          color: HOVER_NEIGHBOR_NODE_COLOR,
+          highlighted: true,
+          zIndex: Math.max(data.zIndex, 8),
+        },
+      )
     }
 
-    return {
-      ...data,
-      size: zoomScaledSize,
-      color: HOVER_DIM_NODE_COLOR,
-      forceLabel: false,
-      highlighted: false,
-      zIndex: Math.min(data.zIndex, -3),
-    }
+    return applySelectedLabelVisibility(
+      {
+        ...data,
+        size: zoomScaledSize,
+        color: HOVER_DIM_NODE_COLOR,
+        highlighted: false,
+        zIndex: Math.min(data.zIndex, -3),
+      },
+    )
   }
 
   private readonly edgeReducer = (

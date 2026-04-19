@@ -296,11 +296,7 @@ export class RenderGraphStore {
         hidden: false,
         highlighted:
           node.focusState === 'selected' || node.focusState === 'neighbor',
-        forceLabel:
-          node.isRoot ||
-          node.isPinned ||
-          node.focusState === 'selected' ||
-          node.focusState === 'neighbor',
+        forceLabel: node.isSelected,
         fixed: node.isPinned,
         pictureUrl: node.pictureUrl,
         isDimmed: node.isDimmed,

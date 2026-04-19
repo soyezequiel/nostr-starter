@@ -16,6 +16,7 @@ import { nip19 } from 'nostr-tools'
 import { useShallow } from 'zustand/react/shallow'
 
 import AvatarFallback from '@/components/AvatarFallback'
+import { useAuthStore } from '@/store/auth'
 import { useAppStore } from '@/features/graph-runtime/app/store'
 import type {
   AppStore,
@@ -23,6 +24,9 @@ import type {
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph-runtime/app/store/types'
+import type {
+  RootIdentityResolution,
+} from '@/features/graph-runtime/kernel/rootIdentity'
 import { GraphInteractionController } from '@/features/graph-v2/application/InteractionController'
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
@@ -36,6 +40,11 @@ import {
 } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
 import { getProjectionCacheStats } from '@/features/graph-v2/projections/buildLayerProjection'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
+import {
+  applyPersonSearchHighlight,
+  buildPersonSearchMatches,
+  type PersonSearchMatch,
+} from '@/features/graph-v2/projections/personSearchHighlight'
 import type {
   GraphInteractionCallbacks,
   GraphSceneSnapshot,
@@ -100,6 +109,17 @@ interface RelationshipToggleState {
   following: boolean
   followers: boolean
   onlyNonReciprocal: boolean
+}
+
+type ValidRootIdentity = Extract<RootIdentityResolution, { status: 'valid' }>
+
+interface LoadRootInput
+  extends Omit<Pick<ValidRootIdentity, 'pubkey' | 'relays' | 'evidence'>, 'relays'> {
+  relays?: string[]
+  source?: ValidRootIdentity['source']
+  npub?: string
+  profile?: SavedRootProfileSnapshot | null
+  profileFetchedAt?: number | null
 }
 
 const isRelationshipLayer = (
@@ -497,6 +517,20 @@ function RenderOptionsPanel({
       <h4>Avatares y monogramas</h4>
       <div className="sg-setting-row">
         <div>
+          <div className="sg-setting-row__lbl">Monogramas en zoom-out</div>
+          <div className="sg-setting-row__desc">Dibuja fallbacks visibles aunque el nodo sea chico</div>
+        </div>
+        <button
+          className={`sg-toggle${avatarRuntimeOptions.showZoomedOutMonograms ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({
+            ...avatarRuntimeOptions,
+            showZoomedOutMonograms: !avatarRuntimeOptions.showZoomedOutMonograms,
+          })}
+          type="button"
+        />
+      </div>
+      <div className="sg-setting-row">
+        <div>
           <div className="sg-setting-row__lbl">Ocultar durante pan/drag</div>
           <div className="sg-setting-row__desc">Cambia a monograma durante movimiento</div>
         </div>
@@ -605,6 +639,102 @@ function mapCanonicalNodeToSavedRootProfile(node: CanonicalNode): SavedRootProfi
   }
 }
 
+function PersonSearchPanel({
+  query,
+  matches,
+  totalNodeCount,
+  onChange,
+  onClear,
+  onSelect,
+}: {
+  query: string
+  matches: readonly PersonSearchMatch[]
+  totalNodeCount: number
+  onChange: (value: string) => void
+  onClear: () => void
+  onSelect: (pubkey: string) => void
+}) {
+  const trimmedQuery = query.trim()
+  const visibleMatches = matches.slice(0, 8)
+  const hasMoreMatches = matches.length > visibleMatches.length
+  const status = !trimmedQuery
+    ? `Busca entre ${totalNodeCount} nodos visibles.`
+    : matches.length === 0
+      ? 'Sin coincidencias visibles.'
+      : `${matches.length} coincidencia${matches.length === 1 ? '' : 's'} visible${matches.length === 1 ? '' : 's'}.`
+
+  return (
+    <div className="sg-person-search">
+      <label className="sg-person-search__label" htmlFor="sigma-person-search">
+        Nombre
+      </label>
+      <div className="sg-person-search__row">
+        <input
+          aria-describedby="sigma-person-search-status"
+          autoComplete="off"
+          autoFocus
+          className="sg-person-search__field"
+          id="sigma-person-search"
+          inputMode="search"
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return
+            const firstMatch = visibleMatches[0]
+            if (!firstMatch) return
+            event.preventDefault()
+            onSelect(firstMatch.pubkey)
+          }}
+          placeholder="Ej: fiatjaf, la crypta, mari"
+          spellCheck={false}
+          type="search"
+          value={query}
+        />
+        <button
+          className="sg-btn"
+          disabled={!trimmedQuery}
+          onClick={onClear}
+          style={{ flex: 'none' }}
+          type="button"
+        >
+          Limpiar
+        </button>
+      </div>
+      <p
+        className="sg-person-search__status"
+        id="sigma-person-search-status"
+      >
+        {status}
+      </p>
+      {trimmedQuery ? (
+        <div className="sg-person-search__results">
+          {visibleMatches.map((match) => (
+            <button
+              className="sg-person-search__result"
+              key={match.pubkey}
+              onClick={() => onSelect(match.pubkey)}
+              type="button"
+            >
+              <span className="sg-person-search__result-name">{match.label}</span>
+              <span className="sg-person-search__result-key">
+                {match.pubkey.slice(0, 10)}...
+              </span>
+            </button>
+          ))}
+          {hasMoreMatches ? (
+            <div className="sg-person-search__more">
+              +{matches.length - visibleMatches.length} mas resaltadas en el grafo
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="sg-person-search__hint">
+          Coincide por fragmento, sin importar mayusculas, minusculas o acentos.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function GraphAppV2() {
@@ -633,6 +763,8 @@ export default function GraphAppV2() {
   const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('renderer')
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isPersonSearchOpen, setIsPersonSearchOpen] = useState(false)
+  const [personSearchQuery, setPersonSearchQuery] = useState('')
   const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
   // Rail toggles — direct controls, decoupled from the settings panel
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
@@ -646,6 +778,12 @@ export default function GraphAppV2() {
     removeSavedRoot,
     setSavedRootProfile,
   } = useAppStore(useShallow(selectSavedRootState))
+  const sessionIdentity = useAuthStore(
+    useShallow((state) => ({
+      isConnected: state.isConnected,
+      profile: state.profile,
+    })),
+  )
 
   useEffect(() => {
     bridge.connect()
@@ -678,6 +816,7 @@ export default function GraphAppV2() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (isPersonSearchOpen) { setIsPersonSearchOpen(false); return }
         if (isSettingsOpen) { setIsSettingsOpen(false); return }
         if (isRootSheetOpen && domainState.rootPubkey) { setIsRootSheetOpen(false); return }
         return
@@ -691,12 +830,17 @@ export default function GraphAppV2() {
         }
         if (isRootSheetOpen) return
         event.preventDefault()
+        if (domainState.rootPubkey) {
+          setIsSettingsOpen(false)
+          setIsPersonSearchOpen(true)
+          return
+        }
         setIsRootSheetOpen(true)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [domainState.rootPubkey, isRootSheetOpen, isSettingsOpen])
+  }, [domainState.rootPubkey, isPersonSearchOpen, isRootSheetOpen, isSettingsOpen])
 
   const callbacks = useMemo<GraphInteractionCallbacks>(
     () =>
@@ -753,6 +897,19 @@ export default function GraphAppV2() {
     [domainState.sceneSignature],
   )
   const deferredScene = useDeferredValue(scene)
+  const deferredPersonSearchQuery = useDeferredValue(personSearchQuery)
+  const personSearchMatches = useMemo(
+    () =>
+      buildPersonSearchMatches(
+        deferredScene.render.nodes,
+        deferredPersonSearchQuery,
+      ),
+    [deferredPersonSearchQuery, deferredScene],
+  )
+  const displayScene = useMemo(
+    () => applyPersonSearchHighlight(deferredScene, personSearchMatches),
+    [deferredScene, personSearchMatches],
+  )
   const detail = useMemo(() => buildNodeDetailProjection(domainState), [domainState])
   const currentRootNode = domainState.rootPubkey
     ? domainState.nodesByPubkey[domainState.rootPubkey] ?? null
@@ -991,6 +1148,7 @@ export default function GraphAppV2() {
   const openSettingsTab = useCallback((tab: SigmaSettingsTab) => {
     setActiveSettingsTab(tab)
     setIsRootSheetOpen(false)
+    setIsPersonSearchOpen(false)
     setIsSettingsOpen(true)
   }, [])
 
@@ -999,16 +1157,11 @@ export default function GraphAppV2() {
       pubkey,
       relays = [],
       npub,
+      source = 'npub',
+      evidence,
       profile,
       profileFetchedAt,
-    }: {
-      pubkey: string
-      kind: 'npub' | 'nprofile'
-      relays?: string[]
-      npub?: string
-      profile?: SavedRootProfileSnapshot | null
-    profileFetchedAt?: number | null
-  }) => {
+    }: LoadRootInput) => {
       setLoadFeedback('Cargando root...')
       setIsRootSheetOpen(false)
       setIsRootLoadScreenOpen(true)
@@ -1019,7 +1172,16 @@ export default function GraphAppV2() {
           return
         }
         const encodedNpub = npub ?? nip19.npubEncode(pubkey)
-        upsertSavedRoot({ pubkey, npub: encodedNpub, openedAt: Date.now(), relayHints: relays, profile, profileFetchedAt })
+        upsertSavedRoot({
+          pubkey,
+          npub: encodedNpub,
+          openedAt: Date.now(),
+          relayHints: relays,
+          source,
+          evidence,
+          profile,
+          profileFetchedAt,
+        })
         const minimumLoadingMs = new Promise((resolve) => window.setTimeout(resolve, 900))
         void Promise.all([
           bridge.loadRoot(pubkey, { bootstrapRelayUrls: relays }),
@@ -1042,10 +1204,35 @@ export default function GraphAppV2() {
 
   const handleSelectSavedRoot = useCallback(
     (savedRoot: SavedRootEntry) => {
-      loadRootFromPointer({ pubkey: savedRoot.pubkey, kind: 'npub', npub: savedRoot.npub, relays: savedRoot.relayHints ?? [], profile: savedRoot.profile, profileFetchedAt: savedRoot.profileFetchedAt })
+      loadRootFromPointer({
+        pubkey: savedRoot.pubkey,
+        source: savedRoot.source ?? 'npub',
+        evidence: savedRoot.evidence,
+        npub: savedRoot.npub,
+        relays: savedRoot.relayHints ?? [],
+        profile: savedRoot.profile,
+        profileFetchedAt: savedRoot.profileFetchedAt,
+      })
     },
     [loadRootFromPointer],
   )
+
+  const handleSelectSessionRoot = useCallback(() => {
+    const profile = sessionIdentity.profile
+    if (!sessionIdentity.isConnected || !profile?.pubkey) return
+
+    loadRootFromPointer({
+      pubkey: profile.pubkey,
+      source: 'session',
+      evidence: {
+        normalizedInput: profile.npub,
+      },
+      npub: profile.npub,
+      relays: [],
+      profile: mapNostrProfileToSavedRootProfile(profile),
+      profileFetchedAt: Date.now(),
+    })
+  }, [loadRootFromPointer, sessionIdentity.isConnected, sessionIdentity.profile])
 
   const handleDeleteSavedRoot = useCallback(
     (savedRoot: SavedRootEntry) => { removeSavedRoot(savedRoot.pubkey) },
@@ -1134,8 +1321,33 @@ export default function GraphAppV2() {
   // Settings panel keeps the detailed controls; rail gives quick toggles
   // without duplicating what the panel does.
   const handleOpenRootSheet = useCallback(() => {
+    setIsPersonSearchOpen(false)
+    setIsSettingsOpen(false)
     setIsRootSheetOpen(true)
   }, [])
+
+  const handleOpenPersonSearch = useCallback(() => {
+    if (!domainState.rootPubkey) {
+      setIsRootSheetOpen(true)
+      return
+    }
+    setIsRootSheetOpen(false)
+    setIsSettingsOpen(false)
+    setIsPersonSearchOpen(true)
+  }, [domainState.rootPubkey])
+
+  const handleClearPersonSearch = useCallback(() => {
+    setPersonSearchQuery('')
+  }, [])
+
+  const handleSelectPersonSearchMatch = useCallback((pubkey: string) => {
+    if (isFixtureMode) {
+      updateFixtureState((current) => ({ ...current, selectedNodePubkey: pubkey }))
+    } else {
+      bridge.selectNode(pubkey)
+    }
+    setIsPersonSearchOpen(false)
+  }, [bridge, isFixtureMode, updateFixtureState])
 
   const handleToggleSettings = useCallback(() => {
     if (isSettingsOpen) {
@@ -1218,19 +1430,25 @@ export default function GraphAppV2() {
     },
     {
       id: 'search',
-      tip: 'Cargar identidad (/)',
+      tip: personSearchQuery.trim()
+        ? `Buscar persona: ${personSearchMatches.length} coincidencia${personSearchMatches.length === 1 ? '' : 's'}`
+        : 'Buscar persona (/)',
       icon: <SearchIcon />,
-      onClick: handleOpenRootSheet,
+      active: isPersonSearchOpen || personSearchQuery.trim().length > 0,
+      onClick: handleOpenPersonSearch,
     },
   ], [
     domainState.relayState.isGraphStale,
-    handleOpenRootSheet,
+    handleOpenPersonSearch,
     handleRecenter,
     handleStaleRelays,
     handleTogglePhysics,
     handleToggleSettings,
     handleToggleZaps,
+    isPersonSearchOpen,
     isSettingsOpen,
+    personSearchMatches.length,
+    personSearchQuery,
     physicsEnabled,
     showZaps,
   ])
@@ -1451,6 +1669,7 @@ export default function GraphAppV2() {
                 <AvatarFallback
                   initials={getInitials(detail.displayName)}
                   labelClassName=""
+                  seed={detail.pubkey}
                 />
               )}
             </div>
@@ -1564,7 +1783,7 @@ export default function GraphAppV2() {
             }}
             type="button"
           >
-            {detail.isExpanded ? 'Expandido' : 'Expandir 1 salto'}
+            {detail.isExpanded ? 'Expandido' : 'Expandir'}
           </button>
           <button
             className="sg-btn"
@@ -1583,6 +1802,24 @@ export default function GraphAppV2() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const isPersonSearchPanelOpen = isPersonSearchOpen && !isRootSheetOpen && hasRoot
+  const isIdentityPanelOpen =
+    detail.node !== null &&
+    !isRootSheetOpen &&
+    !isSettingsOpen &&
+    !isPersonSearchPanelOpen
+  const handleCloseSidePanel = useCallback(() => {
+    if (isSettingsOpen) {
+      setIsSettingsOpen(false)
+      return
+    }
+    if (isPersonSearchPanelOpen) {
+      setIsPersonSearchOpen(false)
+      return
+    }
+    if (!isFixtureMode) bridge.selectNode(null)
+  }, [bridge, isFixtureMode, isPersonSearchPanelOpen, isSettingsOpen])
+
   return (
     <main
       className="sg-app"
@@ -1599,7 +1836,7 @@ export default function GraphAppV2() {
         onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
         physicsTuning={physicsTuning}
         ref={sigmaHostRef}
-        scene={deferredScene}
+        scene={displayScene}
       />
 
       {/* Loading overlay — while root data is arriving */}
@@ -1607,7 +1844,7 @@ export default function GraphAppV2() {
         <SigmaLoadingOverlay
           identityLabel={rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null}
           message={visibleLoadFeedback}
-          nodeCount={scene.render.nodes.length}
+          nodeCount={displayScene.render.nodes.length}
         />
       )}
 
@@ -1629,28 +1866,28 @@ export default function GraphAppV2() {
           />
           <SigmaSideRail buttons={railButtons} />
           <SigmaHud stats={hudStats} />
-          <SigmaMinimap
-            getSnapshot={getMinimapSnapshot}
-            getViewport={getMinimapViewport}
-            onFit={handleMinimapFit}
-            onZoomIn={handleMinimapZoomIn}
-            onZoomOut={handleMinimapZoomOut}
-            panCameraToGraph={handleMinimapPan}
-            subscribeToCameraTicks={subscribeToMinimapCameraTicks}
-            subscribeToRenderTicks={subscribeToMinimapTicks}
-            zoomRatio={viewportRatio}
-          />
+          {!isIdentityPanelOpen && !isPersonSearchPanelOpen && (
+            <SigmaMinimap
+              getSnapshot={getMinimapSnapshot}
+              getViewport={getMinimapViewport}
+              onFit={handleMinimapFit}
+              onZoomIn={handleMinimapZoomIn}
+              onZoomOut={handleMinimapZoomOut}
+              panCameraToGraph={handleMinimapPan}
+              subscribeToCameraTicks={subscribeToMinimapCameraTicks}
+              subscribeToRenderTicks={subscribeToMinimapTicks}
+              zoomRatio={viewportRatio}
+            />
+          )}
         </>
       )}
 
-      {/* Side panel — detail (right) or settings (right), one at a time */}
-      {(isSettingsOpen || (detail.node !== null && !isRootSheetOpen)) && (
+      {/* Side panel — search, detail, or settings (right), one at a time */}
+      {(isSettingsOpen || isPersonSearchPanelOpen || isIdentityPanelOpen) && (
         <SigmaSidePanel
-          eyebrow={isSettingsOpen ? 'AJUSTES' : 'IDENTIDAD'}
-          onClose={() => {
-            if (isSettingsOpen) { setIsSettingsOpen(false); return }
-            if (!isFixtureMode) bridge.selectNode(null)
-          }}
+          closeOnOutsidePointerDown={isPersonSearchPanelOpen}
+          eyebrow={isSettingsOpen ? 'AJUSTES' : isPersonSearchPanelOpen ? 'BUSCAR PERSONA' : 'IDENTIDAD'}
+          onClose={handleCloseSidePanel}
           tabs={
             isSettingsOpen ? (
               <div className="sg-panel-tabs">
@@ -1668,7 +1905,20 @@ export default function GraphAppV2() {
             ) : undefined
           }
         >
-          {isSettingsOpen ? renderSettingsContent() : renderDetailContent()}
+          {isSettingsOpen ? (
+            renderSettingsContent()
+          ) : isPersonSearchPanelOpen ? (
+            <PersonSearchPanel
+              matches={personSearchMatches}
+              onChange={setPersonSearchQuery}
+              onClear={handleClearPersonSearch}
+              onSelect={handleSelectPersonSearchMatch}
+              query={personSearchQuery}
+              totalNodeCount={deferredScene.render.nodes.length}
+            />
+          ) : (
+            renderDetailContent()
+          )}
         </SigmaSidePanel>
       )}
 
@@ -1683,6 +1933,26 @@ export default function GraphAppV2() {
             />
           }
           onClose={() => setIsRootSheetOpen(false)}
+          sessionSlot={
+            sessionIdentity.isConnected && sessionIdentity.profile ? (
+              <button
+                className="sigma-root-session"
+                onClick={handleSelectSessionRoot}
+                type="button"
+              >
+                <span className="sigma-root-session__eyebrow">Sesion conectada</span>
+                <span className="sigma-root-session__main">
+                  Explorar mi identidad
+                </span>
+                <span className="sigma-root-session__meta">
+                  {sessionIdentity.profile.displayName ??
+                    sessionIdentity.profile.name ??
+                    sessionIdentity.profile.nip05 ??
+                    sessionIdentity.profile.npub}
+                </span>
+              </button>
+            ) : null
+          }
           savedRootsSlot={
             shouldShowSavedRootsSection ? (
               <SigmaSavedRootsPanel

@@ -19,7 +19,7 @@ Objetivo:
 | # | Diagrama | Pregunta que responde | Le conviene primero a |
 | --- | --- | --- | --- |
 | 1 | [Arquitectura por capas](./01-arquitectura-por-capas.md) | Que capas tiene el programa y quien depende de quien | Quien recien entra al repo |
-| 2 | [Flujo de pegar un npub o nprofile](./02-flujo-ingreso-root.md) | Que pasa desde el input hasta ver el grafo | Quien quiere entender el caso de uso principal |
+| 2 | [Flujo de ingreso de identidad root](./02-flujo-ingreso-root.md) | Que pasa desde el input hasta ver el grafo | Quien quiere entender el caso de uso principal |
 | 3 | [Secuencia de carga del root](./03-secuencia-carga-root.md) | En que orden se hablan UI, kernel, relays, cache y store | Quien necesita seguir la ejecucion |
 | 4 | [Mapa del estado global](./04-mapa-store-global.md) | Que guarda `AppStore` y que resuelve cada slice | Quien va a tocar UI o estado |
 | 5 | [Modelo de datos del grafo](./05-modelo-datos-grafo.md) | Que entidades maneja el dominio y como se relacionan | Quien va a tocar dominio o analisis |
