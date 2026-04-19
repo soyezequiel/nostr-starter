@@ -248,3 +248,159 @@ test('failed avatar loads stay on monogram fallback', async () => {
     restoreDocument()
   }
 })
+
+test('short viewport churn does not abort an inflight avatar load', () => {
+  const restoreDocument = installDocumentStub()
+  let now = 1_000
+  const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (url: string, _bucket: number, signal: AbortSignal) => {
+      loadCalls.push({ url, signal })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache: new AvatarBitmapCache(16),
+      loader: loader as never,
+      now: () => now,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'alice',
+          urlKey: 'alice::https://example.com/alice.png',
+          url: 'https://example.com/alice.png',
+          bucket: 64,
+          priority: 5,
+          monogram: { label: 'Alice', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    now += 300
+    scheduler.reconcile([], budget)
+
+    assert.equal(loadCalls.length, 1)
+    assert.equal(loadCalls[0]?.signal.aborted, false)
+    assert.equal(scheduler.inflightSize(), 1)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
+test('stale out-of-viewport inflight loads are aborted after the grace window', () => {
+  const restoreDocument = installDocumentStub()
+  let now = 1_000
+  const cache = new AvatarBitmapCache(16)
+  const loadCalls: Array<{ signal: AbortSignal }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (_url: string, _bucket: number, signal: AbortSignal) => {
+      loadCalls.push({ signal })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache,
+      loader: loader as never,
+      now: () => now,
+    })
+    const urlKey = 'alice::https://example.com/alice.png'
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'alice',
+          urlKey,
+          url: 'https://example.com/alice.png',
+          bucket: 64,
+          priority: 5,
+          monogram: { label: 'Alice', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    now += 2_000
+    scheduler.reconcile([], budget)
+
+    assert.equal(loadCalls.length, 1)
+    assert.equal(loadCalls[0]?.signal.aborted, true)
+    assert.equal(scheduler.inflightSize(), 0)
+    assert.equal(cache.get(urlKey), undefined)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
+test('new visible avatars reclaim stale inflight slots instead of waiting for timeout', () => {
+  const restoreDocument = installDocumentStub()
+  let now = 1_000
+  const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (url: string, _bucket: number, signal: AbortSignal) => {
+      loadCalls.push({ url, signal })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache: new AvatarBitmapCache(16),
+      loader: loader as never,
+      now: () => now,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'alice',
+          urlKey: 'alice::https://example.com/alice.png',
+          url: 'https://example.com/alice.png',
+          bucket: 64,
+          priority: 10,
+          monogram: { label: 'Alice', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    now += 2_000
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'bob',
+          urlKey: 'bob::https://example.com/bob.png',
+          url: 'https://example.com/bob.png',
+          bucket: 64,
+          priority: 8,
+          monogram: { label: 'Bob', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    assert.equal(loadCalls.length, 2)
+    assert.equal(loadCalls[0]?.url, 'https://example.com/alice.png')
+    assert.equal(loadCalls[0]?.signal.aborted, true)
+    assert.equal(loadCalls[1]?.url, 'https://example.com/bob.png')
+    assert.equal(loadCalls[1]?.signal.aborted, false)
+    assert.equal(scheduler.inflightSize(), 1)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})

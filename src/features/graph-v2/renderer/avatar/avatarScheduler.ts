@@ -6,6 +6,7 @@ import type { AvatarBudget, AvatarUrlKey } from '@/features/graph-v2/renderer/av
 
 const BLOCKLIST_TTL_MS = 10 * 60 * 1000
 const URGENT_RETRY_TTL_MS = 15 * 1000
+const OUT_OF_VIEWPORT_GRACE_MS = 1500
 
 export interface AvatarCandidate {
   pubkey: string
@@ -23,26 +24,30 @@ interface InflightEntry {
   pubkey: string
   priority: number
   urgent: boolean
+  lastWantedAt: number
 }
 
 export interface AvatarSchedulerDeps {
   cache: AvatarBitmapCache
   loader: AvatarLoader
   onSettled?: () => void
+  now?: () => number
 }
 
 export class AvatarScheduler {
   private readonly cache: AvatarBitmapCache
   private readonly loader: AvatarLoader
   private readonly onSettled: () => void
+  private readonly now: () => number
   private readonly inflight = new Map<AvatarUrlKey, InflightEntry>()
   private readonly nextUrgentRetryAt = new Map<AvatarUrlKey, number>()
   private disposed = false
 
-  constructor({ cache, loader, onSettled }: AvatarSchedulerDeps) {
+  constructor({ cache, loader, onSettled, now }: AvatarSchedulerDeps) {
     this.cache = cache
     this.loader = loader
     this.onSettled = onSettled ?? (() => {})
+    this.now = now ?? (() => Date.now())
   }
 
   public reconcile(candidates: readonly AvatarCandidate[], budget: AvatarBudget) {
@@ -51,18 +56,10 @@ export class AvatarScheduler {
       return
     }
 
-    const candidateKeys = new Set<AvatarUrlKey>()
-    for (const c of candidates) {
-      candidateKeys.add(c.urlKey)
-    }
-    for (const [urlKey, entry] of this.inflight) {
-      if (!candidateKeys.has(urlKey)) {
-        entry.controller.abort('out_of_viewport')
-        this.inflight.delete(urlKey)
-      }
-    }
-
-    this.kickoffCandidates(candidates, budget)
+    const now = this.now()
+    const candidateKeys = this.recordCandidateDemand(candidates, now)
+    this.abortExpiredInflight(candidateKeys, now)
+    this.kickoffCandidates(candidates, budget, now)
   }
 
   public prime(candidates: readonly AvatarCandidate[], budget: AvatarBudget) {
@@ -70,17 +67,24 @@ export class AvatarScheduler {
       return
     }
 
-    this.kickoffCandidates(candidates, budget)
+    const now = this.now()
+    this.recordCandidateDemand(candidates, now)
+    this.kickoffCandidates(candidates, budget, now)
   }
 
   private kickoffCandidates(
     candidates: readonly AvatarCandidate[],
     budget: AvatarBudget,
+    now: number,
   ) {
     const sorted = [...candidates].sort((a, b) => a.priority - b.priority)
 
     for (const candidate of sorted) {
-      if (this.inflight.has(candidate.urlKey)) {
+      const inflightEntry = this.inflight.get(candidate.urlKey)
+      if (inflightEntry) {
+        inflightEntry.lastWantedAt = now
+        inflightEntry.priority = candidate.priority
+        inflightEntry.urgent = inflightEntry.urgent || (candidate.urgent ?? false)
         continue
       }
       const existing = this.cache.get(candidate.urlKey)
@@ -97,13 +101,17 @@ export class AvatarScheduler {
           continue
         }
       }
-      if (
+      while (
         this.inflight.size >= budget.concurrency &&
-        !this.abortLowerPriorityInflight(candidate)
+        (this.abortExpiredInflightEntry(now) ||
+          this.abortLowerPriorityInflight(candidate))
       ) {
+        // keep reclaiming obsolete slots until the candidate can start or no slot can be freed
+      }
+      if (this.inflight.size >= budget.concurrency) {
         break
       }
-      this.kickoff(candidate, budget)
+      this.kickoff(candidate, budget, now)
     }
   }
 
@@ -121,10 +129,9 @@ export class AvatarScheduler {
   }
 
   private abortAll() {
-    for (const entry of this.inflight.values()) {
-      entry.controller.abort('disposed')
+    for (const [urlKey, entry] of this.inflight) {
+      this.abortInflight(urlKey, entry, 'disposed')
     }
-    this.inflight.clear()
   }
 
   private prepareUrgentRetry(candidate: AvatarCandidate) {
@@ -132,7 +139,7 @@ export class AvatarScheduler {
       return false
     }
 
-    const now = Date.now()
+    const now = this.now()
     const nextRetryAt = this.nextUrgentRetryAt.get(candidate.urlKey) ?? 0
     if (nextRetryAt > now) {
       return false
@@ -144,7 +151,7 @@ export class AvatarScheduler {
     return true
   }
 
-  private kickoff(candidate: AvatarCandidate, budget: AvatarBudget) {
+  private kickoff(candidate: AvatarCandidate, budget: AvatarBudget, now: number) {
     const targetBucket = Math.min(candidate.bucket, budget.maxBucket) as ImageLodBucket
     const controller = new AbortController()
     this.inflight.set(candidate.urlKey, {
@@ -153,6 +160,7 @@ export class AvatarScheduler {
       pubkey: candidate.pubkey,
       priority: candidate.priority,
       urgent: candidate.urgent ?? false,
+      lastWantedAt: now,
     })
 
     const monogram = this.cache.getMonogram(candidate.pubkey, candidate.monogram)
@@ -217,9 +225,78 @@ export class AvatarScheduler {
       return false
     }
 
-    lowestPriorityEntry.controller.abort('preempted_by_urgent_avatar')
-    this.inflight.delete(lowestPriorityEntry.urlKey)
-    this.cache.delete(lowestPriorityEntry.urlKey)
+    this.abortInflight(
+      lowestPriorityEntry.urlKey,
+      lowestPriorityEntry,
+      'preempted_by_urgent_avatar',
+    )
     return true
+  }
+
+  private recordCandidateDemand(
+    candidates: readonly AvatarCandidate[],
+    now: number,
+  ) {
+    const candidateKeys = new Set<AvatarUrlKey>()
+    for (const candidate of candidates) {
+      candidateKeys.add(candidate.urlKey)
+      const inflightEntry = this.inflight.get(candidate.urlKey)
+      if (!inflightEntry) {
+        continue
+      }
+      inflightEntry.lastWantedAt = now
+      inflightEntry.priority = candidate.priority
+      inflightEntry.urgent = inflightEntry.urgent || (candidate.urgent ?? false)
+    }
+    return candidateKeys
+  }
+
+  private abortExpiredInflight(
+    candidateKeys: ReadonlySet<AvatarUrlKey>,
+    now: number,
+  ) {
+    for (const [urlKey, entry] of this.inflight) {
+      if (candidateKeys.has(urlKey)) {
+        continue
+      }
+      if (this.shouldRetainInflight(entry, now)) {
+        continue
+      }
+      this.abortInflight(urlKey, entry, 'out_of_viewport')
+    }
+  }
+
+  private abortExpiredInflightEntry(now: number) {
+    let staleEntry: InflightEntry | null = null
+
+    for (const entry of this.inflight.values()) {
+      if (this.shouldRetainInflight(entry, now)) {
+        continue
+      }
+      if (!staleEntry || entry.priority > staleEntry.priority) {
+        staleEntry = entry
+      }
+    }
+
+    if (!staleEntry) {
+      return false
+    }
+
+    this.abortInflight(staleEntry.urlKey, staleEntry, 'out_of_viewport')
+    return true
+  }
+
+  private shouldRetainInflight(entry: InflightEntry, now: number) {
+    return now - entry.lastWantedAt < OUT_OF_VIEWPORT_GRACE_MS
+  }
+
+  private abortInflight(
+    urlKey: AvatarUrlKey,
+    entry: InflightEntry,
+    reason: string,
+  ) {
+    entry.controller.abort(reason)
+    this.inflight.delete(urlKey)
+    this.cache.delete(urlKey)
   }
 }
