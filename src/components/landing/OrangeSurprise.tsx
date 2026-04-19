@@ -18,7 +18,7 @@ const surpriseLabels = ['Modo citrico', 'Naranja hack', 'Zest overload'] as cons
 
 export default function OrangeSurprise() {
   const shouldReduceMotion = useReducedMotion()
-  const timeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasOpenedGithubRef = useRef(false)
   const [isBursting, setIsBursting] = useState(false)
   const [burstCount, setBurstCount] = useState(0)
@@ -27,14 +27,14 @@ export default function OrangeSurprise() {
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
-        window.clearTimeout(timeoutRef.current)
+        clearTimeout(timeoutRef.current)
       }
     }
   }, [])
 
   const triggerSurprise = () => {
     if (timeoutRef.current) {
-      window.clearTimeout(timeoutRef.current)
+      clearTimeout(timeoutRef.current)
     }
 
     const nextClickCount = clickCount + 1
@@ -47,7 +47,7 @@ export default function OrangeSurprise() {
       window.open(githubUrl, '_blank', 'noopener,noreferrer')
     }
 
-    timeoutRef.current = window.setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       setIsBursting(false)
     }, shouldReduceMotion ? 850 : 1600)
   }

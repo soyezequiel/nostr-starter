@@ -31,13 +31,14 @@ function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number })
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    const context = ctx
 
     const dpr = window.devicePixelRatio || 1
     canvas.width = size * dpr
     canvas.height = size * dpr
     canvas.style.width = `${size}px`
     canvas.style.height = `${size}px`
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     let seedState = seed * 9301 + 49297
     const random = () => {
@@ -119,21 +120,21 @@ function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number })
         if (node.y > size - margin) node.vy -= (node.y - (size - margin)) * 0.05
       }
 
-      ctx.clearRect(0, 0, size, size)
-      ctx.lineWidth = 0.7
+      context.clearRect(0, 0, size, size)
+      context.lineWidth = 0.7
 
       for (const [source, target] of edges) {
         const sourceNode = nodes[source]
         const targetNode = nodes[target]
-        ctx.strokeStyle = 'oklch(98% 0 0 / 0.25)'
-        ctx.beginPath()
-        ctx.moveTo(sourceNode.x, sourceNode.y)
-        ctx.lineTo(targetNode.x, targetNode.y)
-        ctx.stroke()
+        context.strokeStyle = 'oklch(98% 0 0 / 0.25)'
+        context.beginPath()
+        context.moveTo(sourceNode.x, sourceNode.y)
+        context.lineTo(targetNode.x, targetNode.y)
+        context.stroke()
       }
 
       for (const node of nodes) {
-        const glow = ctx.createRadialGradient(
+        const glow = context.createRadialGradient(
           node.x,
           node.y,
           0,
@@ -143,21 +144,21 @@ function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number })
         )
         glow.addColorStop(0, 'oklch(100% 0 0 / 0.35)')
         glow.addColorStop(1, 'oklch(100% 0 0 / 0)')
-        ctx.fillStyle = glow
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.r * 4, 0, Math.PI * 2)
-        ctx.fill()
+        context.fillStyle = glow
+        context.beginPath()
+        context.arc(node.x, node.y, node.r * 4, 0, Math.PI * 2)
+        context.fill()
 
-        ctx.fillStyle = 'oklch(98% 0 0)'
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2)
-        ctx.fill()
+        context.fillStyle = 'oklch(98% 0 0)'
+        context.beginPath()
+        context.arc(node.x, node.y, node.r, 0, Math.PI * 2)
+        context.fill()
 
-        ctx.strokeStyle = 'oklch(0% 0 0 / 0.6)'
-        ctx.lineWidth = 0.5
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.r - 0.4, 0, Math.PI * 2)
-        ctx.stroke()
+        context.strokeStyle = 'oklch(0% 0 0 / 0.6)'
+        context.lineWidth = 0.5
+        context.beginPath()
+        context.arc(node.x, node.y, node.r - 0.4, 0, Math.PI * 2)
+        context.stroke()
       }
 
       frameId = requestAnimationFrame(step)
