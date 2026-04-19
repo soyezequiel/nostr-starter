@@ -1,254 +1,93 @@
 # Guia del codebase actual
 
-Este documento describe el codigo que existe hoy en el repositorio. La aplicacion ya no conserva el grafo v1 de `/`; Sigma es el unico grafo vivo.
+Este documento resume el codigo que existe hoy y donde conviene tocarlo. No reemplaza `AGENTS.md`: aca solo queda el mapa tecnico vigente.
 
-Complemento recomendado para onboarding tecnico:
+## Producto actual
 
-- [Diagramas para programadores](./diagramas-programador/README.md)
+- `/` es la home sin runtime de grafo. Entra por `src/app/page.tsx` y renderiza `src/components/landing/LandingPage.tsx`.
+- `/labs/sigma` es el explorador principal de identidad. Es el unico grafo vivo del producto.
+- `src/components/Navbar.tsx` conecta las rutas publicas y la autenticacion compartida.
 
-## 1. Forma actual del producto
+No asumir que existe un grafo v1 en `/`, un switcher de secciones global o `store/nav.ts`.
 
-Hoy:
+## Mapa de ownership
 
-- `/` es una landing de entrada sin runtime de grafo
-- `/labs/sigma` monta el explorador de identidad con Sigma.js, Graphology y ForceAtlas2
-- `profile` y `badges` viven en rutas separadas
-- la incertidumbre de relays forma parte de la UX, no es un caso borde
-- el runtime compartido del grafo vive en `src/features/graph-runtime/`
-- la app prioriza exploracion visual, capas sociales, relays y estados parciales verificables en pantalla
+| Area | Ruta principal | Responsabilidad |
+| --- | --- | --- |
+| Rutas Next | `src/app/` | Entrypoints de paginas, layout global y CSS base |
+| Componentes compartidos | `src/components/` | Navbar, login, perfil, badges, imagenes y home |
+| Auth compartida | `src/store/auth.ts` | Estado de sesion usado por navbar, profile y badges |
+| Nostr clasico | `src/lib/nostr.ts` | NDK, login, NIP-65, perfiles, followers, following, notas y badges |
+| Media compartida | `src/lib/media.ts` | Normalizacion de imagenes/medios |
+| Sigma UI/dominio | `src/features/graph-v2/` | UI, proyecciones, dominio canonico y renderer Sigma |
+| Runtime de grafo | `src/features/graph-runtime/` | Store, kernel, relays, DB, workers, analysis y export |
 
-## 2. Mapa de rutas
+## Sigma
 
-### `/`
-
-Punto de entrada:
-
-- `src/app/page.tsx`
-
-Objetivo:
-
-- presentar una landing de entrada sin canvas ni runtime de grafo
-- enviar a `/labs/sigma`, `/profile` y `/badges`
-
-### `/labs/sigma`
-
-Puntos de entrada:
+Entrypoints:
 
 - `src/app/labs/sigma/page.tsx`
 - `src/features/graph-v2/GraphClientV2.tsx`
 - `src/features/graph-v2/ui/GraphAppV2.tsx`
 
-Objetivo:
+Flujo actual:
 
-- cargar una identidad desde `npub`, `nprofile`, pubkey hex, NIP-05, links con puntero NIP-19 o la sesion conectada
-- consultar relays con estados parciales, stale y timeouts visibles
-- proyectar el vecindario social con Sigma.js
-- expandir nodos, alternar capas, ver detalle de identidades y zaps
-- conservar persistencia local para sostener la experiencia del explorador
+1. `SigmaRootInput.tsx` acepta `npub`, `nprofile`, pubkey hex, NIP-05, links con puntero NIP-19 o la sesion conectada.
+2. `resolveRootIdentity()` resuelve pubkey, relay hints y evidencia de origen.
+3. `LegacyKernelBridge` conecta la UI nueva con `browserAppKernel`.
+4. El kernel carga raiz, relays, vecinos, expansion de nodos, detalle, capas, zaps y persistencia.
+5. Los workers parsean eventos y calculan analisis pesado fuera de React.
+6. `graph-v2/projections/` arma snapshots para render y fisica.
+7. `SigmaCanvasHost` monta Sigma y `renderer/` corre ForceAtlas2 sobre el grafo de fisica.
 
-Notas:
+Limites importantes:
 
-- `GraphClientV2.tsx` carga la app con `ssr: false`
-- `graph-v2/` encapsula UI, dominio canonico, bridge, proyecciones y renderer Sigma
-- el runtime heredado necesario fue movido a `graph-runtime/`
+- Estado que afecta paneles, capas, seleccion, relays, export o runtime debe vivir en el store del grafo, no como estado local aislado.
+- Procesamiento caro no va en render paths de React.
+- Estilos de Sigma viven en `src/features/graph-v2/ui/graph-v2.css` y deben quedar scopeados bajo `[data-graph-v2]`.
+- El runtime de avatares de Sigma vive en `src/features/graph-v2/renderer/avatar/`; no agregar caches paralelos de imagenes.
 
-### `/profile`
+## Runtime de grafo
 
-Puntos de entrada:
+Subareas principales:
 
-- `src/app/profile/page.tsx`
-- `src/components/Profile.tsx`
+- `app/store/`: slices de grafo, UI, relays, analysis, zaps, keywords, pathfinding y export.
+- `kernel/`: fachada, runtime browser, transiciones y modulos de ciclo de vida.
+- `kernel/modules/`: root loading, relay session, expansion, detail, hydration, persistence, analysis, zaps y export orchestration.
+- `nostr/`: transporte, adapters, NIP-05, errores y normalizacion de relays.
+- `db/`: Dexie, entidades y repositorios.
+- `analysis/`: tipos y claves de analisis compartido.
+- `export/`: snapshot, canonicalizacion, ZIP multipart y descarga.
+- `workers/`: gateway browser y workers de eventos, grafo y verificacion.
 
-Objetivo:
+Export existe en runtime y kernel, pero `GraphAppV2.tsx` no expone hoy un flujo publico de export desde Sigma. Si se toca esa capa, mantener salida deterministica, auditable y con estados de progreso/falla.
 
-- autenticar a la cuenta conectada
-- renderizar metadata de perfil, estadisticas sociales y notas
-- reutilizar auth y helpers compartidos de Nostr
+## Workers
 
-### `/badges`
-
-Puntos de entrada:
-
-- `src/app/badges/page.tsx`
-- `src/components/Badges.tsx`
-
-Objetivo:
-
-- traer premios NIP-58 para la identidad conectada
-- resolver definiciones de badges y sus medios asociados
-
-## 3. Capa compartida de la app
-
-### `src/components/Navbar.tsx`
-
-Navegacion compartida entre:
-
-- home
-- Sigma
-- profile
-- badges
-
-Tambien expone el punto comun de conectar y desconectar mediante `LoginModal`.
-
-### `src/lib/nostr.ts`
-
-Usar este modulo para las superficies clasicas de la app:
-
-- setup compartido del singleton de NDK
-- metodos de login
-- enriquecimiento de relays via `NIP-65`
-- parseo de perfiles
-- fetches de followers, following y notas
-- timeouts acotados para llamadas de red visibles para usuario
-
-### `src/store/auth.ts`
-
-Estado compartido de autenticacion usado por:
-
-- `Navbar`
-- `Profile`
-- `Badges`
-
-## 4. Arquitectura del grafo Sigma
-
-### UI y renderer
-
-- `src/features/graph-v2/ui/GraphAppV2.tsx`
-- `src/features/graph-v2/ui/SigmaCanvasHost.tsx`
-- `src/features/graph-v2/renderer/`
-
-Responsabilidades:
-
-- shell visual del laboratorio Sigma
-- selector de identidad
-- paneles y controles del grafo
-- renderer Sigma sobre un grafo de render dedicado
-- ForceAtlas2 sobre un grafo de fisica separado
-- bridge explicito de posiciones entre fisica y render
-- avatar runtime propio de graph-v2
-
-Los estilos de Sigma viven en `src/features/graph-v2/ui/graph-v2.css` y deben quedar scopeados bajo `[data-graph-v2]`.
-
-### Bridge y dominio
-
-- `src/features/graph-v2/bridge/`
-- `src/features/graph-v2/domain/`
-- `src/features/graph-v2/projections/`
-
-Responsabilidades:
-
-- adaptar el store/runtime compartido a un dominio canonico para Sigma
-- construir snapshots de escena separados en `render` y `physics`
-- mantener separados edges visibles y edges usados por fuerza/layout
-- dejar la politica de elegibilidad de fisica encapsulada para futuras fases
-
-### Runtime compartido
-
-- `src/features/graph-runtime/app/store/`
-- `src/features/graph-runtime/kernel/`
-- `src/features/graph-runtime/nostr/`
-- `src/features/graph-runtime/db/`
-- `src/features/graph-runtime/analysis/`
-- `src/features/graph-runtime/export/` como infraestructura interna sin superficie de producto verificada
-- `src/features/graph-runtime/workers/`
-
-Esta capa resuelve:
-
-- decodificacion y carga del root
-- manejo de sesiones de relays
-- overrides reversibles de relays
-- hidratacion del detalle de nodo
-- preview estructural y expansion
-- cambio de capas
-- programacion del analisis del grafo descubierto
-- precarga de la capa de zaps
-- persistencia local con Dexie
-- infraestructura interna de captura/archivo que no debe tratarse como funcionalidad disponible para usuario
-
-Si la logica se parece a workflow, ciclo de vida de sesion, protocolo, persistencia o analisis compartido, pertenece en `graph-runtime`.
-
-### Workers
-
-Los entrypoints actuales estan en `scripts/build-graph-workers.mjs`:
+`scripts/build-graph-workers.mjs` compila estos entrypoints hacia `public/workers`:
 
 - `src/features/graph-runtime/workers/events.worker.ts`
 - `src/features/graph-runtime/workers/graph.worker.ts`
 - `src/features/graph-runtime/workers/verifyWorker.ts`
 
-Ya no existe `physics.worker`: las fisicas v1 fueron eliminadas junto con el render Deck/d3.
+No existe `physics.worker`: la fisica actual corre desde el renderer de Sigma/Graphology.
 
-## 5. Workflow actual del grafo
+## Donde tocar
 
-A nivel general:
+- Nueva ruta: `src/app/<route>/page.tsx` y `src/components/Navbar.tsx`.
+- Cambio de home: `src/components/landing/` y, si cambia la navegacion, `Navbar`.
+- Perfil, badges o login clasico: `src/lib/nostr.ts`, `src/store/auth.ts` y componentes compartidos.
+- Panel/control de Sigma: `src/features/graph-v2/ui/GraphAppV2.tsx` y componentes `Sigma*`.
+- Semantica del grafo: bridge, proyecciones o dominio en `src/features/graph-v2/`.
+- Discovery, relays, expansion, persistencia o protocolo: `src/features/graph-runtime/kernel/` y `nostr/`.
+- Analisis pesado o parsing masivo: `src/features/graph-runtime/workers/` o `analysis/`.
+- Export/evidencia: `src/features/graph-runtime/export/` y `kernel/modules/export-orch.ts`.
 
-1. La persona usuaria ingresa un `npub`, `nprofile`, pubkey hex, NIP-05, link de perfil o usa la sesion conectada en `/labs/sigma`.
-2. `SigmaRootInput.tsx` llama a `resolveRootIdentity()` para resolver el input a una pubkey, relay hints y evidencia de origen.
-3. El bridge llama al runtime compartido para cargar el vecindario raiz desde el set activo de relays.
-4. Los workers parsean eventos y calculan analisis del grafo.
-5. Los slices del store reciben nodos, links, estado de relays, analisis, zaps y estado de UI.
-6. Las proyecciones de `graph-v2` traducen ese estado a snapshots para Sigma.
-7. `SigmaCanvasHost` monta Sigma con el grafo de render y el adapter corre FA2 sobre el grafo de fisica.
-8. Un ledger compartido preserva posiciones entre rebuilds y espeja los nodos fisicos hacia el render mientras la simulacion corre.
-9. La UI expone detalle de nodo, relays, render, capas, busqueda y diagnosticos.
+## Reglas tecnicas que no conviene romper
 
-Esto implica:
-
-- la validacion vive cerca del borde input-kernel
-- la sesion y el comportamiento de relays viven en el kernel
-- las transformaciones costosas van en workers o analysis
-- las decisiones visuales van en `graph-v2/ui` y `graph-v2/renderer`
-
-## 6. Puntos seguros para extender
-
-### Agregar una ruta nueva
-
-Tocar:
-
-- `src/app/<route>/page.tsx`
-- `src/components/Navbar.tsx`
-
-### Agregar un panel o control de Sigma
-
-Tocar:
-
-- `src/features/graph-v2/ui/GraphAppV2.tsx`
-- componentes nuevos dentro de `src/features/graph-v2/ui/`
-- el bridge o runtime solamente si cambia semantica de grafo
-
-### Agregar logica pesada de discovery o analysis
-
-Tocar:
-
-- `src/features/graph-runtime/kernel/`
-- `src/features/graph-runtime/analysis/`
-- `src/features/graph-runtime/workers/`
-
-### Agregar capacidades compartidas de cuenta
-
-Tocar:
-
-- `src/lib/nostr.ts`
-- `src/store/auth.ts`
-- `src/components/LoginModal.tsx`
-
-## 7. Convenciones de trabajo
-
-- Mantener fetches async acotados por timeouts.
-- Preservar la UX de estado parcial cuando los relays rinden mal.
-- Reutilizar el lenguaje visual actual de La Crypta.
-- Preferir extensiones dentro de `/labs/sigma` y `graph-v2` para UX de grafo.
-- No reintroducir el patron viejo de `store/nav.ts`.
-- No volver a crear un grafo v1 paralelo en `/`.
-
-## 8. Orden de lectura recomendado
-
-1. `src/app/page.tsx`
-2. `src/app/labs/sigma/page.tsx`
-3. `src/features/graph-v2/GraphClientV2.tsx`
-4. `src/features/graph-v2/ui/GraphAppV2.tsx`
-5. `src/features/graph-v2/bridge/LegacyKernelBridge.ts`
-6. `src/features/graph-runtime/app/store/types.ts`
-7. `src/features/graph-runtime/kernel/runtime.ts`
-8. `src/features/graph-v2/renderer/SigmaRendererAdapter.ts`
-9. `src/features/graph-runtime/analysis/types.ts`
-10. `src/lib/nostr.ts`
+- Mantener fetches Nostr acotados por timeouts.
+- Preservar UX de estados parciales, stale, vacios y fallas de relay.
+- No hardcodear un unico relay cuando ya existe comportamiento relay-aware.
+- No reintroducir el modelo viejo de grafo v1 ni un runtime paralelo en `/`.
+- No presentar `pathfinding` como producto completo sin verificar un flujo UI end to end.
+- No tratar export como una descarga cosmetica: es empaquetado de evidencia.
