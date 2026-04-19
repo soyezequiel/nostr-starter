@@ -21,9 +21,7 @@
 
 > Proyecto participante de **IDENTITY**, el desafio de **abril de 2026** dentro de **Lightning Hackathons 2026** de **La Crypta**.
 
-Este repositorio nacio a partir de `nostr-starter`, pero hoy responde a otro producto: **Nostr Espacial**, una experiencia **graph-first** para explorar identidad en Nostr, leer contexto social y entender incertidumbre de relays dentro de una vista Sigma.
-
-La documentacion esta escrita en espanol y pensada para una audiencia tecnica de Argentina: gente que quiera preparar una demo para jurado, investigar identidad en Nostr o extender el proyecto sin tener que reconstruir primero el estado real del repo.
+**Nostr Espacial**, una experiencia **graph-first** para explorar identidad en Nostr, leer contexto social y observar los zaps en vivo.
 
 ## Demo
 
@@ -32,10 +30,9 @@ La documentacion esta escrita en espanol y pensada para una audiencia tecnica de
 ## Que resuelve este proyecto
 
 - Explora vecindarios de identidad a partir de un `npub` o `nprofile`
-- Descubre conexiones, mutuals, comunidades, liderazgos y puentes dentro del grafo
-- Trabaja con relays reales, mostrando salud, cobertura parcial y estado stale
-- Permite comparar identidades dentro del canvas
-- Integra senales como perfiles, badges y zaps
+- Descubre conexiones, mutuals, zaps en vivo
+- Trabaja con relays reales, mostrando salud, cobertura parcial
+- Integra informacion como perfiles y zaps
 - Mantiene una lectura visual clara del estado del grafo, sus capas y sus datos parciales
 
 ## Por que encaja bien en IDENTITY
@@ -43,31 +40,16 @@ La documentacion esta escrita en espanol y pensada para una audiencia tecnica de
 La propuesta no se limita a "ver un perfil". El foco esta en **identidad como red**:
 
 - identidad relacional
-- descubrimiento relay-aware
-- senales de confianza y contexto
-- lectura tecnica para demo, investigacion o validacion de identidad relacional
+- senales de zaps entre los conexiones presentes
 
-Ese enfoque conversa bien con lo que suele valorar un jurado tecnico: innovacion en identidad, demo funcionando, criterio de protocolo y una historia de producto clara.
 
 ## Superficies del producto
 
 | Ruta | Para que sirve |
 | --- | --- |
-| `/` | Landing de entrada con narrativa de producto y acceso a Sigma, Profile y Badges |
+| `/` | Landing de entrada con narrativa de producto |
 | `/labs/sigma` | Explorador principal del grafo de identidad con Sigma |
-| `/profile` | Vista clasica del perfil autenticado |
-| `/badges` | Vista de badges NIP-58 de la cuenta autenticada |
 
-## Funcionalidades actuales
-
-- Login con `NIP-07`, `nsec` y `NIP-46` bunker
-- Flujo QR para Nostr Connect y bunker login
-- Carga relay-aware con timeouts y fallback visual
-- Expansion estructural de nodos sin perder la sesion del grafo
-- Paneles de configuracion para visualizacion, relays y capas del grafo
-- Analisis del grafo en background con Web Workers
-- Persistencia local con Dexie para sostener la experiencia del explorador
-- Diagnosticos visibles para relays, rendimiento del canvas y estados parciales
 
 ## Stack
 
@@ -95,8 +77,6 @@ npm run build
 npm run lint
 ```
 
-Los workers del grafo se recompilan automaticamente en `predev`, `prebuild` y `prestart`.
-
 ## Arquitectura rapida
 
 ```text
@@ -109,17 +89,8 @@ src/
 |-- store/                # Estado compartido de autenticacion
 `-- types/                # Tipados
 ```
-
-## Documentacion util
-
-- [Guia del codebase actual](./docs/current-codebase.md)
-- [Diagramas para programadores](./docs/diagramas-programador/README.md)
-- [Workflow de validacion del avatar pipeline](./docs/avatar-pipeline-validation.md)
-- [Resolucion de problemas del avatar pipeline](./docs/avatar-pipeline-troubleshooting.md)
-- [Instrucciones del repo para agentes](./AGENTS.md)
-
 ## Nota importante
 
-La superficie principal del producto es el grafo Sigma en `/labs/sigma`. `/` funciona como landing de entrada para orientar la demo y enviar a las rutas clave; `profile` y `badges` siguen siendo utiles, pero la historia mas fuerte del proyecto esta en la exploracion de identidad, la incertidumbre de relays y la lectura visual del contexto social.
+La superficie principal del producto es el grafo Sigma en `/labs/sigma`. `/` funciona como landing de entrada para orientar la demo y enviar a las rutas clave; `profile` sigue siendo util, pero la historia mas fuerte del proyecto esta en la exploracion de identidad, y la visualizacion de los zaps en vivo.
 
 
