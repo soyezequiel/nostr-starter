@@ -1,6 +1,6 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useEffect, useRef } from 'react'
 
 export interface FilterPill {
   id: 'all' | 'following' | 'followers' | 'mutuals' | 'oneway' | 'connections'
@@ -21,10 +21,56 @@ export const SigmaFilterBar = memo(function SigmaFilterBar({
   pills,
   onSelect,
 }: Props) {
+  const stackRef = useRef<HTMLDivElement | null>(null)
   const activePill = pills.find((pill) => pill.id === activeId) ?? pills[0]
 
+  useEffect(() => {
+    const stack = stackRef.current
+    if (!stack || typeof window === 'undefined') return
+
+    const app = stack.closest<HTMLElement>('[data-graph-v2]')
+    if (!app) return
+
+    const syncTopChrome = () => {
+      const stackStyles = window.getComputedStyle(stack)
+      if (stackStyles.top === 'auto') {
+        app.style.removeProperty('--sg-filter-stack-bottom')
+        return
+      }
+
+      const appRect = app.getBoundingClientRect()
+      const stackRect = stack.getBoundingClientRect()
+      const stackBottom = Math.max(0, Math.ceil(stackRect.bottom - appRect.top))
+
+      app.style.setProperty('--sg-filter-stack-bottom', `${stackBottom}px`)
+    }
+
+    syncTopChrome()
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            syncTopChrome()
+          })
+
+    resizeObserver?.observe(stack)
+    window.addEventListener('resize', syncTopChrome)
+
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', syncTopChrome)
+      app.style.removeProperty('--sg-filter-stack-bottom')
+    }
+  }, [activeId, pills])
+
   return (
-    <div className="sg-filter-stack" role="region" aria-label="Filtros y leyenda del grafo">
+    <div
+      className="sg-filter-stack"
+      ref={stackRef}
+      role="region"
+      aria-label="Filtros y leyenda del grafo"
+    >
       <div className="sg-filter-bar">
         {pills.map((pill) => (
           <button
@@ -56,17 +102,24 @@ export const SigmaFilterBar = memo(function SigmaFilterBar({
       </div>
       <div className="sg-filter-help">
         <span className="sg-filter-help__scope">{activePill?.hint}</span>
-        <span className="sg-filter-key">
-          <span className="sg-filter-key__swatch sg-filter-key__swatch--follow" />
-          Celeste: follow saliente
-        </span>
-        <span className="sg-filter-key">
-          <span className="sg-filter-key__swatch sg-filter-key__swatch--inbound" />
-          Naranja: follower entrante
-        </span>
-        <span className="sg-filter-key">
-          <span className="sg-filter-key__swatch sg-filter-key__swatch--highlight" />
-          Brillante: seleccionado, pin o zap
+        <span className="sg-filter-group" aria-label="Conexiones visibles">
+          <span className="sg-filter-group__label">Conexiones</span>
+          <span className="sg-filter-key">
+            <span className="sg-filter-key__swatch sg-filter-key__swatch--follow" />
+            Celeste: sigo
+          </span>
+          <span className="sg-filter-key">
+            <span className="sg-filter-key__swatch sg-filter-key__swatch--inbound" />
+            Ambar: me sigue
+          </span>
+          <span className="sg-filter-key">
+            <span className="sg-filter-key__swatch sg-filter-key__swatch--mutual" />
+            Verde: mutuo
+          </span>
+          <span className="sg-filter-key">
+            <span className="sg-filter-key__swatch sg-filter-key__swatch--zap" />
+            Magenta: zap
+          </span>
         </span>
       </div>
     </div>

@@ -66,7 +66,7 @@ import type {
   DebugPhysicsDiagnostics,
 } from '@/features/graph-v2/testing/browserDebug'
 
-const HOVER_SELECTED_NODE_COLOR = '#ffb25b'
+const HOVER_SELECTED_NODE_COLOR = '#f4fbff'
 const HOVER_NEIGHBOR_NODE_COLOR = '#f8f2a2'
 const HOVER_DIM_NODE_COLOR = '#121a22'
 const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
@@ -877,8 +877,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       !this.renderStore ||
       !this.physicsStore ||
       !this.callbacks ||
-      !this.draggedNodePubkey ||
-      !this.pendingGraphPosition
+      !this.draggedNodePubkey
     ) {
       return
     }
@@ -886,7 +885,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.markMotion()
     this.flushCount += 1
     const draggedNodePubkey = this.draggedNodePubkey
-    const graphPosition = this.pendingGraphPosition
+    const graphPosition = this.pendingGraphPosition ?? this.lastDragGraphPosition
+    const shouldEmitDragMove = this.pendingGraphPosition !== null
+    if (!graphPosition) {
+      return
+    }
     this.pendingGraphPosition = null
     const now = performance.now()
     const previousTimestamp = this.lastDragFlushTimestamp
@@ -907,30 +910,45 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.nodeHitTester?.markDirty()
     this.lastDragGraphPosition = graphPosition
     this.lastFlushedGraphPosition = graphPosition
+    let dragInfluenceActive = false
     if (this.dragInfluenceState) {
-      stepDragNeighborhoodInfluence(
+      const dragStep = stepDragNeighborhoodInfluence(
         this.physicsStore,
         draggedNodePubkey,
         this.dragInfluenceState,
         deltaMs,
         this.dragInfluenceConfig,
       )
+      dragInfluenceActive = dragStep.active
     }
     this.syncPhysicsPositionsToRender()
     this.lastDragFlushTimestamp = now
     this.safeRefresh()
-    this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
+    if (shouldEmitDragMove) {
+      this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
+    }
+
+    if (
+      this.draggedNodePubkey === draggedNodePubkey &&
+      (this.pendingGraphPosition !== null || dragInfluenceActive)
+    ) {
+      this.ensureDragFrame()
+    }
+  }
+
+  private ensureDragFrame() {
+    if (this.pendingDragFrame !== null) {
+      return
+    }
+
+    this.pendingDragFrame = requestAnimationFrame(this.flushPendingDragFrame)
   }
 
   private readonly scheduleDragFrame = (graphPosition: { x: number; y: number }) => {
     this.pendingGraphPosition = graphPosition
     this.lastScheduledGraphPosition = graphPosition
 
-    if (this.pendingDragFrame !== null) {
-      return
-    }
-
-    this.pendingDragFrame = requestAnimationFrame(this.flushPendingDragFrame)
+    this.ensureDragFrame()
   }
 
   private readonly cancelPendingDragFrame = () => {
@@ -1015,6 +1033,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.draggedNodePubkey = null
     this.shouldPinDraggedNodeOnRelease = false
     this.lastDragFlushTimestamp = null
+    this.cancelPendingDragFrame()
     this.suppressedClick = createSuppressedNodeClick(draggedNodePubkey)
     this.suppressedStageClickUntil =
       Date.now() + STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS

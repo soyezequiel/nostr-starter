@@ -7,6 +7,7 @@
   --sg-bg-deep:        oklch(11% 0.010 230);
   --sg-bg-panel:       oklch(20% 0.014 230 / 0.72);
   --sg-bg-panel-solid: oklch(19% 0.014 230);
+  --sg-filter-stack-bottom: 108px;
   --sg-stroke:         oklch(32% 0.014 230 / 0.55);
   --sg-stroke-strong:  oklch(46% 0.020 230 / 0.8);
   --sg-fg:             oklch(96% 0.008 230);
@@ -313,12 +314,12 @@
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  max-width: min(100%, 760px);
-  padding: 6px 10px;
+  gap: 6px 10px;
+  max-width: min(100%, 860px);
+  padding: 8px 10px;
   border: 1px solid var(--sg-stroke);
   border-radius: 8px;
-  background: oklch(12% 0.010 230 / 0.66);
+  background: oklch(10% 0.010 230 / 0.78);
   backdrop-filter: blur(12px) saturate(1.05);
   -webkit-backdrop-filter: blur(12px) saturate(1.05);
   box-shadow: 0 12px 30px -24px oklch(0% 0 0 / 0.7);
@@ -330,8 +331,27 @@
 }
 
 [data-graph-v2] .sg-filter-help__scope {
+  flex-basis: 100%;
   color: var(--sg-fg);
   font-weight: 600;
+}
+
+[data-graph-v2] .sg-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 7px;
+  border: 1px solid oklch(100% 0 0 / 0.08);
+  border-radius: 7px;
+  background: oklch(100% 0 0 / 0.035);
+}
+
+[data-graph-v2] .sg-filter-group__label {
+  color: var(--sg-fg-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 [data-graph-v2] .sg-filter-key {
@@ -342,22 +362,27 @@
 }
 
 [data-graph-v2] .sg-filter-key__swatch {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px oklch(0% 0 0 / 0.32);
   flex: 0 0 auto;
 }
 
 [data-graph-v2] .sg-filter-key__swatch--follow {
-  background: #9ec5ff;
+  background: #84c7ff;
 }
 
 [data-graph-v2] .sg-filter-key__swatch--inbound {
-  background: #f6c15c;
+  background: #ffb86b;
 }
 
-[data-graph-v2] .sg-filter-key__swatch--highlight {
-  background: #ffb25b;
+[data-graph-v2] .sg-filter-key__swatch--mutual {
+  background: #5fd39d;
+}
+
+[data-graph-v2] .sg-filter-key__swatch--zap {
+  background: #ff5da2;
 }
 
 /* ── Side rail ───────────────────────────────────────────────────────────── */
@@ -1401,9 +1426,7 @@
 
 [data-graph-v2] .sg-toasts {
   position: absolute;
-  /* Sits below topbar (top: 16 + ~44 chip) and below filter bar
-     (top: 70 + ~34 pill) so it never overlaps the horizontal chrome. */
-  top: 120px;
+  top: calc(var(--sg-filter-stack-bottom, 108px) + 12px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -1411,6 +1434,8 @@
   gap: 6px;
   z-index: 50;
   pointer-events: none;
+  width: min(calc(100vw - 32px), 760px);
+  align-items: center;
 }
 
 [data-graph-v2] .sg-toast {
@@ -1422,9 +1447,12 @@
   box-shadow: var(--sg-shadow-panel);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   animation: sg-toast-in 200ms ease;
-  white-space: nowrap;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
   color: var(--sg-fg);
 }
 
@@ -1469,21 +1497,15 @@
 
   [data-graph-v2] .sg-filter-help {
     justify-content: flex-start;
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
     text-align: left;
-    scrollbar-width: none;
-  }
-
-  [data-graph-v2] .sg-filter-help::-webkit-scrollbar {
-    display: none;
   }
 
   [data-graph-v2] .sg-rail {
     left: auto;
     right: 10px;
     top: auto;
-    bottom: 138px;
+    bottom: 188px;
     transform: none;
     flex-direction: row;
   }

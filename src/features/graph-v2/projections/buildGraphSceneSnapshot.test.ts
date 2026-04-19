@@ -198,6 +198,46 @@ test('leaves every visible node with idle/root focus state when there is no sele
   assert.ok(scene.render.visibleEdges.every((edge) => !edge.isDimmed))
 })
 
+test('colors reciprocal follows as mutual connections while keeping idle nodes neutral', () => {
+  const state = createState({
+    activeLayer: 'graph',
+  })
+  state.edgesById['alice->root:follow'] = {
+    id: 'alice->root:follow',
+    source: 'alice',
+    target: 'root',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const edgesById = Object.fromEntries(
+    scene.render.visibleEdges.map((edge) => [edge.id, edge]),
+  )
+  const alice = scene.render.nodes.find((node) => node.pubkey === 'alice')
+
+  assert.equal(edgesById['root->alice:follow']?.color, '#5fd39d')
+  assert.equal(edgesById['alice->root:follow']?.color, '#5fd39d')
+  assert.equal(alice?.color, '#c7d2de')
+})
+
+test('renders expanded nodes with the same base size as the root', () => {
+  const state = createState()
+  state.nodesByPubkey.alice = {
+    ...state.nodesByPubkey.alice,
+    isExpanded: true,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const nodesByPubkey = Object.fromEntries(
+    scene.render.nodes.map((node) => [node.pubkey, node]),
+  )
+
+  assert.equal(nodesByPubkey.root?.size, 18)
+  assert.equal(nodesByPubkey.alice?.size, 18)
+})
+
 test('uses selection as visual focus while keeping the expanded physics neighborhood', () => {
   const scene = buildGraphSceneSnapshot(
     createState({
@@ -216,7 +256,7 @@ test('uses selection as visual focus while keeping the expanded physics neighbor
   assert.equal(focusByPubkey.alice, 'selected')
   assert.equal(focusByPubkey.root, 'root')
   assert.equal(focusByPubkey.bob, 'neighbor')
-  assert.equal(nodesByPubkey.alice?.color, '#ffb25b')
+  assert.equal(nodesByPubkey.alice?.color, '#f4fbff')
   assert.equal(nodesByPubkey.alice?.size, 17)
   assert.equal(nodesByPubkey.bob?.color, '#f8f2a2')
   assert.equal(nodesByPubkey.bob?.size, 13)

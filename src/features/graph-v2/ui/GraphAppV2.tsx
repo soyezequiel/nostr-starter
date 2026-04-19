@@ -777,7 +777,7 @@ export default function GraphAppV2() {
     useState<DragNeighborhoodInfluenceTuning>(DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING)
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
-  const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(true)
+  const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(false)
   const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(false)
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
@@ -1246,27 +1246,27 @@ export default function GraphAppV2() {
       label: 'Toda la red',
       count: deferredScene.render.diagnostics.nodeCount,
       swatch: 'oklch(55% 0.02 230)',
-      hint: 'Toda la red descubierta: raiz, follows salientes, followers entrantes y conexiones cargadas.',
+      hint: 'Vista base: raiz, follows salientes, followers entrantes y nodos expandidos.',
     },
     {
       id: 'following',
       label: 'A quienes sigo',
       count: null,
-      swatch: '#9ec5ff',
+      swatch: '#84c7ff',
       hint: 'A quienes sigo: follows salientes desde la raiz y desde nodos expandidos.',
     },
     {
       id: 'followers',
       label: 'Me siguen',
       count: null,
-      swatch: '#f6c15c',
-      hint: 'Me siguen: follows entrantes encontrados en relays.',
+      swatch: '#ffb86b',
+      hint: 'Me siguen: follows entrantes hacia la raiz y nodos expandidos.',
     },
     {
       id: 'mutuals',
       label: 'Mutuos',
       count: null,
-      swatch: 'oklch(72% 0.06 220)',
+      swatch: '#5fd39d',
       hint: 'Mutuos: relacion de ida y vuelta confirmada.',
     },
     {

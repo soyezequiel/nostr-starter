@@ -17,27 +17,29 @@ const nodeColorBySource: Record<
   string
 > = {
   root: '#7dd3a7',
-  follow: '#9ec5ff',
-  inbound: '#f6c15c',
-  zap: '#f2994a',
-  keyword: '#f472b6',
+  follow: '#c7d2de',
+  inbound: '#c7d2de',
+  zap: '#c7d2de',
+  keyword: '#c7d2de',
 }
 
 const edgeColorByRelation: Record<CanonicalEdge['relation'], string> = {
-  follow: '#8fb6ff',
-  inbound: '#f6c15c',
-  zap: '#f2994a',
+  follow: '#64b5ff',
+  inbound: '#ffb86b',
+  zap: '#ff5da2',
 }
+const MUTUAL_EDGE_COLOR = '#5fd39d'
 
 const DIM_NODE_COLOR = '#121a22'
 const DIM_EDGE_COLOR = '#10171f'
-const SELECTED_COLOR = '#ffb25b'
+const SELECTED_COLOR = '#f4fbff'
 const NEIGHBOR_COLOR = '#f8f2a2'
-const PINNED_COLOR = '#ffb25b'
+const PINNED_COLOR = '#f4fbff'
 const ROOT_COLOR = '#7dd3a7'
 const NEIGHBOR_EDGE_BRIGHT = '#f4fbff'
 
 const SIZE_ROOT = 18
+const SIZE_EXPANDED = 18
 const SIZE_PINNED = 12
 const SIZE_DEFAULT = 9
 const SIZE_SELECTED_BOOST = 8
@@ -46,6 +48,27 @@ const SIZE_DIMMED = 5
 
 const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
   relation === 'follow' ? 1.1 : 0.9
+
+const getReciprocalFollowEdgeIds = (edges: readonly CanonicalEdge[]) => {
+  const followEdgeIds = new Set<string>()
+  const reciprocalEdgeIds = new Set<string>()
+
+  for (const edge of edges) {
+    if (edge.relation !== 'follow') {
+      continue
+    }
+
+    const reverseId = `${edge.target}->${edge.source}:follow`
+    if (followEdgeIds.has(reverseId)) {
+      reciprocalEdgeIds.add(edge.id)
+      reciprocalEdgeIds.add(reverseId)
+    }
+
+    followEdgeIds.add(edge.id)
+  }
+
+  return reciprocalEdgeIds
+}
 
 const sortAndDedupeSceneEdges = (edges: readonly CanonicalEdge[]) => {
   const edgesById = new Map<string, CanonicalEdge>()
@@ -144,8 +167,13 @@ const mapRenderEdge = (
     hasSelection: boolean
     touchesFocus: boolean
   },
+  options: {
+    isMutual: boolean
+  },
 ): GraphRenderEdge => {
-  const baseColor = edgeColorByRelation[edge.relation]
+  const baseColor = options.isMutual
+    ? MUTUAL_EDGE_COLOR
+    : edgeColorByRelation[edge.relation]
   const base = baseEdgeSize(edge.relation)
   const isDimmed = focusState.hasSelection && !focusState.touchesFocus
   const color = !focusState.hasSelection
@@ -351,7 +379,13 @@ const computeGraphSceneSnapshot = (
       hasSelection: hasVisualFocus,
     })
     const baseColor = nodeColorBySource[node.source]
-    const baseSize = isRoot ? SIZE_ROOT : isPinned ? SIZE_PINNED : SIZE_DEFAULT
+    const baseSize = isRoot
+      ? SIZE_ROOT
+      : node.isExpanded
+        ? SIZE_EXPANDED
+        : isPinned
+          ? SIZE_PINNED
+          : SIZE_DEFAULT
 
     return {
       pubkey: node.pubkey,
@@ -375,10 +409,15 @@ const computeGraphSceneSnapshot = (
     return edge.source === visualFocusPubkey || edge.target === visualFocusPubkey
   }
 
+  const reciprocalVisibleEdgeIds = getReciprocalFollowEdgeIds(layerProjection.visibleEdges)
+  const reciprocalForceEdgeIds = getReciprocalFollowEdgeIds(forceEdges)
+
   const visibleEdges = layerProjection.visibleEdges.map((edge) =>
     mapRenderEdge(edge, false, {
       hasSelection: hasVisualFocus,
       touchesFocus: touchesFocus(edge),
+    }, {
+      isMutual: reciprocalVisibleEdgeIds.has(edge.id),
     }),
   )
   const renderForceEdges = forceEdges.map((edge) => {
@@ -390,6 +429,9 @@ const computeGraphSceneSnapshot = (
       {
         hasSelection: hasVisualFocus,
         touchesFocus: edgeTouchesFocus,
+      },
+      {
+        isMutual: reciprocalForceEdgeIds.has(edge.id),
       },
     )
   })

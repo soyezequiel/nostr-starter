@@ -15,7 +15,7 @@ const TAIL_COUNT = 9
 const ROUTE_WIDTH_PX = 1.15
 const ENERGY_COLOR = '#ffd86b'
 const ENERGY_HOT_COLOR = '#fff4bf'
-const ENERGY_SHADOW_COLOR = '#f2994a'
+const ENERGY_SHADOW_COLOR = '#ff5da2'
 
 export interface ViewportPositionResolver {
   (pubkey: string): { x: number; y: number } | null
