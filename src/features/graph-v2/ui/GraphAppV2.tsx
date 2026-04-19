@@ -625,7 +625,8 @@ function RenderOptionsPanel({
       </div>
       <div className="sg-setting-row">
         <div>
-          <div className="sg-setting-row__lbl">Monograma si se mueve rápido</div>
+          <div className="sg-setting-row__lbl">Ocultar foto si el nodo se mueve</div>
+          <div className="sg-setting-row__desc">Pasa a monograma mientras ese nodo cambia de posición en pantalla</div>
         </div>
         <button
           className={`sg-toggle${avatarRuntimeOptions.hideImagesOnFastNodes ? ' sg-toggle--on' : ''}`}
@@ -635,8 +636,22 @@ function RenderOptionsPanel({
       </div>
       <div className="sg-setting-row">
         <div>
-          <div className="sg-setting-row__lbl">Fotos en zoom-out</div>
-          <div className="sg-setting-row__desc">Usa buckets chicos cuando el nodo se ve chico</div>
+          <div className="sg-setting-row__lbl">Todas las fotos visibles</div>
+          <div className="sg-setting-row__desc">Muestra fotos en todos los nodos visibles; reescala buckets según el zoom</div>
+        </div>
+        <button
+          className={`sg-toggle${avatarRuntimeOptions.showAllVisibleImages ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({
+            ...avatarRuntimeOptions,
+            showAllVisibleImages: !avatarRuntimeOptions.showAllVisibleImages,
+          })}
+          type="button"
+        />
+      </div>
+      <div className="sg-setting-row">
+        <div>
+          <div className="sg-setting-row__lbl">Fotos en nodos chicos</div>
+          <div className="sg-setting-row__desc">Permite fotos fuera del umbral de tamaño sin forzar todos los nodos</div>
         </div>
         <button
           className={`sg-toggle${avatarRuntimeOptions.allowZoomedOutImages ? ' sg-toggle--on' : ''}`}
@@ -860,7 +875,7 @@ export default function GraphAppV2() {
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(false)
-  const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(true)
+  const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(false)
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)

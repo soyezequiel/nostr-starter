@@ -37,7 +37,6 @@ const FOCUS_AURA_INNER_LINE_WIDTH_FACTOR = 0.14
 const FOCUS_AURA_OUTER_ALPHA = 0.22
 const FOCUS_AURA_INNER_ALPHA = 0.52
 const EMPTY_SET = new Set<string>()
-
 interface AvatarDrawSelectionItem {
   pubkey: string
   r: number
@@ -277,6 +276,32 @@ export const shouldDisableAvatarImage = ({
   fastMoving ||
   imageDrawCount >= maxImageDrawsPerFrame
 
+export const resolveAvatarFrameDrawCap = ({
+  baseCap,
+  visibleCount,
+  showAllVisibleImages,
+}: {
+  baseCap: number
+  visibleCount: number
+  showAllVisibleImages: boolean
+}) =>
+  showAllVisibleImages
+    ? Math.max(Math.max(0, Math.floor(baseCap)), Math.max(0, Math.floor(visibleCount)))
+    : Math.max(0, Math.floor(baseCap))
+
+export const resolveAvatarCacheCap = ({
+  baseCap,
+  visiblePhotoCount,
+  showAllVisibleImages,
+}: {
+  baseCap: number
+  visiblePhotoCount: number
+  showAllVisibleImages: boolean
+}) =>
+  showAllVisibleImages
+    ? Math.max(Math.max(16, Math.floor(baseCap)), Math.max(0, Math.floor(visiblePhotoCount)))
+    : Math.max(16, Math.floor(baseCap))
+
 export class AvatarOverlayRenderer {
   private readonly sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>
   private readonly cache: AvatarBitmapCache
@@ -333,9 +358,6 @@ export class AvatarOverlayRenderer {
     if (!ctx) {
       return
     }
-    if (budget.drawAvatars) {
-      this.cache.setCap(budget.lruCap)
-    }
 
     const directForcedAvatarPubkey = this.getForcedAvatarPubkey()
     const forcedAvatarPubkeys = new Set<string>()
@@ -347,6 +369,8 @@ export class AvatarOverlayRenderer {
     const revealRadiusSquared = revealRadiusPx * revealRadiusPx
     const moving = this.isMoving()
     const hoveredNeighborPubkeys = this.getHoveredNeighborPubkeys()
+    const allowZoomedOutImages =
+      budget.allowZoomedOutImages || budget.showAllVisibleImages
 
     const cameraState = this.sigma.getCamera().getState()
     const cameraRatio = cameraState.ratio
@@ -431,7 +455,7 @@ export class AvatarOverlayRenderer {
       }
       if (
         !budget.showZoomedOutMonograms &&
-        !budget.allowZoomedOutImages &&
+        !allowZoomedOutImages &&
         !isPersistentAvatar &&
         !isRevealCandidate &&
         zoomedOutMonogram
@@ -469,7 +493,7 @@ export class AvatarOverlayRenderer {
         monogramOnly:
           !isPersistentAvatar &&
           zoomedOutMonogram &&
-          !budget.allowZoomedOutImages,
+          !allowZoomedOutImages,
         isPersistentAvatar,
         zoomedOutMonogram,
         priority,
@@ -503,19 +527,33 @@ export class AvatarOverlayRenderer {
           monogramOnly:
             !isPersistentAvatar &&
             item.zoomedOutMonogram &&
-            !budget.allowZoomedOutImages,
+            !allowZoomedOutImages,
         }
       })
       .filter(
         (item) =>
           budget.showZoomedOutMonograms ||
-          budget.allowZoomedOutImages ||
+          allowZoomedOutImages ||
           item.isPersistentAvatar ||
           !item.zoomedOutMonogram,
       )
+    const visiblePhotoCount = resolvedDrawItems.filter(
+      (item) => item.url && isSafeAvatarUrl(item.url),
+    ).length
+    this.cache.setCap(
+      resolveAvatarCacheCap({
+        baseCap: budget.lruCap,
+        visiblePhotoCount,
+        showAllVisibleImages: budget.showAllVisibleImages,
+      }),
+    )
     const selectedDrawItems = selectAvatarDrawItemsForFrame(
       resolvedDrawItems,
-      budget.maxAvatarDrawsPerFrame,
+      resolveAvatarFrameDrawCap({
+        baseCap: budget.maxAvatarDrawsPerFrame,
+        visibleCount: resolvedDrawItems.length,
+        showAllVisibleImages: budget.showAllVisibleImages,
+      }),
       forcedAvatarPubkeys,
     )
     const selectedPubkeys = new Set(
@@ -556,11 +594,15 @@ export class AvatarOverlayRenderer {
         item.monogramInput.showText !== false
       const disableImage = shouldDisableAvatarImage({
         selectedForImage,
-        globalMotionActive: moving,
+        globalMotionActive: moving && !budget.showAllVisibleImages,
         monogramOnly: item.monogramOnly,
         fastMoving: item.fastMoving,
         imageDrawCount,
-        maxImageDrawsPerFrame: budget.maxImageDrawsPerFrame,
+        maxImageDrawsPerFrame: resolveAvatarFrameDrawCap({
+          baseCap: budget.maxImageDrawsPerFrame,
+          visibleCount: visiblePhotoCount,
+          showAllVisibleImages: budget.showAllVisibleImages,
+        }),
       })
       const drewImage = this.drawAvatarCircle({
         ctx: selectAvatarDrawContext(
@@ -582,7 +624,7 @@ export class AvatarOverlayRenderer {
         imageDrawCount += 1
       }
 
-      if (item.fastMoving) {
+      if (item.fastMoving && !budget.showAllVisibleImages) {
         continue
       }
       if (!selectedForImage) {
@@ -591,7 +633,7 @@ export class AvatarOverlayRenderer {
       if (item.monogramOnly) {
         continue
       }
-      if (!budget.allowZoomedOutImages && cameraRatio > budget.zoomThreshold) {
+      if (!allowZoomedOutImages && cameraRatio > budget.zoomThreshold) {
         continue
       }
       if (!item.url || !isSafeAvatarUrl(item.url)) {
@@ -617,7 +659,7 @@ export class AvatarOverlayRenderer {
     }
 
     this.pruneMotionSamples(seenNodes)
-    if (moving) {
+    if (moving && !budget.showAllVisibleImages) {
       this.scheduler.prime(candidates, budget)
       return
     }
@@ -730,6 +772,7 @@ export class AvatarOverlayRenderer {
         hideImagesOnFastNodes: false,
         fastNodeVelocityThreshold: Number.POSITIVE_INFINITY,
         allowZoomedOutImages: false,
+        showAllVisibleImages: false,
         maxInteractiveBucket: budget.maxBucket,
         maxSocialCaptureBucket: DEFAULT_AVATAR_RUNTIME_OPTIONS.maxSocialCaptureBucket,
       }
@@ -755,6 +798,7 @@ export class AvatarOverlayRenderer {
         : runtimeOptions.fastNodeVelocityThreshold,
       allowZoomedOutImages:
         runtimeOptions.allowZoomedOutImages && !snapshot.isDegraded,
+      showAllVisibleImages: runtimeOptions.showAllVisibleImages,
       maxInteractiveBucket: runtimeOptions.maxInteractiveBucket,
       maxSocialCaptureBucket: runtimeOptions.maxSocialCaptureBucket,
     }

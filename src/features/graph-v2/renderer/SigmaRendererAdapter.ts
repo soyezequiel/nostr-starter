@@ -838,6 +838,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
       allowZoomedOutImages:
         options.allowZoomedOutImages ??
         DEFAULT_AVATAR_RUNTIME_OPTIONS.allowZoomedOutImages,
+      showAllVisibleImages:
+        options.showAllVisibleImages ??
+        DEFAULT_AVATAR_RUNTIME_OPTIONS.showAllVisibleImages,
       maxInteractiveBucket: normalizeBucketOption(
         options.maxInteractiveBucket,
         AVATAR_MAX_INTERACTIVE_BUCKETS,
@@ -869,6 +872,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
         nextOptions.fastNodeVelocityThreshold &&
       this.avatarRuntimeOptions.allowZoomedOutImages ===
         nextOptions.allowZoomedOutImages &&
+      this.avatarRuntimeOptions.showAllVisibleImages ===
+        nextOptions.showAllVisibleImages &&
       this.avatarRuntimeOptions.maxInteractiveBucket ===
         nextOptions.maxInteractiveBucket &&
       this.avatarRuntimeOptions.maxSocialCaptureBucket ===

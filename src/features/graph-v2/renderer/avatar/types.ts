@@ -50,6 +50,7 @@ export interface AvatarRuntimeOptions {
   readonly hideImagesOnFastNodes: boolean
   readonly fastNodeVelocityThreshold: number
   readonly allowZoomedOutImages: boolean
+  readonly showAllVisibleImages: boolean
   readonly maxInteractiveBucket: ImageLodBucket
   readonly maxSocialCaptureBucket: ImageLodBucket
 }
@@ -64,9 +65,10 @@ export const DEFAULT_AVATAR_RUNTIME_OPTIONS: AvatarRuntimeOptions = {
   showZoomedOutMonograms: true,
   showMonogramBackgrounds: false,
   showMonogramText: false,
-  hideImagesOnFastNodes: true,
+  hideImagesOnFastNodes: false,
   fastNodeVelocityThreshold: 240,
   allowZoomedOutImages: true,
+  showAllVisibleImages: true,
   maxInteractiveBucket: 256,
   maxSocialCaptureBucket: 1024,
 }

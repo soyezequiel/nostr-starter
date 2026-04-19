@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  DEFAULT_AVATAR_RUNTIME_OPTIONS,
+} from '@/features/graph-v2/renderer/avatar/types'
+import {
+  resolveAvatarCacheCap,
+  resolveAvatarFrameDrawCap,
   resolveAvatarDrawRadiusPx,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
@@ -176,4 +181,47 @@ test('image draw cap degrades remaining avatars to monograms', () => {
     }),
     true,
   )
+})
+
+test('all visible photos mode lifts frame draw caps to the visible count', () => {
+  assert.equal(
+    resolveAvatarFrameDrawCap({
+      baseCap: 120,
+      visibleCount: 232,
+      showAllVisibleImages: true,
+    }),
+    232,
+  )
+  assert.equal(
+    resolveAvatarFrameDrawCap({
+      baseCap: 120,
+      visibleCount: 232,
+      showAllVisibleImages: false,
+    }),
+    120,
+  )
+})
+
+test('all visible photos mode expands cache cap to the visible photo count', () => {
+  assert.equal(
+    resolveAvatarCacheCap({
+      baseCap: 128,
+      visiblePhotoCount: 221,
+      showAllVisibleImages: true,
+    }),
+    221,
+  )
+  assert.equal(
+    resolveAvatarCacheCap({
+      baseCap: 128,
+      visiblePhotoCount: 221,
+      showAllVisibleImages: false,
+    }),
+    128,
+  )
+})
+
+test('avatar runtime defaults keep all visible photos on and saver modes off', () => {
+  assert.equal(DEFAULT_AVATAR_RUNTIME_OPTIONS.showAllVisibleImages, true)
+  assert.equal(DEFAULT_AVATAR_RUNTIME_OPTIONS.hideImagesOnFastNodes, false)
 })
