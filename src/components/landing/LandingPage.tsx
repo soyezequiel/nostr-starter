@@ -8,9 +8,9 @@ import LandingMotionProvider from '@/components/landing/LandingMotionProvider'
 import Reveal from '@/components/landing/Reveal'
 
 const signalMarks = [
-  { title: 'Relaciones', detail: '1ro a n orden' },
-  { title: 'Relays', detail: 'stale y timeouts' },
-  { title: 'Senal', detail: 'contexto social' },
+  { title: 'Relaciones', detail: 'sigo y me siguen' },
+  { title: 'Ordenación', detail: 'simulación física' },
+  { title: 'Zaps', detail: 'en vivo' },
 ]
 
 const explorerFlow = [
@@ -23,14 +23,14 @@ const explorerFlow = [
   {
     eyebrow: 'Mapa',
     title: 'mapa vivo',
-    detail: 'Mira conexiones, relays y huecos de cobertura sin esconder la incertidumbre.',
+    detail: 'Mirá conexiones y relays con simulación física de alto nivel.',
     status: 'live',
   },
   {
-    eyebrow: 'Senal',
-    title: 'contexto',
-    detail: 'Lee zaps, badges y perfiles como pistas para entender que esta pasando en la red.',
-    status: 'social',
+    eyebrow: 'Señal',
+    title: 'zaps',
+    detail: 'Leé zaps en vivo y perfiles como pistas para entender qué está pasando en la red.',
+    status: 'live',
   },
 ]
 
@@ -81,8 +81,8 @@ export default function LandingPage() {
                 Espacial
               </h1>
               <p className="mt-6 max-w-lg text-base leading-7 text-[#cbc2b7] sm:text-lg">
-                Explora identidad como mapa relay-aware. Carga un npub o nprofile,
-                lee cobertura parcial y cruza zaps, badges y perfiles para entender la red.
+                Explorá las conexiones de las personas. Cargá un ID de Nostr,
+                explorá sus relaciones, mirá los zaps en vivo, entrá a los perfiles y entendé su red.
               </p>
 
               <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:flex-wrap sm:items-center">
@@ -95,15 +95,15 @@ export default function LandingPage() {
                 <div className="flex flex-wrap gap-3 text-sm">
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ff4b5d]/35 bg-[#ff4b5d]/10 px-3 py-2 text-[#f6d7d3]">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#ff6675]" />
-                    Nostr Espacial
+                    Disponible en escritorio
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">
                     <span className="h-2.5 w-2.5 rounded-full border border-[#ada59b]/60" />
-                    Relays visibles
+                    Celular en desarrollo
                   </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">
                     <span className="h-2.5 w-2.5 rounded-full border border-[#ada59b]/60" />
-                    Contexto social
+                    Grafo interactivo
                   </span>
                 </div>
               </div>
@@ -183,11 +183,11 @@ export default function LandingPage() {
                   Nostr Espacial hoy
                 </p>
                 <h2 className="mt-4 text-4xl font-black leading-tight text-[#f6f1e8] sm:text-5xl">
-                  Lo que abre el mapa.
+                  Constelación de personas
                 </h2>
               </div>
               <p className="max-w-md text-sm leading-6 text-[#a9a197] sm:text-base">
-                Carga un root, muestra estados parciales y suma contexto social sin maquillar huecos.
+                Cargá una npub, mirá sus conexiones y expandí otros perfiles.
               </p>
             </Reveal>
 
@@ -240,11 +240,11 @@ export default function LandingPage() {
                 Demo principal
               </p>
               <h2 className="mt-4 text-4xl font-black leading-tight text-[#f6f1e8] sm:text-5xl">
-                Entra por Nostr Espacial.
+                Entrá por Nostr Espacial.
               </h2>
               <p className="mt-4 max-w-lg text-sm leading-6 text-[#b9b0a5] sm:text-base">
-                La home no compite con vistas auxiliares: abre el mapa, mira relaciones,
-                lee senales y entiende contexto social cuando el recorte ya tiene sentido.
+                Entrá directo al mapa: explorá relaciones reales, leé zaps en vivo
+                y abrí perfiles para entender cómo se arma cada red.
               </p>
             </Reveal>
 
@@ -277,7 +277,7 @@ export default function LandingPage() {
                 imageClassName="h-14 w-auto object-contain sm:h-16"
               />
               <p className="mt-3 max-w-md text-sm leading-6 text-[#9c948a]">
-                Landing de entrada para abrir Nostr Espacial, leer relays y contexto social.
+                Proyecto participante de La Crypta IDENTITY Hackathon 2026 para explorar relaciones Nostr.
               </p>
             </Reveal>
 

@@ -70,6 +70,7 @@ import {
   CopyIcon,
   ExternalLinkIcon,
   GearIcon,
+  PinIcon,
   SearchIcon,
   TargetIcon,
   ZapIcon,
@@ -131,6 +132,7 @@ const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
 }
 
 const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
+const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
 const MAX_SAVED_ROOT_REFRESHES = 6
 
 const selectSavedRootState = (state: AppStore) => ({
@@ -768,6 +770,10 @@ export default function GraphAppV2() {
     isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
   )
   const [actionFeedback, setActionFeedback] = useState<string | null>(null)
+  const [isIdentityHelpDismissed, setIsIdentityHelpDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.sessionStorage.getItem(IDENTITY_FIRST_RUN_HELP_KEY) === '1'
+  })
   const liveDomainState = useSyncExternalStore(bridge.subscribe, bridge.getState, bridge.getState)
   const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
     () => (isFixtureMode ? createDragLocalFixture().state : null),
@@ -959,6 +965,12 @@ export default function GraphAppV2() {
     setFixtureState((current) => current ? withClientSceneSignature(updater(current)) : current)
   }, [])
 
+  const dismissIdentityHelp = useCallback(() => {
+    setIsIdentityHelpDismissed(true)
+    if (typeof window === 'undefined') return
+    window.sessionStorage.setItem(IDENTITY_FIRST_RUN_HELP_KEY, '1')
+  }, [])
+
   useEffect(() => {
     if (!savedRootsHydrated || savedRoots.length === 0) return
     const rootsNeedingRefresh = savedRoots
@@ -1001,6 +1013,26 @@ export default function GraphAppV2() {
       return { ...current, pinnedNodePubkeys }
     })
   }, [bridge, domainState.pinnedNodePubkeys, isFixtureMode, updateFixtureState])
+
+  const handleToggleDetailPin = useCallback((pubkey: string) => {
+    dismissIdentityHelp()
+    togglePinnedNode(pubkey)
+  }, [dismissIdentityHelp, togglePinnedNode])
+
+  const handleExploreConnections = useCallback((pubkey: string, isExpanded: boolean) => {
+    dismissIdentityHelp()
+    if (isExpanded) return
+
+    startTransition(() => {
+      if (isFixtureMode) {
+        setActionFeedback('El fixture no trae conexiones por relay.')
+        return
+      }
+      void bridge.expandNode(pubkey).then((result) => {
+        setActionFeedback(result.message)
+      })
+    })
+  }, [bridge, dismissIdentityHelp, isFixtureMode])
 
   const toggleLayer = useCallback((layer: (typeof GRAPH_V2_LAYERS)[number]) => {
     if (!isFixtureMode) { bridge.toggleLayer(layer); return }
@@ -1641,6 +1673,9 @@ export default function GraphAppV2() {
     const detailNpub = encodePubkeyAsNpub(detail.pubkey)
     const primalProfileUrl = detailNpub ? `https://primal.net/p/${detailNpub}` : null
     const jumbleProfileUrl = detailNpub ? `https://jumble.social/users/${detailNpub}` : null
+    const pinActionLabel = detail.isPinned ? 'Desanclar perfil' : 'Anclar perfil'
+    const exploreActionLabel = detail.isExpanded ? 'Conexiones exploradas' : 'Explorar conexiones'
+    const shouldShowIdentityHelp = !isIdentityHelpDismissed
 
     return (
       <div>
@@ -1661,16 +1696,53 @@ export default function GraphAppV2() {
               <div className="sg-node-hero__pin">◆</div>
             )}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h2>{detail.displayName ?? '—'}</h2>
+          <div className="sg-node-hero__content">
+            <div className="sg-node-hero__title-row">
+              <h2>{detail.displayName ?? '—'}</h2>
+              {detail.pubkey ? (
+                <button
+                  aria-label={pinActionLabel}
+                  aria-pressed={detail.isPinned}
+                  className={`sg-node-pin-action${detail.isPinned ? ' sg-node-pin-action--active' : ''}`}
+                  onClick={() => {
+                    if (!detail.pubkey) return
+                    handleToggleDetailPin(detail.pubkey)
+                  }}
+                  title={pinActionLabel}
+                  type="button"
+                >
+                  <PinIcon />
+                </button>
+              ) : null}
+            </div>
             <div className="sg-node-hero__handle">{detail.pubkey?.slice(0, 12)}…</div>
             <div className="sg-node-hero__badges">
               <span className={`sg-badge ${relBadgeClass}`}>{relBadge}</span>
               {detail.nip05 && <span className="sg-badge sg-badge--ok">nip05</span>}
-              {detail.isExpanded && <span className="sg-badge">expandido</span>}
+              {detail.isExpanded && <span className="sg-badge">conexiones exploradas</span>}
             </div>
           </div>
         </div>
+
+        {shouldShowIdentityHelp ? (
+          <div className="sg-identity-help">
+            <p>Abriste una identidad. Explorá sus conexiones o anclala para compararla.</p>
+            <button
+              className={`sg-btn${detail.isExpanded ? '' : ' sg-btn--primary'}`}
+              onClick={() => {
+                if (detail.isExpanded) {
+                  dismissIdentityHelp()
+                  return
+                }
+                if (!detail.pubkey) return
+                handleExploreConnections(detail.pubkey, detail.isExpanded)
+              }}
+              type="button"
+            >
+              {detail.isExpanded ? 'Entendido' : exploreActionLabel}
+            </button>
+          </div>
+        ) : null}
 
         <p className={`sg-bio${detail.about?.trim() ? '' : ' sg-bio--empty'}`}>
           {detail.about?.trim() || 'Sin bio conocida.'}
@@ -1770,26 +1842,12 @@ export default function GraphAppV2() {
             className={`sg-btn${detail.isExpanded ? '' : ' sg-btn--primary'}`}
             disabled={detail.isExpanded}
             onClick={() => {
-              const selectedPubkey = detail.pubkey
-              if (!selectedPubkey) return
-              startTransition(() => {
-                if (isFixtureMode) { setActionFeedback('El fixture no expande nodos por relay.'); return }
-                void bridge.expandNode(selectedPubkey).then((result) => { setActionFeedback(result.message) })
-              })
-            }}
-            type="button"
-          >
-            {detail.isExpanded ? 'Expandido' : 'Expandir'}
-          </button>
-          <button
-            className="sg-btn"
-            onClick={() => {
               if (!detail.pubkey) return
-              togglePinnedNode(detail.pubkey)
+              handleExploreConnections(detail.pubkey, detail.isExpanded)
             }}
             type="button"
           >
-            {detail.isPinned ? 'Liberar' : 'Fijar'}
+            {exploreActionLabel}
           </button>
         </div>
       </div>
@@ -1813,8 +1871,19 @@ export default function GraphAppV2() {
       setIsPersonSearchOpen(false)
       return
     }
+    if (isIdentityPanelOpen && !isIdentityHelpDismissed) {
+      dismissIdentityHelp()
+    }
     if (!isFixtureMode) bridge.selectNode(null)
-  }, [bridge, isFixtureMode, isPersonSearchPanelOpen, isSettingsOpen])
+  }, [
+    bridge,
+    dismissIdentityHelp,
+    isFixtureMode,
+    isIdentityHelpDismissed,
+    isIdentityPanelOpen,
+    isPersonSearchPanelOpen,
+    isSettingsOpen,
+  ])
 
   return (
     <main
