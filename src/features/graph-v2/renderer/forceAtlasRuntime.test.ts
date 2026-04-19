@@ -165,7 +165,7 @@ test('ForceAtlas tuning clamps slider input into supported ranges', () => {
       damping: 2.5,
     },
   )
-  assert.equal(createForceAtlasPhysicsTuning({ damping: -1 }).damping, 0.25)
+  assert.equal(createForceAtlasPhysicsTuning({ damping: -1 }).damping, 0.1)
   assert.equal(
     createForceAtlasPhysicsTuning({ repulsionForce: 99 }).repulsionForce,
     5,
@@ -357,4 +357,28 @@ test('sync restarts an existing stopped layout when physics is enabled', () => {
 
   assert.equal(layouts.length, 1)
   assert.equal(layouts[0]?.startCalls, 2)
+})
+
+test('sync recreates the layout when node fixed flags change', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  const runtime = new ForceAtlasRuntime(graph, () => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    return layout
+  })
+
+  const scene = createScene(3, 2)
+  runtime.sync(scene)
+
+  runtime.sync({
+    ...scene,
+    nodes: scene.nodes.map((node) =>
+      node.pubkey === 'node-0' ? { ...node, fixed: true } : node,
+    ),
+  })
+
+  assert.equal(layouts.length, 2)
+  assert.equal(layouts[0]?.killCalls, 1)
+  assert.equal(layouts[1]?.startCalls, 1)
 })

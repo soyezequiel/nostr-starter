@@ -42,6 +42,7 @@ export interface AvatarBudget {
 export interface AvatarRuntimeOptions {
   readonly sizeThreshold: number
   readonly zoomThreshold: number
+  readonly hoverRevealRadiusPx: number
   readonly showZoomedOutMonograms: boolean
   readonly showMonogramBackgrounds: boolean
   readonly showMonogramText: boolean
@@ -54,6 +55,7 @@ export type DeviceTier = 'low' | 'mid' | 'high'
 export const DEFAULT_AVATAR_RUNTIME_OPTIONS: AvatarRuntimeOptions = {
   sizeThreshold: 15,
   zoomThreshold: 2.1,
+  hoverRevealRadiusPx: 72,
   showZoomedOutMonograms: false,
   showMonogramBackgrounds: true,
   showMonogramText: true,

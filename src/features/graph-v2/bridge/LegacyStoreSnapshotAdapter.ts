@@ -134,15 +134,17 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousPinnedNodePubkeys: AppStore['pinnedNodePubkeys'] | null = null
 
-  private previousCanonicalPinnedNodePubkeys: ReadonlySet<string> = new Set<string>()
+  private previousFixedRootPubkey: AppStore['fixedRootPubkey'] | null = null
+
+  private previousPinnedRootNodePubkey: AppStore['rootNodePubkey'] | null = null
+
+  private previousCanonicalPinnedNodePubkeys: Set<string> = new Set<string>()
 
   private previousSceneSignatureNodes: AppStore['nodes'] | null = null
 
   private previousSceneNodeVisualSignature = ''
 
-  private previousSceneSignaturePinnedNodePubkeys:
-    | AppStore['pinnedNodePubkeys']
-    | null = null
+  private previousSceneSignaturePinnedNodePubkeys: ReadonlySet<string> | null = null
 
   private previousScenePinnedNodePubkeysSignature = ''
 
@@ -167,7 +169,7 @@ export class LegacyStoreSnapshotAdapter {
       state,
       activeLayer,
       this.getSceneNodeVisualSignature(state.nodes),
-      this.getScenePinnedNodePubkeysSignature(state.pinnedNodePubkeys),
+      this.getScenePinnedNodePubkeysSignature(pinnedNodePubkeys),
       this.getSceneExpandedNodePubkeysSignature(state.expandedNodePubkeys),
     )
 
@@ -325,12 +327,26 @@ export class LegacyStoreSnapshotAdapter {
   }
 
   private adaptPinnedNodePubkeys(state: AppStore) {
-    if (this.previousPinnedNodePubkeys === state.pinnedNodePubkeys) {
+    if (
+      this.previousPinnedNodePubkeys === state.pinnedNodePubkeys &&
+      this.previousFixedRootPubkey === state.fixedRootPubkey &&
+      this.previousPinnedRootNodePubkey === state.rootNodePubkey
+    ) {
       return this.previousCanonicalPinnedNodePubkeys
     }
 
     this.previousPinnedNodePubkeys = state.pinnedNodePubkeys
+    this.previousFixedRootPubkey = state.fixedRootPubkey
+    this.previousPinnedRootNodePubkey = state.rootNodePubkey
     this.previousCanonicalPinnedNodePubkeys = new Set(state.pinnedNodePubkeys)
+
+    if (
+      state.fixedRootPubkey !== null &&
+      state.rootNodePubkey !== null &&
+      state.fixedRootPubkey === state.rootNodePubkey
+    ) {
+      this.previousCanonicalPinnedNodePubkeys.add(state.rootNodePubkey)
+    }
 
     return this.previousCanonicalPinnedNodePubkeys
   }
@@ -346,9 +362,7 @@ export class LegacyStoreSnapshotAdapter {
     return this.previousSceneNodeVisualSignature
   }
 
-  private getScenePinnedNodePubkeysSignature(
-    pinnedNodePubkeys: AppStore['pinnedNodePubkeys'],
-  ) {
+  private getScenePinnedNodePubkeysSignature(pinnedNodePubkeys: ReadonlySet<string>) {
     if (this.previousSceneSignaturePinnedNodePubkeys === pinnedNodePubkeys) {
       return this.previousScenePinnedNodePubkeysSignature
     }

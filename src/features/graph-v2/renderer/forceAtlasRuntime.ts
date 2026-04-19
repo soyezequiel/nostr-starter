@@ -105,7 +105,7 @@ export const createForceAtlasPhysicsTuning = (
   ),
   damping: clampNumber(
     tuning.damping ?? DEFAULT_FORCE_ATLAS_PHYSICS_TUNING.damping,
-    0.25,
+    0.1,
     2.5,
   ),
 })
@@ -292,6 +292,8 @@ export class ForceAtlasRuntime {
 
   private lastSettingsKey: string | null = null
 
+  private lastFixedNodeSignature: string | null = null
+
   private suspended = false
 
   private layoutEligible = false
@@ -310,6 +312,24 @@ export class ForceAtlasRuntime {
       }),
   ) {}
 
+  private createFixedNodeSignature(scene: GraphPhysicsSnapshot) {
+    return scene.nodes
+      .map((node) => `${node.pubkey}:${node.fixed ? 1 : 0}`)
+      .sort()
+      .join('|')
+  }
+
+  private createGraphFixedNodeSignature() {
+    return this.graph
+      .nodes()
+      .map((pubkey) => {
+        const attributes = this.graph.getNodeAttributes(pubkey)
+        return `${pubkey}:${attributes.fixed ? 1 : 0}`
+      })
+      .sort()
+      .join('|')
+  }
+
   public sync(scene: GraphPhysicsSnapshot) {
     const shouldRun =
       scene.nodes.length >= MINIMUM_RUNNING_NODES && scene.edges.length > 0
@@ -325,10 +345,12 @@ export class ForceAtlasRuntime {
     }
 
     const settingsKey = createSettingsKey(this.graph.order, this.physicsTuning)
+    const fixedNodeSignature = this.createFixedNodeSignature(scene)
 
     if (this.layout === null) {
       this.layout = this.createLayout()
       this.lastSettingsKey = settingsKey
+      this.lastFixedNodeSignature = fixedNodeSignature
       this.layout.start()
       return
     }
@@ -338,6 +360,17 @@ export class ForceAtlasRuntime {
       this.kill()
       this.layout = this.createLayout()
       this.lastSettingsKey = settingsKey
+      this.lastFixedNodeSignature = fixedNodeSignature
+      this.layout.start()
+      return
+    }
+
+    if (this.lastFixedNodeSignature !== fixedNodeSignature) {
+      this.stop()
+      this.kill()
+      this.layout = this.createLayout()
+      this.lastSettingsKey = settingsKey
+      this.lastFixedNodeSignature = fixedNodeSignature
       this.layout.start()
       return
     }
@@ -360,6 +393,7 @@ export class ForceAtlasRuntime {
     this.kill()
     this.layout = this.createLayout()
     this.lastSettingsKey = createSettingsKey(this.graph.order, this.physicsTuning)
+    this.lastFixedNodeSignature = this.createGraphFixedNodeSignature()
     this.layout.start()
   }
 
@@ -384,6 +418,7 @@ export class ForceAtlasRuntime {
     this.kill()
     this.layout = this.createLayout()
     this.lastSettingsKey = nextKey
+    this.lastFixedNodeSignature = this.createGraphFixedNodeSignature()
     this.layout.start()
   }
 
@@ -412,6 +447,7 @@ export class ForceAtlasRuntime {
     if (this.layout === null) {
       this.layout = this.createLayout()
       this.lastSettingsKey = createSettingsKey(this.graph.order, this.physicsTuning)
+      this.lastFixedNodeSignature = this.createGraphFixedNodeSignature()
       this.layout.start()
       return
     }
@@ -453,6 +489,7 @@ export class ForceAtlasRuntime {
     this.layout?.kill()
     this.layout = null
     this.lastSettingsKey = null
+    this.lastFixedNodeSignature = null
   }
 
   public dispose() {

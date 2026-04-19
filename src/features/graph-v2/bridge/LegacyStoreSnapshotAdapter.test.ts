@@ -148,3 +148,34 @@ test('changes the scene signature for visual node updates', () => {
 
   assert.notEqual(second.sceneSignature, first.sceneSignature)
 })
+
+test('projects the fixed root into the canonical pinned set and scene signature', () => {
+  const store = createAppStore()
+  const state = store.getState()
+  state.setRootNodePubkey('root')
+  state.upsertNodes([
+    {
+      pubkey: 'root',
+      label: 'Root',
+      keywordHits: 0,
+      discoveredAt: 0,
+      profileState: 'ready',
+      source: 'root',
+    },
+  ])
+
+  const adapter = new LegacyStoreSnapshotAdapter()
+  const before = adapter.adapt(store.getState())
+
+  state.setFixedRootPubkey('root')
+  const pinned = adapter.adapt(store.getState())
+
+  assert.equal(pinned.pinnedNodePubkeys.has('root'), true)
+  assert.notEqual(pinned.sceneSignature, before.sceneSignature)
+
+  state.setFixedRootPubkey(null)
+  const released = adapter.adapt(store.getState())
+
+  assert.equal(released.pinnedNodePubkeys.has('root'), false)
+  assert.notEqual(released.sceneSignature, pinned.sceneSignature)
+})

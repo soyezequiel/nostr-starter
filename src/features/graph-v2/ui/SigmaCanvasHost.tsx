@@ -49,6 +49,13 @@ export interface SigmaCanvasHostHandle {
   subscribeToRenderTicks: (listener: () => void) => () => void
 }
 
+const BACKDROP_GRID_WORLD_STEP = 80
+const BACKDROP_GRID_MINOR_DIVISOR = 4
+const BACKDROP_GRID_MAJOR_COLOR = 'oklch(24% 0.012 230 / 0.5)'
+const BACKDROP_GRID_MINOR_COLOR = 'oklch(22% 0.012 230 / 0.35)'
+const BACKDROP_GRID_MAJOR_WIDTH = 1
+const BACKDROP_GRID_MINOR_WIDTH = 0.5
+
 export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHostProps>(
   function SigmaCanvasHost(
     {
@@ -63,7 +70,9 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     },
     ref,
   ) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const backdropCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const adapterRef = useRef<SigmaRendererAdapter | null>(null)
   const overlayRef = useRef<ZapElectronOverlay | null>(null)
   const sceneRef = useRef(scene)
@@ -304,12 +313,93 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     }
   }, [enableDebugProbe])
 
+  useEffect(() => {
+    const host = hostRef.current
+    const backdropCanvas = backdropCanvasRef.current
+    if (!host || !backdropCanvas) {
+      return
+    }
+
+    const ctx = backdropCanvas.getContext('2d')
+    if (!ctx) {
+      return
+    }
+
+    let disposed = false
+    let pendingAttachFrame: number | null = null
+    let detachCameraListener = () => {}
+
+    const drawBackdrop = () => {
+      const rect = host.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) {
+        ctx.clearRect(0, 0, backdropCanvas.width, backdropCanvas.height)
+        return
+      }
+
+      syncBackdropCanvasSize(backdropCanvas, rect.width, rect.height)
+      ctx.clearRect(0, 0, rect.width, rect.height)
+
+      const adapter = adapterRef.current
+      const backdropFrame = resolveBackdropFrame(
+        adapter,
+        rect.width,
+        rect.height,
+      )
+      drawBackdropGrid(ctx, rect.width, rect.height, backdropFrame)
+    }
+
+    const attachCameraListener = () => {
+      pendingAttachFrame = null
+
+      if (disposed) {
+        return
+      }
+
+      const adapter = adapterRef.current
+      if (!adapter) {
+        pendingAttachFrame = requestAnimationFrame(attachCameraListener)
+        return
+      }
+
+      detachCameraListener()
+      detachCameraListener = adapter.subscribeToCameraTicks(drawBackdrop)
+      drawBackdrop()
+    }
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            drawBackdrop()
+          })
+
+    resizeObserver?.observe(host)
+    drawBackdrop()
+    attachCameraListener()
+
+    return () => {
+      disposed = true
+      if (pendingAttachFrame !== null) {
+        cancelAnimationFrame(pendingAttachFrame)
+      }
+      resizeObserver?.disconnect()
+      detachCameraListener()
+    }
+  }, [])
+
   return (
     <div
       className="sg-canvas-host relative h-full min-h-[32rem] w-full"
       data-testid="sigma-canvas-host"
-      ref={containerRef}
-    />
+      ref={hostRef}
+    >
+      <canvas
+        aria-hidden="true"
+        className="sg-canvas-backdrop"
+        ref={backdropCanvasRef}
+      />
+      <div className="sg-canvas-stage" ref={containerRef} />
+    </div>
   )
   },
 )
@@ -333,3 +423,169 @@ const getAvatarPerfSnapshotKey = (snapshot: PerfBudgetSnapshot | null) => {
     snapshot.budget.maxImageDrawsPerFrame,
   ].join('|')
 }
+
+const syncBackdropCanvasSize = (
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+) => {
+  const dpr = window.devicePixelRatio || 1
+  const cssWidth = Math.max(1, Math.round(width))
+  const cssHeight = Math.max(1, Math.round(height))
+  const pixelWidth = Math.max(1, Math.round(cssWidth * dpr))
+  const pixelHeight = Math.max(1, Math.round(cssHeight * dpr))
+
+  if (canvas.width !== pixelWidth) {
+    canvas.width = pixelWidth
+  }
+  if (canvas.height !== pixelHeight) {
+    canvas.height = pixelHeight
+  }
+
+  if (canvas.style.width !== `${cssWidth}px`) {
+    canvas.style.width = `${cssWidth}px`
+  }
+  if (canvas.style.height !== `${cssHeight}px`) {
+    canvas.style.height = `${cssHeight}px`
+  }
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return
+  }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+}
+
+const resolveBackdropFrame = (
+  adapter: SigmaRendererAdapter | null,
+  width: number,
+  height: number,
+) => {
+  if (!adapter) {
+    return {
+      originX: width / 2,
+      originY: height / 2,
+      majorSpacingX: BACKDROP_GRID_WORLD_STEP,
+      majorSpacingY: BACKDROP_GRID_WORLD_STEP,
+    }
+  }
+
+  const origin = adapter.graphToViewport({ x: 0, y: 0 })
+  const majorX = adapter.graphToViewport({ x: BACKDROP_GRID_WORLD_STEP, y: 0 })
+  const majorY = adapter.graphToViewport({ x: 0, y: BACKDROP_GRID_WORLD_STEP })
+
+  const majorSpacingX =
+    origin && majorX
+      ? Math.abs(majorX.x - origin.x)
+      : BACKDROP_GRID_WORLD_STEP
+  const majorSpacingY =
+    origin && majorY
+      ? Math.abs(majorY.y - origin.y)
+      : BACKDROP_GRID_WORLD_STEP
+
+  return {
+    originX:
+      origin && Number.isFinite(origin.x) ? origin.x : width / 2,
+    originY:
+      origin && Number.isFinite(origin.y) ? origin.y : height / 2,
+    majorSpacingX:
+      Number.isFinite(majorSpacingX) && majorSpacingX > 0
+        ? majorSpacingX
+        : BACKDROP_GRID_WORLD_STEP,
+    majorSpacingY:
+      Number.isFinite(majorSpacingY) && majorSpacingY > 0
+        ? majorSpacingY
+        : BACKDROP_GRID_WORLD_STEP,
+  }
+}
+
+const drawBackdropGrid = (
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: {
+    originX: number
+    originY: number
+    majorSpacingX: number
+    majorSpacingY: number
+  },
+) => {
+  drawBackdropGridLayer(ctx, width, height, {
+    offsetX: positiveModulo(frame.originX, frame.majorSpacingX),
+    offsetY: positiveModulo(frame.originY, frame.majorSpacingY),
+    spacingX: frame.majorSpacingX,
+    spacingY: frame.majorSpacingY,
+    color: BACKDROP_GRID_MAJOR_COLOR,
+    lineWidth: BACKDROP_GRID_MAJOR_WIDTH,
+  })
+
+  const minorSpacingX = frame.majorSpacingX / BACKDROP_GRID_MINOR_DIVISOR
+  const minorSpacingY = frame.majorSpacingY / BACKDROP_GRID_MINOR_DIVISOR
+  if (minorSpacingX <= 14 || minorSpacingY <= 14) {
+    return
+  }
+
+  drawBackdropGridLayer(ctx, width, height, {
+    offsetX: positiveModulo(frame.originX, minorSpacingX),
+    offsetY: positiveModulo(frame.originY, minorSpacingY),
+    spacingX: minorSpacingX,
+    spacingY: minorSpacingY,
+    color: BACKDROP_GRID_MINOR_COLOR,
+    lineWidth: BACKDROP_GRID_MINOR_WIDTH,
+  })
+}
+
+const drawBackdropGridLayer = (
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  grid: {
+    offsetX: number
+    offsetY: number
+    spacingX: number
+    spacingY: number
+    color: string
+    lineWidth: number
+  },
+) => {
+  if (
+    !Number.isFinite(grid.spacingX) ||
+    !Number.isFinite(grid.spacingY) ||
+    grid.spacingX <= 0 ||
+    grid.spacingY <= 0
+  ) {
+    return
+  }
+
+  ctx.save()
+  ctx.strokeStyle = grid.color
+  ctx.lineWidth = grid.lineWidth
+  ctx.beginPath()
+
+  const alignedVertical = alignBackdropLine(grid.offsetX, grid.lineWidth)
+  for (let x = alignedVertical; x <= width; x += grid.spacingX) {
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, height)
+  }
+
+  const alignedHorizontal = alignBackdropLine(grid.offsetY, grid.lineWidth)
+  for (let y = alignedHorizontal; y <= height; y += grid.spacingY) {
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
+  }
+
+  ctx.stroke()
+  ctx.restore()
+}
+
+const positiveModulo = (value: number, divisor: number) => {
+  if (!Number.isFinite(value) || !Number.isFinite(divisor) || divisor <= 0) {
+    return 0
+  }
+
+  return ((value % divisor) + divisor) % divisor
+}
+
+const alignBackdropLine = (value: number, lineWidth: number) =>
+  lineWidth >= 1 ? Math.round(value) + 0.5 : Math.round(value * 2) / 2

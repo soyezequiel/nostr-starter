@@ -19,6 +19,8 @@ export const buildNodeDetailProjection = (
       followerCount: 0,
       mutualCount: 0,
       isPinned: false,
+      isFixed: false,
+      canTogglePin: false,
       isExpanded: false,
     }
   }
@@ -35,6 +37,7 @@ export const buildNodeDetailProjection = (
       .filter((edge) => edge.target === pubkey)
       .map((edge) => edge.source),
   )
+  const isPinned = state.pinnedNodePubkeys.has(pubkey)
 
   return {
     node,
@@ -47,7 +50,9 @@ export const buildNodeDetailProjection = (
     followingCount: following.size,
     followerCount: followers.size,
     mutualCount: Array.from(following).filter((target) => followers.has(target)).length,
-    isPinned: state.pinnedNodePubkeys.has(pubkey),
+    isPinned,
+    isFixed: isPinned,
+    canTogglePin: true,
     isExpanded: node?.isExpanded ?? false,
   }
 }

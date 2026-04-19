@@ -246,6 +246,19 @@ test('keeps root as the root focus state even when it is a depth-1 neighbor of t
   assert.equal(root.focusState, 'root')
 })
 
+test('keeps the root fixed when it is pinned in the canonical state', () => {
+  const scene = buildGraphSceneSnapshot(
+    createState({
+      pinnedNodePubkeys: new Set<string>(['root']),
+    }),
+  )
+
+  const rootPhysicsNode = scene.physics.nodes.find((node) => node.pubkey === 'root')
+  assert.ok(rootPhysicsNode)
+  assert.equal(rootPhysicsNode.fixed, true)
+  assert.deepEqual(scene.render.pins.pubkeys, ['root'])
+})
+
 test('marks pinned nodes outside the neighborhood with pinned focus state (not dim)', () => {
   const state = createState({
     activeLayer: 'graph',

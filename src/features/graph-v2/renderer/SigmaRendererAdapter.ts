@@ -80,6 +80,8 @@ const AVATAR_MIN_SIZE_THRESHOLD = 4
 const AVATAR_MAX_SIZE_THRESHOLD = 48
 const AVATAR_MIN_ZOOM_THRESHOLD = 0.5
 const AVATAR_MAX_ZOOM_THRESHOLD = 6
+const AVATAR_MIN_HOVER_REVEAL_RADIUS = 0
+const AVATAR_MAX_HOVER_REVEAL_RADIUS = 180
 const AVATAR_MIN_FAST_NODE_VELOCITY = 40
 const AVATAR_MAX_FAST_NODE_VELOCITY = 2000
 
@@ -324,6 +326,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private lastMoveBodyPointer: { x: number; y: number } | null = null
 
+  private avatarRevealPointer: { x: number; y: number } | null = null
+
+  private pendingAvatarRevealRenderFrame: number | null = null
+
   private lastScheduledGraphPosition: { x: number; y: number } | null = null
 
   private lastFlushedGraphPosition: { x: number; y: number } | null = null
@@ -440,6 +446,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const position = this.getNodePosition(pubkey)
 
     if (!position) {
+      return null
+    }
+
+    return this.sigma.graphToViewport(position)
+  }
+
+  public graphToViewport(position: { x: number; y: number }) {
+    if (!this.sigma) {
       return null
     }
 
@@ -771,6 +785,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
         AVATAR_MIN_ZOOM_THRESHOLD,
         AVATAR_MAX_ZOOM_THRESHOLD,
       ),
+      hoverRevealRadiusPx: clampNumber(
+        options.hoverRevealRadiusPx,
+        AVATAR_MIN_HOVER_REVEAL_RADIUS,
+        AVATAR_MAX_HOVER_REVEAL_RADIUS,
+      ),
       showZoomedOutMonograms:
         options.showZoomedOutMonograms ??
         DEFAULT_AVATAR_RUNTIME_OPTIONS.showZoomedOutMonograms,
@@ -791,6 +810,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     if (
       this.avatarRuntimeOptions.sizeThreshold === nextOptions.sizeThreshold &&
       this.avatarRuntimeOptions.zoomThreshold === nextOptions.zoomThreshold &&
+      this.avatarRuntimeOptions.hoverRevealRadiusPx ===
+        nextOptions.hoverRevealRadiusPx &&
       this.avatarRuntimeOptions.showZoomedOutMonograms ===
         nextOptions.showZoomedOutMonograms &&
       this.avatarRuntimeOptions.showMonogramBackgrounds ===
@@ -1149,6 +1170,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.releaseDrag()
     this.cancelPendingDragFrame()
     this.cancelPhysicsPositionBridge()
+    if (this.pendingAvatarRevealRenderFrame !== null) {
+      cancelAnimationFrame(this.pendingAvatarRevealRenderFrame)
+      this.pendingAvatarRevealRenderFrame = null
+    }
     if (this.pendingHighlightTransitionFrame !== null) {
       cancelAnimationFrame(this.pendingHighlightTransitionFrame)
       this.pendingHighlightTransitionFrame = null
@@ -1219,6 +1244,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         isMoving: () => this.hideAvatarsOnMove && this.motionActive,
         getForcedAvatarPubkey: () =>
           this.draggedNodePubkey ?? this.hoveredNodePubkey,
+        getAvatarRevealPointer: () => this.avatarRevealPointer,
         getRuntimeOptions: () => this.avatarRuntimeOptions,
       })
 
@@ -1260,6 +1286,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.motionClearTimer = null
       this.safeRefresh()
     }, this.MOTION_RESUME_MS)
+  }
+
+  private scheduleAvatarRevealRender() {
+    if (this.pendingAvatarRevealRenderFrame !== null) {
+      return
+    }
+
+    this.pendingAvatarRevealRenderFrame = requestAnimationFrame(() => {
+      this.pendingAvatarRevealRenderFrame = null
+      this.sigma?.scheduleRender()
+    })
   }
 
   private copyHoverFocusSnapshot(): HoverFocusSnapshot {
@@ -1436,8 +1473,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
       callbacks.onNodeHover(null)
     })
 
+    sigma.on('leaveStage', () => {
+      this.avatarRevealPointer = null
+      this.scheduleAvatarRevealRender()
+    })
+
     sigma.on('downNode', ({ node, event }) => {
       this.setCameraLocked(true)
+      this.avatarRevealPointer = { x: event.x, y: event.y }
+      this.scheduleAvatarRevealRender()
       this.pendingDragGesture = createPendingNodeDragGesture(node, {
         x: event.x,
         y: event.y,
@@ -1450,6 +1494,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
         x: event.x,
         y: event.y,
       }
+      this.avatarRevealPointer = this.lastMoveBodyPointer
+      this.scheduleAvatarRevealRender()
       this.shouldPinDraggedNodeOnRelease = isControlModifierPressed(event)
       const pendingDragGesture = this.pendingDragGesture
 
@@ -1588,7 +1634,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     node: string,
     target: RenderNodeAttributes,
   ) {
-    if (!this.sceneFocusTransition || this.hoveredNodePubkey) {
+    if (!this.sceneFocusTransition) {
       return target
     }
 
@@ -1608,7 +1654,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     edge: string,
     target: RenderEdgeAttributes,
   ) {
-    if (!this.sceneFocusTransition || this.hoveredNodePubkey) {
+    if (!this.sceneFocusTransition) {
       return target
     }
 

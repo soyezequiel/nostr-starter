@@ -1123,6 +1123,7 @@ export function createRootLoaderModule(
     rootProfile: NodeDetailProfile | null = null,
   ): RootGraphReplacementResult {
     const state = ctx.store.getState()
+    const previousRootPubkey = state.rootNodePubkey
     const previousNodes = state.nodes
     state.resetGraphAnalysis()
     state.resetGraph()
@@ -1130,6 +1131,9 @@ export function createRootLoaderModule(
     state.setSelectedNodePubkey(null)
     state.clearComparedNodes()
     state.setRootNodePubkey(rootPubkey)
+    if (previousRootPubkey !== rootPubkey) {
+      state.setFixedRootPubkey(rootPubkey)
+    }
     const discoveredAt = ctx.now()
     const outboundFollowSet = new Set(followPubkeys)
     const resolveProfilePatch = (

@@ -50,6 +50,79 @@ const createMonogramSignature = ({
     showText === false ? 'no-text' : 'text',
   ].join('\0')
 
+const drawClaudeDesignMonogramBackground = (
+  ctx: CanvasRenderingContext2D,
+  r: number,
+  hue: number,
+  hue2: number,
+  rim: string,
+) => {
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(r, r, r, 0, Math.PI * 2)
+  ctx.closePath()
+  ctx.clip()
+
+  const baseGradient = ctx.createLinearGradient(
+    r - r * 0.92,
+    r - r * 0.92,
+    r + r * 0.92,
+    r + r * 0.92,
+  )
+  baseGradient.addColorStop(0, `oklch(86% 0.18 ${hue2})`)
+  baseGradient.addColorStop(0.52, `oklch(68% 0.22 ${hue})`)
+  baseGradient.addColorStop(1, `oklch(48% 0.20 ${hue})`)
+  ctx.fillStyle = baseGradient
+  ctx.fillRect(0, 0, r * 2, r * 2)
+
+  const topLeftHighlight = ctx.createRadialGradient(
+    r - r * 0.52,
+    r - r * 0.56,
+    0,
+    r - r * 0.52,
+    r - r * 0.56,
+    r * 1.05,
+  )
+  topLeftHighlight.addColorStop(0, 'rgba(255, 255, 255, 0.58)')
+  topLeftHighlight.addColorStop(0.58, 'rgba(255, 255, 255, 0.12)')
+  topLeftHighlight.addColorStop(0.76, 'rgba(255, 255, 255, 0)')
+  ctx.fillStyle = topLeftHighlight
+  ctx.fillRect(0, 0, r * 2, r * 2)
+
+  const lowerInsetShadow = ctx.createLinearGradient(0, r * 0.78, 0, r * 2)
+  lowerInsetShadow.addColorStop(0, 'rgba(10, 10, 10, 0)')
+  lowerInsetShadow.addColorStop(1, 'rgba(10, 10, 10, 0.20)')
+  ctx.fillStyle = lowerInsetShadow
+  ctx.fillRect(0, r * 0.55, r * 2, r * 1.45)
+
+  const bottomRightShadow = ctx.createRadialGradient(
+    r + r * 0.42,
+    r + r * 0.44,
+    0,
+    r + r * 0.42,
+    r + r * 0.44,
+    r * 0.95,
+  )
+  bottomRightShadow.addColorStop(0, 'rgba(0, 0, 0, 0.22)')
+  bottomRightShadow.addColorStop(0.68, 'rgba(0, 0, 0, 0)')
+  ctx.fillStyle = bottomRightShadow
+  ctx.fillRect(0, 0, r * 2, r * 2)
+
+  const topInnerRim = ctx.createLinearGradient(0, 0, 0, r * 0.85)
+  topInnerRim.addColorStop(0, 'rgba(255, 255, 255, 0.24)')
+  topInnerRim.addColorStop(1, 'rgba(255, 255, 255, 0)')
+  ctx.fillStyle = topInnerRim
+  ctx.fillRect(0, 0, r * 2, r * 0.85)
+
+  ctx.restore()
+
+  ctx.strokeStyle = rim
+  ctx.lineWidth = 0.8
+  ctx.beginPath()
+  ctx.arc(r, r, r - 0.4, 0, Math.PI * 2)
+  ctx.stroke()
+}
+
 const renderMonogramCanvas = ({
   label,
   color,
@@ -70,43 +143,7 @@ const renderMonogramCanvas = ({
   const hue = palette.hue
   const hue2 = palette.hue2
   if (showBackground) {
-    const grad = ctx.createRadialGradient(
-      r - r * 0.45,
-      r - r * 0.45,
-      r * 0.05,
-      r,
-      r,
-      r * 1.05,
-    )
-    grad.addColorStop(0, `oklch(86% 0.18 ${hue2})`)
-    grad.addColorStop(0.55, `oklch(68% 0.22 ${hue})`)
-    grad.addColorStop(1, `oklch(48% 0.20 ${hue})`)
-    ctx.beginPath()
-    ctx.arc(r, r, r, 0, Math.PI * 2)
-    ctx.closePath()
-    ctx.fillStyle = grad
-    ctx.fill()
-
-    const highlight = ctx.createRadialGradient(
-      r - r * 0.4,
-      r - r * 0.55,
-      0,
-      r - r * 0.4,
-      r - r * 0.55,
-      r * 0.9,
-    )
-    highlight.addColorStop(0, `oklch(98% 0.05 ${hue2} / 0.55)`)
-    highlight.addColorStop(1, `oklch(98% 0.05 ${hue2} / 0)`)
-    ctx.fillStyle = highlight
-    ctx.beginPath()
-    ctx.arc(r, r, r, 0, Math.PI * 2)
-    ctx.fill()
-
-    ctx.strokeStyle = palette.rim
-    ctx.lineWidth = 0.8
-    ctx.beginPath()
-    ctx.arc(r, r, r - 0.4, 0, Math.PI * 2)
-    ctx.stroke()
+    drawClaudeDesignMonogramBackground(ctx, r, hue, hue2, palette.rim)
   }
 
   if (showText) {

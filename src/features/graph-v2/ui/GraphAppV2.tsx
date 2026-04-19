@@ -20,7 +20,6 @@ import { useAuthStore } from '@/store/auth'
 import { useAppStore } from '@/features/graph-runtime/app/store'
 import type {
   AppStore,
-  ConnectionsSourceLayer,
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph-runtime/app/store/types'
@@ -91,25 +90,7 @@ import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
 
-// ── Layer labels ──────────────────────────────────────────────────────────────
-
-const LAYER_LABELS: Record<(typeof GRAPH_V2_LAYERS)[number], string> = {
-  graph: 'Grafo',
-  connections: 'Conexiones',
-  following: 'Sigo',
-  followers: 'Me siguen',
-  mutuals: 'Mutuos',
-  'following-non-followers': 'Sigo sin reciprocidad',
-  'nonreciprocal-followers': 'Me siguen sin reciprocidad',
-}
-
-type SigmaSettingsTab = 'renderer' | 'physics' | 'layers' | 'relays' | 'internal'
-
-interface RelationshipToggleState {
-  following: boolean
-  followers: boolean
-  onlyNonReciprocal: boolean
-}
+type SigmaSettingsTab = 'renderer' | 'relays' | 'dev'
 
 type ValidRootIdentity = Extract<RootIdentityResolution, { status: 'valid' }>
 
@@ -121,36 +102,6 @@ interface LoadRootInput
   profile?: SavedRootProfileSnapshot | null
   profileFetchedAt?: number | null
 }
-
-const isRelationshipLayer = (
-  layer: (typeof GRAPH_V2_LAYERS)[number] | ConnectionsSourceLayer,
-) =>
-  layer === 'following' ||
-  layer === 'following-non-followers' ||
-  layer === 'mutuals' ||
-  layer === 'followers' ||
-  layer === 'nonreciprocal-followers'
-
-const resolveRelationshipControlLayer = (
-  activeLayer: (typeof GRAPH_V2_LAYERS)[number],
-  connectionsSourceLayer: ConnectionsSourceLayer,
-) => (activeLayer === 'connections' ? connectionsSourceLayer : activeLayer)
-
-const getRelationshipToggleState = (
-  layer: (typeof GRAPH_V2_LAYERS)[number] | ConnectionsSourceLayer,
-): RelationshipToggleState => ({
-  following:
-    layer === 'following' ||
-    layer === 'following-non-followers' ||
-    layer === 'mutuals',
-  followers:
-    layer === 'followers' ||
-    layer === 'nonreciprocal-followers' ||
-    layer === 'mutuals',
-  onlyNonReciprocal:
-    layer === 'following-non-followers' ||
-    layer === 'nonreciprocal-followers',
-})
 
 const hasVisibleEdgeBetween = (
   scene: GraphSceneSnapshot,
@@ -169,13 +120,15 @@ const hasVisibleEdgeBetween = (
   return false
 }
 
-const SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
+const PUBLIC_SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Render' },
-  { id: 'physics', label: 'Física' },
-  { id: 'layers', label: 'Capas' },
   { id: 'relays', label: 'Relays' },
-  { id: 'internal', label: 'Diagnóstico' },
 ]
+
+const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
+  id: 'dev',
+  label: 'Dev',
+}
 
 const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
 const MAX_SAVED_ROOT_REFRESHES = 6
@@ -384,7 +337,7 @@ const PHYSICS_TUNING_SLIDERS: Array<{
   { key: 'repulsionForce', label: 'Repulsión', description: 'Multiplica scalingRatio: separa nodos.', min: 0.25, max: 5, step: 0.05 },
   { key: 'linkForce', label: 'Fuerza de enlace', description: 'Multiplica edgeWeightInfluence.', min: 0.25, max: 2.5, step: 0.05 },
   { key: 'linkDistance', label: 'Distancia de enlace', description: 'Aproxima distancia sin cambiar FA2.', min: 0.5, max: 2, step: 0.05 },
-  { key: 'damping', label: 'Amortiguación', description: 'Multiplica slowDown: velocidad e inercia.', min: 0.25, max: 2.5, step: 0.05 },
+  { key: 'damping', label: 'Amortiguación', description: 'Multiplica slowDown: velocidad e inercia.', min: 0.1, max: 2.5, step: 0.05 },
 ]
 
 function PhysicsTuningPanel({
@@ -602,6 +555,26 @@ function RenderOptionsPanel({
           value={avatarRuntimeOptions.zoomThreshold}
         />
       </div>
+      <div className="sg-slider-row">
+        <div className="sg-slider-row__head">
+          <span className="sg-slider-row__lbl">Radio cerca del mouse</span>
+          <span className="sg-slider-row__val">{avatarRuntimeOptions.hoverRevealRadiusPx.toFixed(0)}px</span>
+        </div>
+        <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>
+          Fuerza fotos para todos los nodos dentro de ese radio.
+        </p>
+        <input
+          className="sg-slider"
+          max={180}
+          min={0}
+          onChange={(event) => {
+            onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, hoverRevealRadiusPx: Number.parseInt(event.target.value, 10) })
+          }}
+          step={4}
+          type="range"
+          value={avatarRuntimeOptions.hoverRevealRadiusPx}
+        />
+      </div>
       <div className="sg-setting-row">
         <div>
           <div className="sg-setting-row__lbl">Monograma si se mueve rápido</div>
@@ -788,7 +761,7 @@ export default function GraphAppV2() {
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
-  const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('renderer')
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('relays')
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isPersonSearchOpen, setIsPersonSearchOpen] = useState(false)
@@ -965,21 +938,6 @@ export default function GraphAppV2() {
     setFixtureState((current) => current ? withClientSceneSignature(updater(current)) : current)
   }, [])
 
-  const relationshipControlLayer = useMemo(
-    () => resolveRelationshipControlLayer(domainState.activeLayer, domainState.connectionsSourceLayer),
-    [domainState.activeLayer, domainState.connectionsSourceLayer],
-  )
-  const relationshipToggleState = useMemo(
-    () => getRelationshipToggleState(relationshipControlLayer),
-    [relationshipControlLayer],
-  )
-  const onlyOneRelationshipSideActive =
-    relationshipToggleState.following !== relationshipToggleState.followers
-  const canToggleOnlyNonReciprocal =
-    isRelationshipLayer(relationshipControlLayer) &&
-    (relationshipToggleState.following || relationshipToggleState.followers)
-  const isNonReciprocalAvailable = canToggleOnlyNonReciprocal && onlyOneRelationshipSideActive
-  const isNonReciprocalActive = isNonReciprocalAvailable && relationshipToggleState.onlyNonReciprocal
   useEffect(() => {
     if (!savedRootsHydrated || savedRoots.length === 0) return
     const rootsNeedingRefresh = savedRoots
@@ -1035,48 +993,6 @@ export default function GraphAppV2() {
     }))
   }, [bridge, isFixtureMode, updateFixtureState])
 
-  const setConnectionsSourceLayer = useCallback((layer: ConnectionsSourceLayer) => {
-    if (!isFixtureMode) { bridge.setConnectionsSourceLayer(layer); return }
-    updateFixtureState((current) => ({ ...current, connectionsSourceLayer: layer }))
-  }, [bridge, isFixtureMode, updateFixtureState])
-
-  const handleToggleRelationship = useCallback((role: 'following' | 'followers') => {
-    const current = getRelationshipToggleState(relationshipControlLayer)
-    const nextFollowing = role === 'following' ? !current.following : current.following
-    const nextFollowers = role === 'followers' ? !current.followers : current.followers
-
-    if (domainState.activeLayer === 'connections') {
-      if (!nextFollowing && !nextFollowers) { toggleLayer('graph'); return }
-      if (nextFollowing && nextFollowers) { setConnectionsSourceLayer('mutuals'); return }
-      if (nextFollowing) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'following-non-followers' : 'following'); return }
-      setConnectionsSourceLayer(current.onlyNonReciprocal ? 'nonreciprocal-followers' : 'followers')
-      return
-    }
-    if (!nextFollowing && !nextFollowers) { toggleLayer('graph'); return }
-    if (nextFollowing && nextFollowers) { toggleLayer('mutuals'); return }
-    if (nextFollowing) { toggleLayer(current.onlyNonReciprocal ? 'following-non-followers' : 'following'); return }
-    toggleLayer(current.onlyNonReciprocal ? 'nonreciprocal-followers' : 'followers')
-  }, [domainState.activeLayer, relationshipControlLayer, setConnectionsSourceLayer, toggleLayer])
-
-  const handleToggleOnlyNonReciprocal = useCallback(() => {
-    const current = getRelationshipToggleState(relationshipControlLayer)
-    if (!canToggleOnlyNonReciprocal || !onlyOneRelationshipSideActive) return
-    if (domainState.activeLayer === 'connections') {
-      if (current.following) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'following' : 'following-non-followers'); return }
-      if (current.followers) { setConnectionsSourceLayer(current.onlyNonReciprocal ? 'followers' : 'nonreciprocal-followers') }
-      return
-    }
-    if (current.following) { toggleLayer(current.onlyNonReciprocal ? 'following' : 'following-non-followers'); return }
-    if (current.followers) { toggleLayer(current.onlyNonReciprocal ? 'followers' : 'nonreciprocal-followers') }
-  }, [
-    canToggleOnlyNonReciprocal,
-    domainState.activeLayer,
-    onlyOneRelationshipSideActive,
-    relationshipControlLayer,
-    setConnectionsSourceLayer,
-    toggleLayer,
-  ])
-
   const updateDragInfluenceTuning = useCallback(function updateDragInfluenceTuning<K extends keyof DragNeighborhoodInfluenceTuning>(
     key: K, value: DragNeighborhoodInfluenceTuning[K],
   ) { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }, [])
@@ -1112,6 +1028,13 @@ export default function GraphAppV2() {
   })
 
   const isDev = process.env.NODE_ENV === 'development'
+  const settingsTabs = useMemo(
+    () =>
+      isDev || isFixtureMode
+        ? [...PUBLIC_SIGMA_SETTINGS_TABS, DEV_SIGMA_SETTINGS_TAB]
+        : PUBLIC_SIGMA_SETTINGS_TABS,
+    [isDev, isFixtureMode],
+  )
   const findSimulationPair = useCallback((): { from: string; to: string } | null => {
     for (const edge of deferredScene.render.visibleEdges) {
       if (edge.hidden) continue
@@ -1542,9 +1465,26 @@ export default function GraphAppV2() {
             onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
           />
         )
-      case 'physics':
+      case 'relays':
         return (
-          <>
+          <RelayEditor
+            isGraphStale={domainState.relayState.isGraphStale}
+            onApply={handleApplyRelays}
+            onRevert={handleRevertRelays}
+            overrideStatus={domainState.relayState.overrideStatus}
+            relayUrls={domainState.relayState.urls}
+          />
+        )
+      case 'dev':
+        return (
+          <div>
+            <RenderOptionsPanel
+              avatarPerfSnapshot={avatarPerfSnapshot}
+              avatarRuntimeOptions={avatarRuntimeOptions}
+              hideAvatarsOnMove={hideAvatarsOnMove}
+              onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+              onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
+            />
             <PhysicsTuningPanel
               onChange={updatePhysicsTuning}
               onReset={() => setPhysicsTuning(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)}
@@ -1557,75 +1497,6 @@ export default function GraphAppV2() {
                 tuning={dragInfluenceTuning}
               />
             ) : null}
-          </>
-        )
-      case 'layers':
-        return (
-          <div className="sg-settings-section">
-            <h4>Proyección activa</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {GRAPH_V2_LAYERS.map((layer) => {
-                const isActive = layer === domainState.activeLayer
-                return (
-                  <button
-                    aria-pressed={isActive}
-                    className={`sg-btn${isActive ? ' sg-btn--primary' : ''}`}
-                    key={layer}
-                    onClick={() => toggleLayer(layer)}
-                    style={{ justifyContent: 'flex-start' }}
-                    type="button"
-                  >
-                    {LAYER_LABELS[layer]}
-                  </button>
-                )
-              })}
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <h4>Filtros de relación</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div className="sg-setting-row">
-                  <span className="sg-setting-row__lbl">Sigo</span>
-                  <button
-                    className={`sg-toggle${relationshipToggleState.following ? ' sg-toggle--on' : ''}`}
-                    onClick={() => handleToggleRelationship('following')}
-                    type="button"
-                  />
-                </div>
-                <div className="sg-setting-row">
-                  <span className="sg-setting-row__lbl">Me siguen</span>
-                  <button
-                    className={`sg-toggle${relationshipToggleState.followers ? ' sg-toggle--on' : ''}`}
-                    onClick={() => handleToggleRelationship('followers')}
-                    type="button"
-                  />
-                </div>
-                {isNonReciprocalAvailable ? (
-                  <div className="sg-setting-row">
-                    <span className="sg-setting-row__lbl">Solo sin reciprocidad</span>
-                    <button
-                      className={`sg-toggle${isNonReciprocalActive ? ' sg-toggle--on' : ''}`}
-                      onClick={handleToggleOnlyNonReciprocal}
-                      type="button"
-                    />
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        )
-      case 'relays':
-        return (
-          <RelayEditor
-            isGraphStale={domainState.relayState.isGraphStale}
-            onApply={handleApplyRelays}
-            onRevert={handleRevertRelays}
-            overrideStatus={domainState.relayState.overrideStatus}
-            relayUrls={domainState.relayState.urls}
-          />
-        )
-      case 'internal':
-        return (
-          <div>
             <div className="sg-settings-section">
               <h4>Diagnóstico runtime</h4>
               {[
@@ -1917,9 +1788,9 @@ export default function GraphAppV2() {
           eyebrow={isSettingsOpen ? 'AJUSTES' : isPersonSearchPanelOpen ? 'BUSCAR PERSONA' : 'IDENTIDAD'}
           onClose={handleCloseSidePanel}
           tabs={
-            isSettingsOpen ? (
+            isSettingsOpen && settingsTabs.length > 1 ? (
               <div className="sg-panel-tabs">
-                {SIGMA_SETTINGS_TABS.map((tab) => (
+                {settingsTabs.map((tab) => (
                   <button
                     className={`sg-tab${activeSettingsTab === tab.id ? ' sg-tab--active' : ''}`}
                     key={tab.id}

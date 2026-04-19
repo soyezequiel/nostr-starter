@@ -103,7 +103,16 @@ export class LegacyKernelBridge {
   }
 
   public togglePinnedNode(pubkey: string) {
-    this.store.getState().togglePinnedNode(pubkey)
+    const state = this.store.getState()
+
+    if (pubkey === state.rootNodePubkey) {
+      state.setFixedRootPubkey(
+        state.fixedRootPubkey === pubkey ? null : pubkey,
+      )
+      return
+    }
+
+    state.togglePinnedNode(pubkey)
   }
 
   public pinNode(pubkey: string) {

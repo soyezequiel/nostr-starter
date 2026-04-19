@@ -64,9 +64,33 @@
 }
 
 [data-graph-v2] .sg-canvas-host {
+  position: relative;
   opacity: 1;
   visibility: visible;
   transition: opacity 220ms ease;
+}
+
+[data-graph-v2] .sg-canvas-backdrop,
+[data-graph-v2] .sg-canvas-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+[data-graph-v2] .sg-canvas-backdrop {
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+  opacity: 0.94;
+}
+
+[data-graph-v2] .sg-canvas-stage {
+  z-index: 1;
+}
+
+[data-graph-v2] .sg-canvas-stage canvas {
+  background: transparent !important;
 }
 
 [data-graph-v2][data-graph-loading="true"] .sg-canvas-host {

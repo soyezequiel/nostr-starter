@@ -408,6 +408,7 @@ export interface UiSlice {
   savedRoots: SavedRootEntry[]
   savedRootsHydrated: boolean
   interactionState: ViewportInteractionState
+  fixedRootPubkey: string | null
   pinnedNodePubkeys: ReadonlySet<string>
   physicsReheatRevision: number
   setSelectedNodePubkey: (pubkey: string | null) => void
@@ -445,6 +446,7 @@ export interface UiSlice {
     fetchedAt: number | null,
   ) => void
   setSavedRootsHydrated: (hydrated: boolean) => void
+  setFixedRootPubkey: (pubkey: string | null) => void
   pinNode: (pubkey: string) => void
   unpinNode: (pubkey: string) => void
   togglePinnedNode: (pubkey: string) => void

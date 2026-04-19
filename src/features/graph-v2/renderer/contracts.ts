@@ -123,6 +123,8 @@ export interface NodeDetailProjection {
   followerCount: number
   mutualCount: number
   isPinned: boolean
+  isFixed: boolean
+  canTogglePin: boolean
   isExpanded: boolean
 }
 

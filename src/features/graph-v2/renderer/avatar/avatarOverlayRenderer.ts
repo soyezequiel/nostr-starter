@@ -15,9 +15,10 @@ import type {
   AvatarScheduler,
 } from '@/features/graph-v2/renderer/avatar/avatarScheduler'
 import type { PerfBudget } from '@/features/graph-v2/renderer/avatar/perfBudget'
-import type {
-  AvatarBudget,
-  AvatarRuntimeOptions,
+import {
+  DEFAULT_AVATAR_RUNTIME_OPTIONS,
+  type AvatarBudget,
+  type AvatarRuntimeOptions,
 } from '@/features/graph-v2/renderer/avatar/types'
 import type {
   RenderEdgeAttributes,
@@ -42,6 +43,8 @@ interface AvatarNodeMotionSample {
   t: number
 }
 
+type AvatarRevealPointer = { x: number; y: number }
+
 type EffectiveAvatarBudget = AvatarBudget & AvatarRuntimeOptions
 
 interface AvatarDrawItem {
@@ -65,30 +68,56 @@ export interface AvatarOverlayRendererDeps {
   budget: PerfBudget
   isMoving: () => boolean
   getForcedAvatarPubkey?: () => string | null
+  getAvatarRevealPointer?: () => AvatarRevealPointer | null
   getRuntimeOptions?: () => AvatarRuntimeOptions
 }
 
 const buildUrlKey = (pubkey: string, url: string): string => `${pubkey}::${url}`
+
+const isInsideRevealRadius = (
+  node: AvatarRevealPointer,
+  pointer: AvatarRevealPointer,
+  radiusSquared: number,
+) => {
+  const dx = node.x - pointer.x
+  const dy = node.y - pointer.y
+  return dx * dx + dy * dy <= radiusSquared
+}
+
+export const resolveAvatarDrawRadiusPx = ({
+  avatarRadiusPx,
+  hasPriorityAvatarSizing,
+  zoomedOutMonogram,
+}: {
+  avatarRadiusPx: number
+  hasPriorityAvatarSizing: boolean
+  zoomedOutMonogram: boolean
+}) =>
+  hasPriorityAvatarSizing
+    ? Math.max(avatarRadiusPx, FORCED_AVATAR_MIN_RADIUS_PX)
+    : avatarRadiusPx > 0
+      ? avatarRadiusPx
+      : zoomedOutMonogram
+        ? ZOOMED_OUT_MONOGRAM_MIN_RADIUS_PX
+        : avatarRadiusPx
 
 export const selectAvatarDrawItemsForFrame = <
   T extends AvatarDrawSelectionItem,
 >(
   items: T[],
   cap: number,
-  forcedPubkey: string | null,
+  forcedPubkeys: ReadonlySet<string>,
 ): T[] => {
-  const forcedItem = forcedPubkey
-    ? (items.find((item) => item.pubkey === forcedPubkey) ?? null)
-    : null
+  const forcedItems = items.filter((item) => forcedPubkeys.has(item.pubkey))
   const persistentItems = items.filter(
     (item) =>
-      item.isPersistentAvatar && item.pubkey !== forcedItem?.pubkey,
+      item.isPersistentAvatar && !forcedPubkeys.has(item.pubkey),
   )
   const persistentPubkeys = new Set(
     persistentItems.map((item) => item.pubkey),
   )
-  if (forcedItem) {
-    persistentPubkeys.add(forcedItem.pubkey)
+  for (const item of forcedItems) {
+    persistentPubkeys.add(item.pubkey)
   }
   const selectableItems = items.filter(
     (item) => !persistentPubkeys.has(item.pubkey),
@@ -107,18 +136,16 @@ export const selectAvatarDrawItemsForFrame = <
           })
           .slice(0, normalizedCap)
 
-  return forcedItem
-    ? [...selected, ...persistentItems, forcedItem]
-    : [...selected, ...persistentItems]
+  return [...selected, ...persistentItems, ...forcedItems]
 }
 
 export const selectAvatarDrawContext = <T>(
   itemPubkey: string,
-  forcedPubkey: string | null,
+  forcedPubkeys: ReadonlySet<string>,
   baseContext: T,
   forcedContext: T | null,
 ) =>
-  itemPubkey === forcedPubkey && forcedContext
+  forcedPubkeys.has(itemPubkey) && forcedContext
     ? forcedContext
     : baseContext
 
@@ -129,6 +156,7 @@ export class AvatarOverlayRenderer {
   private readonly budget: PerfBudget
   private readonly isMoving: () => boolean
   private readonly getForcedAvatarPubkey: () => string | null
+  private readonly getAvatarRevealPointer: () => AvatarRevealPointer | null
   private readonly getRuntimeOptions: () => AvatarRuntimeOptions | null
   private readonly lastBucketByUrl = new Map<string, ImageLodBucket>()
   private readonly lastMotionByNode = new Map<string, AvatarNodeMotionSample>()
@@ -144,6 +172,7 @@ export class AvatarOverlayRenderer {
     this.budget = deps.budget
     this.isMoving = deps.isMoving
     this.getForcedAvatarPubkey = deps.getForcedAvatarPubkey ?? (() => null)
+    this.getAvatarRevealPointer = deps.getAvatarRevealPointer ?? (() => null)
     this.getRuntimeOptions = deps.getRuntimeOptions ?? (() => null)
     this.boundAfterRender = () => this.onAfterRender()
     this.sigma.on('afterRender', this.boundAfterRender)
@@ -166,6 +195,10 @@ export class AvatarOverlayRenderer {
     this.lastFrameTs = nowMs
 
     const budget = this.resolveRuntimeBudget()
+    const forcedCtx = this.getForcedOverlayContext()
+    if (forcedCtx) {
+      this.clearForcedOverlayContext(forcedCtx)
+    }
     if (!budget.drawAvatars) {
       return
     }
@@ -175,12 +208,15 @@ export class AvatarOverlayRenderer {
     if (!ctx) {
       return
     }
-    const forcedCtx = this.getForcedOverlayContext()
-    if (forcedCtx) {
-      this.clearForcedOverlayContext(forcedCtx)
-    }
 
-    const forcedAvatarPubkey = this.getForcedAvatarPubkey()
+    const directForcedAvatarPubkey = this.getForcedAvatarPubkey()
+    const forcedAvatarPubkeys = new Set<string>()
+    if (directForcedAvatarPubkey) {
+      forcedAvatarPubkeys.add(directForcedAvatarPubkey)
+    }
+    const revealPointer = this.getAvatarRevealPointer()
+    const revealRadiusPx = Math.max(0, budget.hoverRevealRadiusPx)
+    const revealRadiusSquared = revealRadiusPx * revealRadiusPx
     const moving = this.isMoving()
 
     const cameraState = this.sigma.getCamera().getState()
@@ -200,13 +236,7 @@ export class AvatarOverlayRenderer {
     const seenNodes = new Set<string>()
 
     graph.forEachNode((pubkey, attrs) => {
-      const forcedAvatar = pubkey === forcedAvatarPubkey
       const nodeAttrs = attrs as RenderNodeAttributes
-      const isPersistentAvatar =
-        forcedAvatar ||
-        nodeAttrs.isRoot ||
-        nodeAttrs.isPinned ||
-        nodeAttrs.isSelected
       if (nodeAttrs.hidden) {
         return
       }
@@ -216,6 +246,24 @@ export class AvatarOverlayRenderer {
       }
       const nodeRadiusPx = this.sigma.scaleSize(display.size, cameraRatio)
       const avatarRadiusPx = Math.max(0, nodeRadiusPx - AVATAR_NODE_INSET_PX)
+      const viewport = this.sigma.framedGraphToViewport(display)
+      if (
+        revealPointer &&
+        revealRadiusPx > 0 &&
+        isInsideRevealRadius(viewport, revealPointer, revealRadiusSquared)
+      ) {
+        forcedAvatarPubkeys.add(pubkey)
+      }
+      const isPersistentAvatar =
+        forcedAvatarPubkeys.has(pubkey) ||
+        nodeAttrs.isRoot ||
+        nodeAttrs.isPinned ||
+        nodeAttrs.isSelected
+      const hasPriorityAvatarSizing =
+        pubkey === directForcedAvatarPubkey ||
+        nodeAttrs.isRoot ||
+        nodeAttrs.isPinned ||
+        nodeAttrs.isSelected
       const zoomedOutMonogram = avatarRadiusPx < budget.sizeThreshold
       if (
         !budget.showZoomedOutMonograms &&
@@ -224,12 +272,11 @@ export class AvatarOverlayRenderer {
       ) {
         return
       }
-      const drawRadiusPx = isPersistentAvatar
-        ? Math.max(avatarRadiusPx, FORCED_AVATAR_MIN_RADIUS_PX)
-        : zoomedOutMonogram
-          ? ZOOMED_OUT_MONOGRAM_MIN_RADIUS_PX
-          : avatarRadiusPx
-      const viewport = this.sigma.framedGraphToViewport(display)
+      const drawRadiusPx = resolveAvatarDrawRadiusPx({
+        avatarRadiusPx,
+        hasPriorityAvatarSizing,
+        zoomedOutMonogram,
+      })
       if (!this.isInViewport(viewport.x, viewport.y, drawRadiusPx)) {
         return
       }
@@ -273,7 +320,7 @@ export class AvatarOverlayRenderer {
     const selectedDrawItems = selectAvatarDrawItemsForFrame(
       drawItems,
       budget.maxAvatarDrawsPerFrame,
-      forcedAvatarPubkey,
+      forcedAvatarPubkeys,
     )
     const selectedPubkeys = new Set(
       selectedDrawItems.map((item) => item.pubkey),
@@ -316,7 +363,7 @@ export class AvatarOverlayRenderer {
       const drewImage = this.drawAvatarCircle({
         ctx: selectAvatarDrawContext(
           item.pubkey,
-          forcedAvatarPubkey,
+          forcedAvatarPubkeys,
           ctx,
           forcedCtx,
         ),
@@ -433,6 +480,7 @@ export class AvatarOverlayRenderer {
       return {
         ...budget,
         showZoomedOutMonograms: true,
+        hoverRevealRadiusPx: DEFAULT_AVATAR_RUNTIME_OPTIONS.hoverRevealRadiusPx,
         showMonogramBackgrounds: true,
         showMonogramText: true,
         hideImagesOnFastNodes: false,
@@ -448,6 +496,7 @@ export class AvatarOverlayRenderer {
       zoomThreshold: adaptiveVisualsActive
         ? Math.min(runtimeOptions.zoomThreshold, budget.zoomThreshold)
         : runtimeOptions.zoomThreshold,
+      hoverRevealRadiusPx: runtimeOptions.hoverRevealRadiusPx,
       showZoomedOutMonograms: runtimeOptions.showZoomedOutMonograms,
       showMonogramBackgrounds: runtimeOptions.showMonogramBackgrounds,
       showMonogramText: runtimeOptions.showMonogramText,

@@ -146,6 +146,7 @@ export const createInitialUiSliceState = (): Pick<
   | 'savedRoots'
   | 'savedRootsHydrated'
   | 'interactionState'
+  | 'fixedRootPubkey'
   | 'pinnedNodePubkeys'
   | 'physicsReheatRevision'
 > => ({
@@ -186,6 +187,7 @@ export const createInitialUiSliceState = (): Pick<
   effectiveImageBudget: DEFAULT_EFFECTIVE_IMAGE_BUDGET,
   savedRoots: createDefaultSavedRootEntries(),
   savedRootsHydrated: typeof window === 'undefined',
+  fixedRootPubkey: null,
   pinnedNodePubkeys: new Set<string>(),
   physicsReheatRevision: 0,
   interactionState: {
@@ -421,5 +423,10 @@ export const createUiSlice: AppStateCreator<UiSlice> = (set) => ({
   },
   setSavedRootsHydrated: (hydrated) => {
     set({ savedRootsHydrated: hydrated })
+  },
+  setFixedRootPubkey: (pubkey) => {
+    set((state) =>
+      state.fixedRootPubkey === pubkey ? state : { fixedRootPubkey: pubkey },
+    )
   },
 })
