@@ -132,7 +132,11 @@ export interface GraphInteractionCallbacks {
   onNodeHover: (pubkey: string | null) => void
   onNodeDragStart: (pubkey: string) => void
   onNodeDragMove: (pubkey: string, position: { x: number; y: number }) => void
-  onNodeDragEnd: (pubkey: string, position: { x: number; y: number }) => void
+  onNodeDragEnd: (
+    pubkey: string,
+    position: { x: number; y: number },
+    options?: { pinNode?: boolean },
+  ) => void
   onViewportChange: (viewport: GraphViewportState) => void
 }
 

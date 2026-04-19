@@ -10,6 +10,8 @@ const { createGraphSlice } = require('../../app/store/slices/graphSlice.ts')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createRelaySlice } = require('../../app/store/slices/relaySlice.ts')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { createUiSlice } = require('../../app/store/slices/uiSlice.ts')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createKernelEventEmitter } = require('../events.ts')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createNodeExpansionModule } = require('./node-expansion.ts')
@@ -33,6 +35,7 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
   const store = createStore<Record<string, unknown>>()((...args) => ({
     ...createGraphSlice(...args),
     ...createRelaySlice(...args),
+    ...createUiSlice(...args),
   }))
 
   store.getState().setRelayUrls(['wss://relay.example'])
@@ -60,6 +63,8 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
       relation: 'follow',
     },
   ])
+  store.getState().setSelectedNodePubkey('target')
+  store.getState().setOpenPanel('node-detail')
 
   const reciprocalDeferred = createDeferred<{
     followerPubkeys: string[]
@@ -184,6 +189,8 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
   )
   assert.equal(store.getState().inboundAdjacency.target, undefined)
   assert.equal(store.getState().expandedNodePubkeys.has('target'), true)
+  assert.equal(store.getState().selectedNodePubkey, null)
+  assert.equal(store.getState().openPanel, 'overview')
 
   reciprocalDeferred.resolve({
     followerPubkeys: ['late-follower'],

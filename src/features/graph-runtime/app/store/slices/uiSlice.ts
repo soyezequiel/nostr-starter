@@ -19,7 +19,19 @@ import {
   normalizeAvatarZoomThresholds,
 } from '@/features/graph-runtime/avatarQualityGuide'
 
-const MAX_SAVED_ROOTS = 12
+const DEFAULT_SAVED_ROOTS = [
+  {
+    npub: 'npub103zae7ewjdv5eepmc2ckl55m8sut5rd0g2hg2c07dup48zft0h6qlaaz9u',
+    pubkey: '7c45dcfb2e93594ce43bc2b16fd29b3c38ba0daf42ae8561fe6f0353892b7df4',
+  },
+  {
+    npub: 'npub1rujdpkd8mwezrvpqd2rx2zphfaztqrtsfg6w3vdnljdghs2q8qrqtt9u68',
+    pubkey: '1f24d0d9a7dbb221b0206a866508374f44b00d704a34e8b1b3fc9a8bc1403806',
+  },
+] as const
+
+const MAX_USER_SAVED_ROOTS = 12
+const MAX_SAVED_ROOTS = MAX_USER_SAVED_ROOTS + DEFAULT_SAVED_ROOTS.length
 const sortRelayHints = (relayHints: readonly string[] | undefined) =>
   relayHints ? Array.from(new Set(relayHints.filter(Boolean))).sort() : []
 
@@ -37,6 +49,35 @@ const sortSavedRoots = (savedRoots: SavedRootEntry[]) =>
 
       return left.npub.localeCompare(right.npub)
     })
+
+export const createDefaultSavedRootEntries = (
+  timestamp = Date.now(),
+): SavedRootEntry[] =>
+  DEFAULT_SAVED_ROOTS.map((root, index) => ({
+    pubkey: root.pubkey,
+    npub: root.npub,
+    addedAt: timestamp - index,
+    lastOpenedAt: timestamp - index,
+    relayHints: [],
+    profile: null,
+    profileFetchedAt: null,
+  }))
+
+export const seedDefaultSavedRoots = (
+  savedRoots: readonly SavedRootEntry[] = [],
+  timestamp = Date.now(),
+): SavedRootEntry[] => {
+  const existingPubkeys = new Set(savedRoots.map((savedRoot) => savedRoot.pubkey))
+  const missingDefaultRoots = createDefaultSavedRootEntries(timestamp).filter(
+    (savedRoot) => !existingPubkeys.has(savedRoot.pubkey),
+  )
+
+  if (missingDefaultRoots.length === 0) {
+    return sortSavedRoots([...savedRoots]).slice(0, MAX_SAVED_ROOTS)
+  }
+
+  return sortSavedRoots([...missingDefaultRoots, ...savedRoots]).slice(0, MAX_SAVED_ROOTS)
+}
 
 const mergeSavedRootProfile = (
   existingProfile: SavedRootProfileSnapshot | null,
@@ -141,7 +182,7 @@ export const createInitialUiSliceState = (): Pick<
   devicePerformanceProfile: DEFAULT_DEVICE_PERFORMANCE_PROFILE,
   effectiveGraphCaps: DEFAULT_EFFECTIVE_GRAPH_CAPS,
   effectiveImageBudget: DEFAULT_EFFECTIVE_IMAGE_BUDGET,
-  savedRoots: [],
+  savedRoots: createDefaultSavedRootEntries(),
   savedRootsHydrated: typeof window === 'undefined',
   pinnedNodePubkeys: new Set<string>(),
   physicsReheatRevision: 0,

@@ -106,6 +106,10 @@ export class LegacyKernelBridge {
     this.store.getState().togglePinnedNode(pubkey)
   }
 
+  public pinNode(pubkey: string) {
+    this.store.getState().pinNode(pubkey)
+  }
+
   public clearPinnedNodes() {
     this.store.getState().clearPinnedNodes()
   }

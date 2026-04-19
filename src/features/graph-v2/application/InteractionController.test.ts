@@ -18,3 +18,18 @@ test('selects and clears nodes through the bridge', () => {
 
   assert.deepEqual(selections, ['alice', null])
 })
+
+test('pins a node when drag release requests it', () => {
+  const pinned: string[] = []
+  const bridge = {
+    pinNode: (pubkey: string) => {
+      pinned.push(pubkey)
+    },
+  } as unknown as LegacyKernelBridge
+  const controller = new GraphInteractionController(bridge)
+
+  controller.callbacks.onNodeDragEnd('alice', { x: 10, y: 20 }, { pinNode: true })
+  controller.callbacks.onNodeDragEnd('bob', { x: 30, y: 40 })
+
+  assert.deepEqual(pinned, ['alice'])
+})

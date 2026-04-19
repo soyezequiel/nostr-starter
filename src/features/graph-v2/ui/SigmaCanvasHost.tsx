@@ -9,6 +9,7 @@ import type {
 import type { AvatarRuntimeOptions } from '@/features/graph-v2/renderer/avatar/types'
 import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
 import { SigmaRendererAdapter } from '@/features/graph-v2/renderer/SigmaRendererAdapter'
+import { hasRenderableSigmaContainer } from '@/features/graph-v2/renderer/containerDimensions'
 import type { DragNeighborhoodInfluenceTuning } from '@/features/graph-v2/renderer/dragInfluence'
 import type { ForceAtlasPhysicsTuning } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import type { SigmaLabDebugApi } from '@/features/graph-v2/testing/browserDebug'
@@ -39,6 +40,7 @@ export interface SigmaCanvasHostHandle {
   recenterCamera: () => void
   zoomIn: () => void
   zoomOut: () => void
+  setNodePinned: (pubkey: string, pinned: boolean) => void
   setPhysicsSuspended: (suspended: boolean) => void
   getMinimapSnapshot: () => MinimapSnapshot | null
   getMinimapViewport: () => MinimapViewport
@@ -64,40 +66,112 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   const containerRef = useRef<HTMLDivElement | null>(null)
   const adapterRef = useRef<SigmaRendererAdapter | null>(null)
   const overlayRef = useRef<ZapElectronOverlay | null>(null)
-  const initialSceneRef = useRef(scene)
   const sceneRef = useRef(scene)
+  const dragInfluenceTuningRef = useRef(dragInfluenceTuning)
+  const physicsTuningRef = useRef(physicsTuning)
+  const hideAvatarsOnMoveRef = useRef(hideAvatarsOnMove)
+  const avatarRuntimeOptionsRef = useRef(avatarRuntimeOptions)
   const lastAvatarPerfSnapshotKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!containerRef.current) {
+    sceneRef.current = scene
+    dragInfluenceTuningRef.current = dragInfluenceTuning
+    physicsTuningRef.current = physicsTuning
+    hideAvatarsOnMoveRef.current = hideAvatarsOnMove
+    avatarRuntimeOptionsRef.current = avatarRuntimeOptions
+  }, [
+    avatarRuntimeOptions,
+    dragInfluenceTuning,
+    hideAvatarsOnMove,
+    physicsTuning,
+    scene,
+  ])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) {
       return
     }
 
-    const container = containerRef.current
-    const adapter = new SigmaRendererAdapter()
-    adapter.mount(container, initialSceneRef.current, callbacks)
-    adapterRef.current = adapter
+    let adapter: SigmaRendererAdapter | null = null
+    let overlay: ZapElectronOverlay | null = null
+    let pendingMountFrame: number | null = null
+    let disposed = false
 
-    const overlay = new ZapElectronOverlay(container, (pubkey) => {
-      const viewportPosition = adapter.getViewportPosition(pubkey)
-      const canvas = container.querySelector('canvas') as HTMLCanvasElement | null
-      if (!viewportPosition || !canvas) {
-        return null
+    const mountAdapter = () => {
+      if (
+        disposed ||
+        adapter !== null ||
+        !hasRenderableSigmaContainer(container)
+      ) {
+        return
       }
-      const canvasRect = canvas.getBoundingClientRect()
-      const scaleX = canvas.width > 0 ? canvasRect.width / canvas.width : 1
-      const scaleY = canvas.height > 0 ? canvasRect.height / canvas.height : 1
-      return {
-        x: viewportPosition.x * scaleX,
-        y: viewportPosition.y * scaleY,
+
+      const nextAdapter = new SigmaRendererAdapter()
+      nextAdapter.mount(container, sceneRef.current, callbacks)
+      nextAdapter.setDragInfluenceTuning(dragInfluenceTuningRef.current ?? {})
+      nextAdapter.setPhysicsTuning(physicsTuningRef.current ?? {})
+      nextAdapter.setHideAvatarsOnMove(hideAvatarsOnMoveRef.current)
+      if (avatarRuntimeOptionsRef.current) {
+        nextAdapter.setAvatarRuntimeOptions(avatarRuntimeOptionsRef.current)
       }
-    })
-    overlayRef.current = overlay
+
+      adapter = nextAdapter
+      adapterRef.current = nextAdapter
+
+      const nextOverlay = new ZapElectronOverlay(container, (pubkey) => {
+        const currentAdapter = adapter
+        const viewportPosition = currentAdapter?.getViewportPosition(pubkey)
+        const canvas = container.querySelector('canvas') as HTMLCanvasElement | null
+        if (!viewportPosition || !canvas) {
+          return null
+        }
+        const canvasRect = canvas.getBoundingClientRect()
+        const scaleX = canvas.width > 0 ? canvasRect.width / canvas.width : 1
+        const scaleY = canvas.height > 0 ? canvasRect.height / canvas.height : 1
+        return {
+          x: viewportPosition.x * scaleX,
+          y: viewportPosition.y * scaleY,
+        }
+      })
+      overlay = nextOverlay
+      overlayRef.current = nextOverlay
+    }
+
+    const scheduleMount = () => {
+      if (pendingMountFrame !== null) {
+        return
+      }
+      pendingMountFrame = requestAnimationFrame(() => {
+        pendingMountFrame = null
+        mountAdapter()
+      })
+    }
+
+    mountAdapter()
+    if (adapter === null) {
+      scheduleMount()
+    }
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (adapter === null) {
+              scheduleMount()
+            }
+          })
+    resizeObserver?.observe(container)
 
     return () => {
-      overlay.dispose()
+      disposed = true
+      if (pendingMountFrame !== null) {
+        cancelAnimationFrame(pendingMountFrame)
+      }
+      resizeObserver?.disconnect()
+      overlay?.dispose()
       overlayRef.current = null
-      adapter.dispose()
+      adapter?.dispose()
       adapterRef.current = null
     }
   }, [callbacks])
@@ -109,6 +183,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       recenterCamera: () => adapterRef.current?.recenterCamera(),
       zoomIn: () => adapterRef.current?.zoomIn(),
       zoomOut: () => adapterRef.current?.zoomOut(),
+      setNodePinned: (pubkey, pinned) => adapterRef.current?.setNodePinned(pubkey, pinned),
       setPhysicsSuspended: (suspended) => adapterRef.current?.setPhysicsSuspended(suspended),
       getMinimapSnapshot: () => adapterRef.current?.getMinimapSnapshot() ?? null,
       getMinimapViewport: () => adapterRef.current?.getMinimapViewport() ?? null,
@@ -163,10 +238,6 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     const intervalId = window.setInterval(emitSnapshot, 500)
     return () => window.clearInterval(intervalId)
   }, [onAvatarPerfSnapshot])
-
-  useEffect(() => {
-    sceneRef.current = scene
-  }, [scene])
 
   useEffect(() => {
     if (!enableDebugProbe || typeof window === 'undefined') {
@@ -235,7 +306,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
 
   return (
     <div
-      className="relative h-full min-h-[32rem] w-full"
+      className="sg-canvas-host relative h-full min-h-[32rem] w-full"
       data-testid="sigma-canvas-host"
       ref={containerRef}
     />

@@ -1,112 +1,216 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 
 interface Props {
+  identityLabel?: string | null
   message: string | null
   nodeCount: number
 }
 
-interface LoadingNode {
-  x: string
-  y: string
+interface GraphLoaderNode {
+  x: number
+  y: number
+  vx: number
+  vy: number
   r: number
 }
 
-interface LoadingEdge {
-  from: number
-  to: number
-  opacity: string
+type GraphLoaderEdge = [source: number, target: number, length: number]
+
+interface LogLine {
+  msg: string
+  level?: 'good' | 'warn'
 }
 
-const LOADING_NODES: LoadingNode[] = [
-  { x: '22;44;22', y: '30;26;30', r: 10 },
-  { x: '66;54;66', y: '62;72;62', r: 12 },
-  { x: '108;116;108', y: '50;36;50', r: 10 },
-  { x: '138;154;138', y: '70;78;70', r: 9 },
-  { x: '112;100;112', y: '96;112;96', r: 15 },
-  { x: '96;78;96', y: '136;128;136', r: 15 },
-  { x: '136;150;136', y: '134;124;134', r: 13 },
-  { x: '164;176;164', y: '110;102;110', r: 18 },
-  { x: '204;194;204', y: '126;142;126', r: 10 },
-  { x: '56;42;56', y: '184;172;184', r: 19 },
-]
+function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
-const LOADING_EDGES: LoadingEdge[] = [
-  { from: 0, to: 1, opacity: '0.52;0.18;0.52' },
-  { from: 1, to: 2, opacity: '0.50;0.24;0.50' },
-  { from: 2, to: 3, opacity: '0.48;0.14;0.48' },
-  { from: 2, to: 4, opacity: '0.44;0.70;0.44' },
-  { from: 3, to: 4, opacity: '0.46;0;0.46' },
-  { from: 4, to: 5, opacity: '0.60;0.26;0.60' },
-  { from: 4, to: 6, opacity: '0.52;0.72;0.52' },
-  { from: 4, to: 7, opacity: '0.38;0.68;0.38' },
-  { from: 5, to: 6, opacity: '0.46;0;0.46' },
-  { from: 5, to: 9, opacity: '0.54;0.34;0.54' },
-  { from: 7, to: 8, opacity: '0.58;0.22;0.58' },
-  { from: 1, to: 5, opacity: '0;0.52;0' },
-  { from: 3, to: 7, opacity: '0;0.46;0' },
-  { from: 6, to: 8, opacity: '0;0.44;0' },
-]
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = size * dpr
+    canvas.height = size * dpr
+    canvas.style.width = `${size}px`
+    canvas.style.height = `${size}px`
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    let seedState = seed * 9301 + 49297
+    const random = () => {
+      seedState = (seedState * 9301 + 49297) % 233280
+      return seedState / 233280
+    }
+
+    const nodeCount = 11
+    const nodes: GraphLoaderNode[] = []
+    for (let i = 0; i < nodeCount; i += 1) {
+      const angle = (i / nodeCount) * Math.PI * 2
+      nodes.push({
+        x: size / 2 + Math.cos(angle) * 30 + (random() - 0.5) * 10,
+        y: size / 2 + Math.sin(angle) * 30 + (random() - 0.5) * 10,
+        vx: 0,
+        vy: 0,
+        r: 2 + random() * 2.4,
+      })
+    }
+
+    const edges: GraphLoaderEdge[] = []
+    for (let i = 0; i < nodeCount; i += 1) {
+      const edgeCount = 1 + Math.floor(random() * 2)
+      for (let j = 0; j < edgeCount; j += 1) {
+        const target =
+          (i + 1 + Math.floor(random() * (nodeCount - 1))) % nodeCount
+        if (target !== i) edges.push([i, target, 22 + random() * 18])
+      }
+    }
+
+    const centerX = size / 2
+    const centerY = size / 2
+    let frameId = 0
+
+    function step() {
+      for (let i = 0; i < nodeCount; i += 1) {
+        let forceX = 0
+        let forceY = 0
+
+        for (let j = 0; j < nodeCount; j += 1) {
+          if (i === j) continue
+          const dx = nodes[i].x - nodes[j].x
+          const dy = nodes[i].y - nodes[j].y
+          const distanceSquared = dx * dx + dy * dy + 0.01
+          const force = 80 / distanceSquared
+          forceX += dx * force
+          forceY += dy * force
+        }
+
+        forceX += (centerX - nodes[i].x) * 0.012
+        forceY += (centerY - nodes[i].y) * 0.012
+        nodes[i].vx = (nodes[i].vx + forceX * 0.1) * 0.86
+        nodes[i].vy = (nodes[i].vy + forceY * 0.1) * 0.86
+      }
+
+      for (const [source, target, length] of edges) {
+        const sourceNode = nodes[source]
+        const targetNode = nodes[target]
+        const dx = targetNode.x - sourceNode.x
+        const dy = targetNode.y - sourceNode.y
+        const distance = Math.sqrt(dx * dx + dy * dy) + 0.001
+        const force = (distance - length) * 0.04
+        const unitX = dx / distance
+        const unitY = dy / distance
+        sourceNode.vx += unitX * force
+        sourceNode.vy += unitY * force
+        targetNode.vx -= unitX * force
+        targetNode.vy -= unitY * force
+      }
+
+      for (const node of nodes) {
+        node.x += node.vx
+        node.y += node.vy
+
+        const margin = 14
+        if (node.x < margin) node.vx += (margin - node.x) * 0.05
+        if (node.x > size - margin) node.vx -= (node.x - (size - margin)) * 0.05
+        if (node.y < margin) node.vy += (margin - node.y) * 0.05
+        if (node.y > size - margin) node.vy -= (node.y - (size - margin)) * 0.05
+      }
+
+      ctx.clearRect(0, 0, size, size)
+      ctx.lineWidth = 0.7
+
+      for (const [source, target] of edges) {
+        const sourceNode = nodes[source]
+        const targetNode = nodes[target]
+        ctx.strokeStyle = 'oklch(98% 0 0 / 0.25)'
+        ctx.beginPath()
+        ctx.moveTo(sourceNode.x, sourceNode.y)
+        ctx.lineTo(targetNode.x, targetNode.y)
+        ctx.stroke()
+      }
+
+      for (const node of nodes) {
+        const glow = ctx.createRadialGradient(
+          node.x,
+          node.y,
+          0,
+          node.x,
+          node.y,
+          node.r * 4,
+        )
+        glow.addColorStop(0, 'oklch(100% 0 0 / 0.35)')
+        glow.addColorStop(1, 'oklch(100% 0 0 / 0)')
+        ctx.fillStyle = glow
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.r * 4, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.fillStyle = 'oklch(98% 0 0)'
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2)
+        ctx.fill()
+
+        ctx.strokeStyle = 'oklch(0% 0 0 / 0.6)'
+        ctx.lineWidth = 0.5
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.r - 0.4, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+
+      frameId = requestAnimationFrame(step)
+    }
+
+    frameId = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(frameId)
+  }, [seed, size])
+
+  return <canvas ref={canvasRef} className="sg-graph-loader" width={size} height={size} />
+}
 
 export const SigmaLoadingOverlay = memo(function SigmaLoadingOverlay({
+  identityLabel,
   message,
   nodeCount,
 }: Props) {
+  const progress = nodeCount > 0 ? Math.min(0.88, 0.24 + nodeCount * 0.00012) : 0.19
+  const displayName = identityLabel?.trim() || 'identidad'
   const label = message ?? 'resolviendo nprofile -> relays'
-  const progress = nodeCount > 0 ? Math.min(74, 19 + nodeCount * 5) : 19
+  const log = useMemo<LogLine[]>(() => {
+    const entries: LogLine[] = [
+      { msg: label },
+      { msg: 'wss://relay.damus.io - conectado', level: 'good' },
+      { msg: 'wss://nos.lol - conectado', level: 'good' },
+      { msg: 'wss://relay.primal.net - conectado', level: 'good' },
+    ]
+    if (nodeCount > 0) {
+      entries.push({ msg: `${nodeCount} nodos recibidos` })
+    }
+    return entries
+  }, [label, nodeCount])
 
   return (
     <div className="sg-loading-overlay" aria-live="polite">
-      <div className="sg-loading-overlay__visual" aria-hidden="true">
-        <svg className="sg-loading-graph" viewBox="0 0 224 224" role="presentation">
-          <g className="sg-loading-graph__edges">
-            {LOADING_EDGES.map((edge, edgeIndex) => {
-              const a = LOADING_NODES[edge.from]
-              const b = LOADING_NODES[edge.to]
-              return (
-                <line key={edgeIndex}>
-                  <animate attributeName="x1" dur="3.8s" repeatCount="indefinite" values={a.x} />
-                  <animate attributeName="y1" dur="3.8s" repeatCount="indefinite" values={a.y} />
-                  <animate attributeName="x2" dur="3.8s" repeatCount="indefinite" values={b.x} />
-                  <animate attributeName="y2" dur="3.8s" repeatCount="indefinite" values={b.y} />
-                  <animate attributeName="opacity" dur="3.8s" repeatCount="indefinite" values={edge.opacity} />
-                </line>
-              )
-            })}
-          </g>
-          <g className="sg-loading-graph__nodes">
-            {LOADING_NODES.map((node, nodeIndex) => (
-              <g key={nodeIndex}>
-                <circle className="sg-loading-graph__halo" r={node.r + 5}>
-                  <animate attributeName="cx" dur="3.8s" repeatCount="indefinite" values={node.x} />
-                  <animate attributeName="cy" dur="3.8s" repeatCount="indefinite" values={node.y} />
-                  <animate attributeName="opacity" dur="1.8s" repeatCount="indefinite" values="0.22;0.48;0.22" />
-                </circle>
-                <circle className="sg-loading-graph__node" r={node.r}>
-                  <animate attributeName="cx" dur="3.8s" repeatCount="indefinite" values={node.x} />
-                  <animate attributeName="cy" dur="3.8s" repeatCount="indefinite" values={node.y} />
-                </circle>
-                <circle className="sg-loading-graph__core" r="1.6">
-                  <animate attributeName="cx" dur="3.8s" repeatCount="indefinite" values={node.x} />
-                  <animate attributeName="cy" dur="3.8s" repeatCount="indefinite" values={node.y} />
-                </circle>
-              </g>
-            ))}
-          </g>
-        </svg>
+      <div className="sg-loader-grid" aria-hidden="true">
+        <GraphLoader size={190} seed={7} />
+        <GraphLoader size={190} seed={19} />
+        <GraphLoader size={190} seed={41} />
+        <GraphLoader size={190} seed={73} />
       </div>
-      <div className="sg-loading-overlay__center">
-        <p className="sg-loading-overlay__progress">{progress}%</p>
-        <h1>Mapeando identidad</h1>
-        <div className="sg-loading-overlay__terminal">
-          <p>{label}</p>
-          <p className="sg-loading-overlay__ok">wss://relay.damus.io - conectado</p>
-          {nodeCount > 0 ? (
-            <p>{nodeCount} nodos recibidos</p>
-          ) : (
-            <p>esperando eventos de perfil y contactos</p>
-          )}
+      <div className="sg-loading-status">
+        <div className="sg-loading-percent">{Math.round(progress * 100)}%</div>
+        <div className="sg-loading-title">Mapeando {displayName}</div>
+        <div className="sg-loading-log">
+          {log.map((line, index) => (
+            <div
+              className={`sg-loading-log__line${line.level ? ` sg-loading-log__line--${line.level}` : ''}`}
+              key={`${line.msg}-${index}`}
+            >
+              {line.msg}
+            </div>
+          ))}
         </div>
       </div>
     </div>

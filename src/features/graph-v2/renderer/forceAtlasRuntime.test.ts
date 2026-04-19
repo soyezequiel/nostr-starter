@@ -60,37 +60,6 @@ const createGraph = (nodeCount: number, edgeCount: number) => {
   return graph
 }
 
-const createDisconnectedScene = (): GraphPhysicsSnapshot => ({
-  nodes: [
-    { pubkey: 'A', size: 10, fixed: false },
-    { pubkey: 'B', size: 10, fixed: false },
-    { pubkey: 'C', size: 10, fixed: false },
-    { pubkey: 'D', size: 10, fixed: false },
-  ],
-  edges: [
-    { id: 'edge-ab', source: 'A', target: 'B', weight: 1 },
-    { id: 'edge-cd', source: 'C', target: 'D', weight: 1 },
-  ],
-  diagnostics: {
-    nodeCount: 4,
-    edgeCount: 2,
-    topologySignature: 'disconnected::4::2',
-  },
-})
-
-const createDisconnectedGraph = () => {
-  const graph = new DirectedGraph<PhysicsNodeAttributes, PhysicsEdgeAttributes>()
-
-  graph.addNode('A', { x: 0, y: 0, size: 1, fixed: false })
-  graph.addNode('B', { x: 10, y: 0, size: 1, fixed: false })
-  graph.addNode('C', { x: 100, y: 0, size: 1, fixed: false })
-  graph.addNode('D', { x: 110, y: 0, size: 1, fixed: false })
-  graph.addDirectedEdgeWithKey('edge-ab', 'A', 'B', { weight: 1 })
-  graph.addDirectedEdgeWithKey('edge-cd', 'C', 'D', { weight: 1 })
-
-  return graph
-}
-
 class LayoutStub implements ForceAtlasLayoutController {
   public running = false
 
@@ -371,66 +340,7 @@ test('reheat recreates the layout only when the runtime is eligible to run', () 
   assert.equal(layouts.length, 2)
 })
 
-test('stabilization treats rigid component translation as settled geometry', () => {
-  const graph = createDisconnectedGraph()
-  const layout = new LayoutStub()
-  const runtime = new ForceAtlasRuntime(graph, () => layout)
-  const runtimeInternals = runtime as unknown as {
-    stabilizationSample: unknown
-    stabilizationQuietSamples: number
-    stabilizationStartedAt: number
-    snapshotStabilizationSample: () => unknown
-    evaluateStabilization: () => void
-    settledPhysicsTopologySignature: string | null
-  }
-
-  runtime.sync(createDisconnectedScene())
-  runtimeInternals.stabilizationSample =
-    runtimeInternals.snapshotStabilizationSample()
-  runtimeInternals.stabilizationQuietSamples = 4
-  runtimeInternals.stabilizationStartedAt = Date.now()
-
-  graph.setNodeAttribute('C', 'x', 160)
-  graph.setNodeAttribute('D', 'x', 170)
-
-  runtimeInternals.evaluateStabilization()
-
-  assert.equal(layout.stopCalls, 1)
-  assert.equal(
-    runtimeInternals.settledPhysicsTopologySignature,
-    'disconnected::4::2',
-  )
-})
-
-test('stabilization does not stop while edge lengths are still changing around a stable centroid', () => {
-  const graph = createDisconnectedGraph()
-  const layout = new LayoutStub()
-  const runtime = new ForceAtlasRuntime(graph, () => layout)
-  const runtimeInternals = runtime as unknown as {
-    stabilizationSample: unknown
-    stabilizationQuietSamples: number
-    stabilizationStartedAt: number
-    snapshotStabilizationSample: () => unknown
-    evaluateStabilization: () => void
-    settledPhysicsTopologySignature: string | null
-  }
-
-  runtime.sync(createDisconnectedScene())
-  runtimeInternals.stabilizationSample =
-    runtimeInternals.snapshotStabilizationSample()
-  runtimeInternals.stabilizationQuietSamples = 4
-  runtimeInternals.stabilizationStartedAt = Date.now()
-
-  graph.setNodeAttribute('A', 'x', -0.05)
-  graph.setNodeAttribute('B', 'x', 10.05)
-
-  runtimeInternals.evaluateStabilization()
-
-  assert.equal(layout.stopCalls, 0)
-  assert.equal(runtimeInternals.settledPhysicsTopologySignature, null)
-})
-
-test('sync does not restart a topology already marked as settled', () => {
+test('sync restarts an existing stopped layout when physics is enabled', () => {
   const graph = createGraph(3, 2)
   const layouts: LayoutStub[] = []
   const runtime = new ForceAtlasRuntime(graph, () => {
@@ -438,18 +348,13 @@ test('sync does not restart a topology already marked as settled', () => {
     layouts.push(layout)
     return layout
   })
-  const runtimeInternals = runtime as unknown as {
-    settledPhysicsTopologySignature: string | null
-  }
   const scene = createScene(3, 2)
 
   runtime.sync(scene)
   layouts[0]!.running = false
-  runtimeInternals.settledPhysicsTopologySignature =
-    scene.diagnostics.topologySignature
 
   runtime.sync(scene)
 
   assert.equal(layouts.length, 1)
-  assert.equal(layouts[0]?.startCalls, 1)
+  assert.equal(layouts[0]?.startCalls, 2)
 })

@@ -59,6 +59,8 @@ import { SigmaCanvasHost, type SigmaCanvasHostHandle } from '@/features/graph-v2
 import {
   AtomIcon,
   ClockIcon,
+  CopyIcon,
+  ExternalLinkIcon,
   GearIcon,
   SearchIcon,
   TargetIcon,
@@ -166,6 +168,8 @@ const selectSavedRootState = (state: AppStore) => ({
   setSavedRootProfile: state.setSavedRootProfile,
 })
 
+const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
+
 const getInitials = (value: string | null) => {
   if (!value) return 'N'
   return (
@@ -176,6 +180,37 @@ const getInitials = (value: string | null) => {
       .map((chunk) => chunk[0]?.toUpperCase() ?? '')
       .join('') || 'N'
   )
+}
+
+const encodePubkeyAsNpub = (pubkey: string | null | undefined) => {
+  if (!pubkey || !HEX_PUBKEY_RE.test(pubkey)) return null
+  try {
+    return nip19.npubEncode(pubkey)
+  } catch {
+    return null
+  }
+}
+
+const copyToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.setAttribute('readonly', '')
+  textArea.style.position = 'fixed'
+  textArea.style.left = '-9999px'
+  document.body.appendChild(textArea)
+  textArea.select()
+
+  try {
+    const copied = document.execCommand('copy')
+    if (!copied) throw new Error('Copy command was rejected.')
+  } finally {
+    document.body.removeChild(textArea)
+  }
 }
 
 const createClientSceneSignature = (state: CanonicalGraphState) =>
@@ -680,7 +715,15 @@ export default function GraphAppV2() {
             onNodeHover: () => {},
             onNodeDragStart: () => {},
             onNodeDragMove: () => {},
-            onNodeDragEnd: () => {},
+            onNodeDragEnd: (pubkey, _position, options) => {
+              if (!options?.pinNode) return
+              setFixtureState((current) => {
+                if (!current || current.pinnedNodePubkeys.has(pubkey)) return current
+                const pinnedNodePubkeys = new Set(current.pinnedNodePubkeys)
+                pinnedNodePubkeys.add(pubkey)
+                return withClientSceneSignature({ ...current, pinnedNodePubkeys })
+              })
+            },
             onViewportChange: (viewport: GraphViewportState) => {
               setLastViewportRatio(viewport.ratio)
             },
@@ -783,6 +826,9 @@ export default function GraphAppV2() {
   }, [currentRootNode, domainState.rootPubkey, setSavedRootProfile])
 
   const togglePinnedNode = useCallback((pubkey: string) => {
+    const shouldPin = !domainState.pinnedNodePubkeys.has(pubkey)
+    sigmaHostRef.current?.setNodePinned(pubkey, shouldPin)
+
     if (!isFixtureMode) { bridge.togglePinnedNode(pubkey); return }
     updateFixtureState((current) => {
       const pinnedNodePubkeys = new Set(current.pinnedNodePubkeys)
@@ -790,7 +836,7 @@ export default function GraphAppV2() {
       else pinnedNodePubkeys.add(pubkey)
       return { ...current, pinnedNodePubkeys }
     })
-  }, [bridge, isFixtureMode, updateFixtureState])
+  }, [bridge, domainState.pinnedNodePubkeys, isFixtureMode, updateFixtureState])
 
   const toggleLayer = useCallback((layer: (typeof GRAPH_V2_LAYERS)[number]) => {
     if (!isFixtureMode) { bridge.toggleLayer(layer); return }
@@ -1021,9 +1067,7 @@ export default function GraphAppV2() {
     currentRootNode?.label ?? savedRootProfile?.displayName ?? savedRootProfile?.name ?? null
   const rootPictureUrl = currentRootNode?.picture ?? savedRootProfile?.picture ?? null
   const rootNpubEncoded = useMemo(() => {
-    const pk = domainState.rootPubkey
-    if (!pk || !/^[0-9a-f]{64}$/i.test(pk)) return null
-    try { return nip19.npubEncode(pk) } catch { return null }
+    return encodePubkeyAsNpub(domainState.rootPubkey)
   }, [domainState.rootPubkey])
 
   // Filter bar: active pill maps from active layer
@@ -1128,6 +1172,12 @@ export default function GraphAppV2() {
     }
     void handleRevertRelays()
   }, [domainState.relayState.isGraphStale, handleRevertRelays])
+
+  const handleCopyNpub = useCallback((npub: string) => {
+    void copyToClipboard(npub)
+      .then(() => setActionFeedback('npub copiado.'))
+      .catch(() => setActionFeedback('No se pudo copiar el npub.'))
+  }, [])
 
   const railButtons: RailButton[] = useMemo(() => [
     {
@@ -1387,6 +1437,9 @@ export default function GraphAppV2() {
       detail.followingCount > 0 ? 'sg-badge--accent' :
       detail.followerCount > 0 ? '' : 'sg-badge--warn'
 
+    const detailNpub = encodePubkeyAsNpub(detail.pubkey)
+    const primalProfileUrl = detailNpub ? `https://primal.net/p/${detailNpub}` : null
+
     return (
       <div>
         <div className="sg-node-hero">
@@ -1443,6 +1496,41 @@ export default function GraphAppV2() {
         )}
 
         <div className="sg-section-label">Identidad</div>
+        <div className="sg-npub-row">
+          <div className="sg-npub-row__body">
+            <span className="sg-npub-row__label">npub</span>
+            <code className={`sg-npub-row__value${detailNpub ? '' : ' sg-npub-row__value--missing'}`}>
+              {detailNpub ?? 'No disponible'}
+            </code>
+          </div>
+          <div className="sg-npub-row__actions">
+            <button
+              className="sg-mini-action"
+              disabled={!detailNpub}
+              onClick={() => {
+                if (!detailNpub) return
+                handleCopyNpub(detailNpub)
+              }}
+              title="Copiar npub completo"
+              type="button"
+            >
+              <CopyIcon />
+              <span>Copiar</span>
+            </button>
+            {primalProfileUrl ? (
+              <a
+                className="sg-mini-action"
+                href={primalProfileUrl}
+                rel="noopener noreferrer"
+                target="_blank"
+                title="Abrir cuenta en Primal"
+              >
+                <ExternalLinkIcon />
+                <span>Primal</span>
+              </a>
+            ) : null}
+          </div>
+        </div>
         <div className="sg-field">
           <span className="sg-field__k">nip05</span>
           <span className={`sg-field__v${detail.nip05 ? '' : ' sg-field__v--missing'}`}>
@@ -1496,7 +1584,11 @@ export default function GraphAppV2() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <main className="sg-app" data-graph-v2="">
+    <main
+      className="sg-app"
+      data-graph-loading={isGraphLoading ? 'true' : undefined}
+      data-graph-v2=""
+    >
       {/* Canvas — always present, full bleed under all chrome */}
       <SigmaCanvasHost
         avatarRuntimeOptions={stableAvatarRuntimeOptions}
@@ -1513,6 +1605,7 @@ export default function GraphAppV2() {
       {/* Loading overlay — while root data is arriving */}
       {isGraphLoading && (
         <SigmaLoadingOverlay
+          identityLabel={rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null}
           message={visibleLoadFeedback}
           nodeCount={scene.render.nodes.length}
         />

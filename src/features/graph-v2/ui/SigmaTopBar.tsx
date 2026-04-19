@@ -68,6 +68,7 @@ export const SigmaTopBar = memo(function SigmaTopBar({
           <BrandLogo
             className="block"
             imageClassName="h-10 w-auto object-contain"
+            priority
           />
         </Link>
         <span style={{ marginLeft: 8, color: 'var(--sg-fg-faint)' }}>

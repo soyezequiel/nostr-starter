@@ -1,5 +1,6 @@
 import Sigma from 'sigma'
 
+import { hasRenderableSigmaContainer } from '@/features/graph-v2/renderer/containerDimensions'
 import type {
   GraphInteractionCallbacks,
   GraphSceneSnapshot,
@@ -92,8 +93,25 @@ const resolveZoomOutNodeScale = (cameraRatio: number) =>
     1,
   )
 
+const isControlModifierPressed = (
+  event: { original?: MouseEvent | TouchEvent } | null | undefined,
+) =>
+  Boolean(
+    event?.original &&
+      'ctrlKey' in event.original &&
+      event.original.ctrlKey,
+  )
+
 export class SigmaRendererAdapter implements RendererAdapter {
   private sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes> | null = null
+
+  private container: HTMLElement | null = null
+
+  private resizeObserver: ResizeObserver | null = null
+
+  private pendingContainerRefresh = false
+
+  private pendingContainerRefreshFrame: number | null = null
 
   private positionLedger: NodePositionLedger | null = null
 
@@ -116,6 +134,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private suppressedStageClickUntil = 0
 
   private draggedNodePubkey: string | null = null
+
+  private shouldPinDraggedNodeOnRelease = false
 
   private pendingDragFrame: number | null = null
 
@@ -174,6 +194,56 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private avatarRuntimeOptions: AvatarRuntimeOptions =
     DEFAULT_AVATAR_RUNTIME_OPTIONS
+
+  private readonly flushContainerRefresh = () => {
+    this.pendingContainerRefreshFrame = null
+
+    if (!this.sigma || !hasRenderableSigmaContainer(this.container)) {
+      return
+    }
+
+    this.pendingContainerRefresh = false
+    this.sigma.refresh()
+  }
+
+  private scheduleContainerRefresh() {
+    if (this.pendingContainerRefreshFrame !== null) {
+      return
+    }
+
+    this.pendingContainerRefreshFrame = requestAnimationFrame(
+      this.flushContainerRefresh,
+    )
+  }
+
+  private safeRefresh() {
+    if (!this.sigma) {
+      return
+    }
+
+    if (!hasRenderableSigmaContainer(this.container)) {
+      this.pendingContainerRefresh = true
+      return
+    }
+
+    this.pendingContainerRefresh = false
+    this.sigma.refresh()
+  }
+
+  private observeContainer(container: HTMLElement) {
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    this.resizeObserver = new ResizeObserver(() => {
+      if (!this.sigma || !hasRenderableSigmaContainer(container)) {
+        return
+      }
+
+      this.scheduleContainerRefresh()
+    })
+    this.resizeObserver.observe(container)
+  }
 
   private readonly handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') {
@@ -342,6 +412,26 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  public setNodePinned(pubkey: string, pinned: boolean) {
+    const position =
+      this.renderStore?.getNodePosition(pubkey) ??
+      this.physicsStore?.getNodePosition(pubkey)
+
+    if (!position) {
+      this.physicsStore?.setNodeFixed(pubkey, pinned)
+      this.forceRuntime?.reheat()
+      this.ensurePhysicsPositionBridge()
+      return
+    }
+
+    this.renderStore?.setNodePosition(pubkey, position.x, position.y)
+    this.physicsStore?.setNodePosition(pubkey, position.x, position.y, pinned)
+    this.nodeHitTester?.markDirty()
+    this.forceRuntime?.reheat()
+    this.safeRefresh()
+    this.ensurePhysicsPositionBridge()
+  }
+
   public recenterCamera() {
     this.sigma?.getCamera().animatedReset({ duration: 250 }).catch(() => {})
   }
@@ -491,7 +581,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.hideAvatarsOnMove = enabled
-    this.sigma?.refresh()
+    this.safeRefresh()
   }
 
   public setAvatarRuntimeOptions(options: AvatarRuntimeOptions) {
@@ -526,7 +616,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.avatarRuntimeOptions = nextOptions
-    this.sigma?.refresh()
+    this.safeRefresh()
   }
 
   public getAvatarPerfSnapshot(): PerfBudgetSnapshot | null {
@@ -600,7 +690,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
     this.syncPhysicsPositionsToRender()
     this.lastDragFlushTimestamp = now
-    this.sigma.refresh()
+    this.safeRefresh()
     this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
   }
 
@@ -630,6 +720,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.draggedNodePubkey = pubkey
+    this.shouldPinDraggedNodeOnRelease = false
     this.markMotion()
     this.dragHopDistances = buildDragHopDistances(
       this.physicsStore.getGraph(),
@@ -655,7 +746,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.callbacks.onNodeDragStart(pubkey)
   }
 
-  private readonly releaseDrag = () => {
+  private readonly releaseDrag = (options?: { pinOnRelease?: boolean }) => {
     this.pendingDragGesture = null
 
     if (!this.draggedNodePubkey || !this.renderStore || !this.physicsStore || !this.callbacks) {
@@ -665,6 +756,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
       this.lastDragGraphPosition = null
+      this.shouldPinDraggedNodeOnRelease = false
       return
     }
 
@@ -672,6 +764,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const draggedNodePubkey = this.draggedNodePubkey
     const position = this.renderStore.getNodePosition(draggedNodePubkey)
+    const shouldPinOnRelease =
+      options?.pinOnRelease ?? this.shouldPinDraggedNodeOnRelease
 
     // Drain residual spring velocities before resuming FA2 so small clusters
     // don't get kicked out by leftover momentum from the influence engine.
@@ -682,13 +776,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
     releaseDraggedNode(
       this.physicsStore,
       draggedNodePubkey,
-      this.scene?.render.pins.pubkeys ?? [],
+      shouldPinOnRelease
+        ? [draggedNodePubkey]
+        : (this.scene?.render.pins.pubkeys ?? []),
     )
     this.dragHopDistances = new Map()
     this.dragInfluenceState = null
     this.lastDragGraphPosition = null
 
     this.draggedNodePubkey = null
+    this.shouldPinDraggedNodeOnRelease = false
     this.lastDragFlushTimestamp = null
     this.suppressedClick = createSuppressedNodeClick(draggedNodePubkey)
     this.suppressedStageClickUntil =
@@ -700,13 +797,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.ensurePhysicsPositionBridge()
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)
-    this.sigma?.refresh()
+    this.safeRefresh()
 
     // Recalculate hover based on actual pointer position after release.
     this.recalculateHoverAfterDrag()
 
     if (position) {
-      this.callbacks.onNodeDragEnd(draggedNodePubkey, position)
+      this.callbacks.onNodeDragEnd(draggedNodePubkey, position, {
+        pinNode: shouldPinOnRelease,
+      })
     }
   }
 
@@ -717,6 +816,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
   ) {
     this.callbacks = callbacks
     this.scene = initialScene
+    this.container = container
     this.positionLedger = new NodePositionLedger()
     this.renderStore = new RenderGraphStore(this.positionLedger)
     this.physicsStore = new PhysicsGraphStore(this.positionLedger)
@@ -739,6 +839,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
       defaultNodeColor: '#7dd3a7',
       minCameraRatio: 0.05,
       maxCameraRatio: 6,
+      // Host + safeRefresh prevent intentional renders while collapsed.
+      // This covers Sigma's own already-queued frames during transient layout.
+      allowInvalidContainer: true,
       zoomingRatio: 1.45,
       zoomDuration: 180,
       inertiaDuration: 220,
@@ -752,6 +855,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     const sigma = this.sigma
+    this.observeContainer(container)
     this.nodeHitTester = installStrictNodeHitTesting(
       sigma,
       this.renderStore.getGraph(),
@@ -838,13 +942,20 @@ export class SigmaRendererAdapter implements RendererAdapter {
       sigma.getCamera().animatedReset({ duration: 320 }).catch(() => {})
     }
 
-    sigma.refresh()
+    this.safeRefresh()
   }
 
   public dispose() {
     this.releaseDrag()
     this.cancelPendingDragFrame()
     this.cancelPhysicsPositionBridge()
+    if (this.pendingContainerRefreshFrame !== null) {
+      cancelAnimationFrame(this.pendingContainerRefreshFrame)
+      this.pendingContainerRefreshFrame = null
+    }
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
+    this.pendingContainerRefresh = false
     window.removeEventListener('keydown', this.handleKeyDown)
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)
@@ -860,6 +971,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.physicsStore = null
     this.callbacks = null
     this.scene = null
+    this.container = null
   }
 
   private initAvatarPipeline(
@@ -883,7 +995,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         cache: this.avatarCache,
         loader: this.avatarLoader,
         onSettled: () => {
-          this.sigma?.refresh()
+          this.safeRefresh()
         },
       })
       this.avatarBudget = new PerfBudget(tier)
@@ -932,7 +1044,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.motionClearTimer = setTimeout(() => {
       this.motionActive = false
       this.motionClearTimer = null
-      this.sigma?.refresh()
+      this.safeRefresh()
     }, this.MOTION_RESUME_MS)
   }
 
@@ -989,6 +1101,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         x: event.x,
         y: event.y,
       }
+      this.shouldPinDraggedNodeOnRelease = isControlModifierPressed(event)
       const pendingDragGesture = this.pendingDragGesture
 
       if (!this.draggedNodePubkey && !pendingDragGesture) {
@@ -1024,12 +1137,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
       )
     })
 
-    sigma.on('upNode', () => {
-      this.releaseDrag()
+    sigma.on('upNode', ({ event }) => {
+      this.releaseDrag({ pinOnRelease: isControlModifierPressed(event) })
     })
 
-    sigma.on('upStage', () => {
-      this.releaseDrag()
+    sigma.on('upStage', ({ event }) => {
+      this.releaseDrag({ pinOnRelease: isControlModifierPressed(event) })
     })
 
     sigma.getCamera().on('updated', (viewport) => {
@@ -1146,7 +1259,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
     }
 
-    this.sigma?.refresh()
+    this.safeRefresh()
   }
 
   // After releasing a drag, check what node (if any) sits under the last
@@ -1236,7 +1349,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const changed = this.syncPhysicsPositionsToRender()
     if (changed) {
       this.markMotion()
-      this.sigma?.refresh()
+      this.safeRefresh()
     }
 
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(

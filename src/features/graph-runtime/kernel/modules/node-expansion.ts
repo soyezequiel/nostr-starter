@@ -743,6 +743,10 @@ export function createNodeExpansionModule(
     state.upsertLinks(newLinks)
     state.upsertInboundLinks(newInboundLinks)
     state.markNodeExpanded(pubkey)
+    if (ctx.store.getState().selectedNodePubkey === pubkey) {
+      ctx.store.getState().setSelectedNodePubkey(null)
+      ctx.store.getState().setOpenPanel('overview')
+    }
     collaborators.analysis.schedule()
 
     const loadSequence = collaborators.rootLoader.getLoadSequence()

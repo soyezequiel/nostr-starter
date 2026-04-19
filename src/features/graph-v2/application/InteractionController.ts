@@ -26,8 +26,10 @@ export class GraphInteractionController {
       onNodeDragMove: () => {
         // Drag is handled inside the renderer/runtime projection.
       },
-      onNodeDragEnd: () => {
-        // Drag is handled inside the renderer/runtime projection.
+      onNodeDragEnd: (pubkey, _position, options) => {
+        if (options?.pinNode) {
+          this.bridge.pinNode(pubkey)
+        }
       },
       onViewportChange: (viewport) => {
         this.lastViewport = viewport
