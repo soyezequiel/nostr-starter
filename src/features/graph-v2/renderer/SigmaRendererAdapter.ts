@@ -1002,9 +1002,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.suppressedStageClickUntil =
       Date.now() + STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS
 
-    // Resume FA2 from current positions without reheat so the layout
-    // continues smoothly rather than restarting and kicking clusters.
-    this.forceRuntime?.resume()
+    // Dragging edits graph coordinates while FA2 is suspended, so the last
+    // convergence signal is no longer valid even if topology/settings stayed
+    // the same. Resume from the current coordinates and let FA2 settle again.
+    this.forceRuntime?.resume({ invalidateConvergence: true })
     this.ensurePhysicsPositionBridge()
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)

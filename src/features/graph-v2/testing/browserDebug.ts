@@ -56,6 +56,8 @@ export interface DebugPhysicsDiagnostics {
   presetVersion: string
   graphOrder: number
   graphSize: number
+  maxDegree: number
+  hubRatio: number
   settingsKey: string | null
   layoutEligible: boolean
   running: boolean

@@ -10,6 +10,7 @@ import {
   createForceAtlasPhysicsTuning,
   resolveForceAtlasDenseFactor,
   resolveForceAtlasSettings,
+  type ConvergingLayoutOptions,
   type ForceAtlasLayoutController,
 } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import type {
@@ -91,18 +92,28 @@ class LayoutStub implements ForceAtlasLayoutController {
 
 test('ForceAtlas settings scale repulsion and damping for dense sigma graphs', () => {
   const smallSettings = resolveForceAtlasSettings(80)
+  const hubSizedSettings = resolveForceAtlasSettings(500)
   const denseSettings = resolveForceAtlasSettings(2200)
+  const denseHubSettings = resolveForceAtlasSettings(2200, undefined, {
+    maxDegree: 2100,
+  })
 
   assert.equal(resolveForceAtlasDenseFactor(80), 0)
   assert.equal(resolveForceAtlasDenseFactor(2200), 1)
   assert.equal(smallSettings.scalingRatio, 11.25)
-  assert.equal(smallSettings.gravity, 0.35)
+  assert.equal(smallSettings.gravity, 0.2)
   assert.equal(Math.round((smallSettings.slowDown ?? 0) * 10) / 10, 4.9)
   assert.equal(smallSettings.edgeWeightInfluence, 1.25)
   assert.equal(denseSettings.scalingRatio, 22.5)
-  assert.equal(denseSettings.gravity, 0.55)
+  assert.equal(denseSettings.gravity, 0.32)
   assert.equal(Math.round((denseSettings.slowDown ?? 0) * 10) / 10, 7.7)
   assert.equal(denseSettings.edgeWeightInfluence, 0.65)
+  assert.equal(smallSettings.strongGravityMode, true)
+  assert.equal(denseSettings.strongGravityMode, true)
+  assert.equal(smallSettings.barnesHutOptimize, false)
+  assert.equal(hubSizedSettings.barnesHutOptimize, false)
+  assert.equal(denseSettings.barnesHutOptimize, true)
+  assert.equal(denseHubSettings.barnesHutOptimize, false)
   assert.ok(
     (denseSettings.scalingRatio ?? 0) > (smallSettings.scalingRatio ?? 0),
     'expected dense graphs to use stronger magnetic repulsion',
@@ -120,8 +131,8 @@ test('ForceAtlas settings scale repulsion and damping for dense sigma graphs', (
       (smallSettings.edgeWeightInfluence ?? 0),
     'expected dense graphs to soften weighted link attraction',
   )
-  assert.equal(smallSettings.adjustSizes, true)
-  assert.equal(denseSettings.adjustSizes, true)
+  assert.equal(smallSettings.adjustSizes, false)
+  assert.equal(denseSettings.adjustSizes, false)
 })
 
 test('ForceAtlas tuning maps sliders to settings multipliers', () => {
@@ -134,7 +145,7 @@ test('ForceAtlas tuning maps sliders to settings multipliers', () => {
     damping: 1.5,
   })
 
-  assert.equal(tunedSettings.gravity, 0.7)
+  assert.equal(tunedSettings.gravity, 0.4)
   assert.equal(
     Math.round((tunedSettings.scalingRatio ?? 0) * 100) / 100,
     9.55,
@@ -183,12 +194,14 @@ test('reports ForceAtlas physics diagnostics for the sigma debug probe', () => {
   assert.equal(diagnostics.presetVersion, 'obsidian-v2')
   assert.equal(diagnostics.graphOrder, 3)
   assert.equal(diagnostics.graphSize, 2)
+  assert.equal(diagnostics.maxDegree, 2)
+  assert.equal(diagnostics.hubRatio, 1)
   assert.equal(diagnostics.layoutEligible, true)
   assert.equal(diagnostics.running, true)
   assert.equal(diagnostics.suspended, false)
   assert.deepEqual(diagnostics.tuning, DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   assert.equal(diagnostics.settings.scalingRatio, 11.25)
-  assert.equal(diagnostics.settings.gravity, 0.35)
+  assert.equal(diagnostics.settings.gravity, 0.2)
   assert.ok(diagnostics.settingsKey?.startsWith('obsidian-v2::'))
   assert.deepEqual(diagnostics.bounds, {
     minX: 0,
@@ -288,7 +301,7 @@ test('setPhysicsTuning recreates a running layout with the tuned settings', () =
   assert.equal(layouts[1]?.startCalls, 1)
   assert.equal(settingsHistory[0]?.scalingRatio, 11.25)
   assert.equal(Math.round((settingsHistory[1]?.scalingRatio ?? 0) * 100) / 100, 9.55)
-  assert.equal(settingsHistory[1]?.gravity, 0.7)
+  assert.equal(settingsHistory[1]?.gravity, 0.4)
   assert.equal(settingsHistory[1]?.slowDown, 21)
 })
 
@@ -357,6 +370,66 @@ test('sync restarts an existing stopped layout when physics is enabled', () => {
 
   assert.equal(layouts.length, 1)
   assert.equal(layouts[0]?.startCalls, 2)
+})
+
+test('sync does not restart a settled layout on non-structural updates', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  let markSettled: (() => void) | undefined
+  const runtime = new ForceAtlasRuntime(graph, (
+    _graph,
+    _settings,
+    options: ConvergingLayoutOptions,
+  ) => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    markSettled = options.onSettled
+    return layout
+  })
+  const scene = createScene(3, 2)
+
+  runtime.sync(scene)
+  layouts[0]!.running = false
+  markSettled?.()
+
+  runtime.sync({
+    ...scene,
+    diagnostics: {
+      ...scene.diagnostics,
+      topologySignature: 'hover-or-selection-only',
+    },
+  })
+
+  assert.equal(layouts.length, 1)
+  assert.equal(layouts[0]?.startCalls, 1)
+})
+
+test('resume can invalidate convergence after drag coordinate edits', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  let markSettled: (() => void) | undefined
+  const runtime = new ForceAtlasRuntime(graph, (
+    _graph,
+    _settings,
+    options: ConvergingLayoutOptions,
+  ) => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    markSettled = options.onSettled
+    return layout
+  })
+
+  runtime.sync(createScene(3, 2))
+  layouts[0]!.running = false
+  markSettled?.()
+
+  runtime.suspend()
+  graph.mergeNodeAttributes('node-1', { x: 100, y: 100 })
+  runtime.resume({ invalidateConvergence: true })
+
+  assert.equal(layouts.length, 1)
+  assert.equal(layouts[0]?.startCalls, 2)
+  assert.equal(layouts[0]?.killCalls, 0)
 })
 
 test('sync recreates the layout when node fixed flags change', () => {
