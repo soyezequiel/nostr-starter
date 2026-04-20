@@ -99,6 +99,11 @@ import {
   readAvatarRuntimeDebugLocationSnapshot,
 } from '@/features/graph-v2/ui/avatarRuntimeDebug'
 import {
+  buildVisibleProfileWarmupDebugSnapshot,
+  selectVisibleProfileWarmupPubkeys,
+  type VisibleProfileWarmupDebugSnapshot,
+} from '@/features/graph-v2/ui/visibleProfileWarmup'
+import {
   buildSocialCaptureDebugFilename,
   buildSocialCaptureDebugPayload,
   isSocialCaptureDebugDownloadEnabled,
@@ -167,6 +172,10 @@ const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
 const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
 const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
 const MAX_SAVED_ROOT_REFRESHES = 6
+const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
+const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
+const VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS = 1500
+const VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS = 250
 
 const selectSavedRootState = (state: AppStore) => ({
   savedRoots: state.savedRoots,
@@ -903,6 +912,10 @@ export default function GraphAppV2() {
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
   const [showZaps, setShowZaps] = useState(true)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
+  const visibleProfileWarmupAttemptedAtRef = useRef(new Map<string, number>())
+  const visibleProfileWarmupInflightRef = useRef(new Set<string>())
+  const visibleProfileWarmupDebugRef =
+    useRef<VisibleProfileWarmupDebugSnapshot | null>(null)
   const [zapFeedback, setZapFeedback] = useState<string | null>(null)
   const {
     savedRoots,
@@ -1044,6 +1057,104 @@ export default function GraphAppV2() {
     [deferredScene, personSearchMatches],
   )
   const detail = useMemo(() => buildNodeDetailProjection(domainState), [domainState])
+
+  useEffect(() => {
+    if (isFixtureMode || !domainState.rootPubkey || deferredScene.render.nodes.length === 0) {
+      return
+    }
+
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const runWarmup = () => {
+      if (cancelled) {
+        return
+      }
+
+      const now = Date.now()
+      const attemptedAtByPubkey = visibleProfileWarmupAttemptedAtRef.current
+      const inflightPubkeys = visibleProfileWarmupInflightRef.current
+      const viewportPubkeys =
+        sigmaHostRef.current?.getVisibleNodePubkeys() ?? []
+      const scenePubkeys = deferredScene.render.nodes.map((node) => node.pubkey)
+      const selection = selectVisibleProfileWarmupPubkeys({
+        viewportPubkeys,
+        scenePubkeys,
+        nodesByPubkey: domainState.nodesByPubkey,
+        attemptedAtByPubkey,
+        inflightPubkeys,
+        now,
+        batchSize: VISIBLE_PROFILE_WARMUP_BATCH_SIZE,
+        cooldownMs: VISIBLE_PROFILE_WARMUP_COOLDOWN_MS,
+      })
+      visibleProfileWarmupDebugRef.current =
+        buildVisibleProfileWarmupDebugSnapshot({
+          viewportPubkeys,
+          scenePubkeys,
+          nodesByPubkey: domainState.nodesByPubkey,
+          attemptedAtByPubkey,
+          inflightPubkeys,
+          now,
+          batchSize: VISIBLE_PROFILE_WARMUP_BATCH_SIZE,
+          cooldownMs: VISIBLE_PROFILE_WARMUP_COOLDOWN_MS,
+        })
+      const pubkeys = selection.pubkeys
+
+      for (const pubkey of pubkeys) {
+        attemptedAtByPubkey.set(pubkey, now)
+        inflightPubkeys.add(pubkey)
+      }
+
+      if (pubkeys.length === 0) {
+        return
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[profile-warmup] visible profile batch', {
+          requested: pubkeys.length,
+          viewportPubkeys: selection.viewportPubkeyCount,
+          scenePubkeys: selection.scenePubkeyCount,
+          eligible: selection.eligibleCount,
+          skipped: selection.skipped,
+          sample: pubkeys.slice(0, 6).map((pubkey) => pubkey.slice(0, 12)),
+        })
+      }
+
+      void bridge
+        .prefetchNodeProfiles(pubkeys)
+        .catch((error) => {
+          console.warn('Visible profile warmup failed:', error)
+        })
+        .finally(() => {
+          for (const pubkey of pubkeys) {
+            inflightPubkeys.delete(pubkey)
+          }
+
+          if (!cancelled) {
+            timeoutId = setTimeout(
+              runWarmup,
+              VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS,
+            )
+          }
+        })
+    }
+
+    timeoutId = setTimeout(runWarmup, VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS)
+
+    return () => {
+      cancelled = true
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [
+    bridge,
+    deferredScene.render.nodes,
+    domainState.nodesByPubkey,
+    domainState.rootPubkey,
+    isFixtureMode,
+  ])
+
   const currentRootNode = domainState.rootPubkey
     ? domainState.nodesByPubkey[domainState.rootPubkey] ?? null
     : null
@@ -1564,10 +1675,24 @@ export default function GraphAppV2() {
     const generatedAt = new Date().toISOString()
     const stamp = generatedAt.replace(/[:.]/g, '-')
     const debugFileName = buildAvatarRuntimeDebugFilename(stamp)
+    const viewportPubkeys = host.getVisibleNodePubkeys()
+    const scenePubkeys = deferredScene.render.nodes.map((node) => node.pubkey)
+    const profileWarmup = buildVisibleProfileWarmupDebugSnapshot({
+      viewportPubkeys,
+      scenePubkeys,
+      nodesByPubkey: domainState.nodesByPubkey,
+      attemptedAtByPubkey: visibleProfileWarmupAttemptedAtRef.current,
+      inflightPubkeys: visibleProfileWarmupInflightRef.current,
+      now: Date.now(),
+      batchSize: VISIBLE_PROFILE_WARMUP_BATCH_SIZE,
+      cooldownMs: VISIBLE_PROFILE_WARMUP_COOLDOWN_MS,
+    })
+    visibleProfileWarmupDebugRef.current = profileWarmup
     const payload = buildAvatarRuntimeDebugPayload({
       generatedAt,
       debugFileName,
       state,
+      profileWarmup,
       browser: readAvatarRuntimeDebugBrowserSnapshot(),
       location: readAvatarRuntimeDebugLocationSnapshot(),
     })
@@ -1586,7 +1711,7 @@ export default function GraphAppV2() {
     setActionFeedback(
       `Debug de avatares descargado. ${drawnImages}/${withPicture} fotos dibujadas; ${loadCandidates}/${visibleNodes} nodos visibles en cola útil.`,
     )
-  }, [])
+  }, [deferredScene.render.nodes, domainState.nodesByPubkey])
 
   const handleShareImage = useCallback(() => {
     if (isSocialCaptureBusy) {

@@ -492,6 +492,7 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
     findPath: nodeDetail.findPath,
     selectNode: nodeDetail.selectNode,
     getNodeDetail: nodeDetail.getNodeDetail,
+    prefetchNodeProfiles: nodeDetail.prefetchNodeProfiles,
     exportSnapshot: exportOrch.exportSnapshot,
     downloadDiscoveredProfilePhotos: exportOrch.downloadDiscoveredProfilePhotos,
     settleBackgroundTasks,

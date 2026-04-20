@@ -7,6 +7,7 @@ import type {
   AvatarLoaderDebugSnapshot,
 } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import type { AvatarBitmap, AvatarUrlKey } from '@/features/graph-v2/renderer/avatar/types'
+import { buildSocialAvatarProxyUrl } from '@/features/graph-v2/renderer/socialAvatarProxy'
 
 const FETCH_TIMEOUT_MS = 8000
 
@@ -19,6 +20,7 @@ export interface AvatarLoaderDeps {
   fetchImpl?: typeof fetch
   createImageBitmapImpl?: typeof createImageBitmap
   now?: () => number
+  proxyOrigin?: string | null
 }
 
 type CircularBitmapSource = ImageBitmap | HTMLImageElement
@@ -94,6 +96,7 @@ export class AvatarLoader {
   private readonly fetchImpl: typeof fetch
   private readonly createImageBitmapImpl: typeof createImageBitmap
   private readonly now: () => number
+  private readonly proxyOrigin: string | null
 
   constructor(deps: AvatarLoaderDeps = {}) {
     this.fetchImpl =
@@ -111,6 +114,7 @@ export class AvatarLoader {
             throw new Error('createImageBitmap is not available')
           }))
     this.now = deps.now ?? (() => Date.now())
+    this.proxyOrigin = deps.proxyOrigin ?? readBrowserOrigin()
   }
 
   public isBlocked(urlKey: AvatarUrlKey): boolean {
@@ -174,32 +178,55 @@ export class AvatarLoader {
     url: string,
     bucket: ImageLodBucket,
     signal: AbortSignal,
-    options: { useImageElementFallback?: boolean } = {},
+    options: {
+      useImageElementFallback?: boolean
+      useProxyFallback?: boolean
+    } = {},
   ): Promise<LoadedAvatar> {
     if (!isSafeAvatarUrl(url)) {
       throw new Error('unsafe_url')
     }
 
     const allowFallback = options.useImageElementFallback !== false
+    const allowProxyFallback = options.useProxyFallback !== false
+    let fetchError: unknown
+
     try {
       return await this.loadViaFetch(url, bucket, signal)
     } catch (err) {
       if (signal.aborted || isAbortError(err)) {
         throw err
       }
-      if (!allowFallback || !hasDocumentImageElement()) {
-        throw err
-      }
+      fetchError = err
+    }
+
+    const proxyUrl = allowProxyFallback
+      ? buildRuntimeAvatarProxyUrl(url, this.proxyOrigin)
+      : null
+    if (proxyUrl) {
       try {
-        return await this.loadViaImageElement(url, bucket, signal)
-      } catch (fallbackErr) {
-        if (signal.aborted || isAbortError(fallbackErr)) {
-          throw fallbackErr
+        return await this.loadViaFetch(proxyUrl, bucket, signal)
+      } catch (err) {
+        if (signal.aborted || isAbortError(err)) {
+          throw err
         }
-        // Preserve the original fetch error reason; the img fallback
-        // would not have found a different outcome for same-origin proxy URLs.
-        throw err
+        fetchError = err
       }
+    }
+
+    if (!allowFallback || !hasDocumentImageElement()) {
+      throw fetchError
+    }
+
+    try {
+      return await this.loadViaImageElement(url, bucket, signal)
+    } catch (fallbackErr) {
+      if (signal.aborted || isAbortError(fallbackErr)) {
+        throw fallbackErr
+      }
+      // Preserve the fetch/proxy error reason where possible; the img element
+      // only reports a generic load failure.
+      throw fetchError
     }
   }
 
@@ -292,6 +319,38 @@ const mergeSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
 
 const isAbortError = (err: unknown) =>
   (err as { name?: string } | null)?.name === 'AbortError'
+
+const readBrowserOrigin = () => {
+  if (typeof globalThis === 'undefined') {
+    return null
+  }
+
+  const location = (globalThis as { location?: Location }).location
+  return location?.origin ?? null
+}
+
+const buildRuntimeAvatarProxyUrl = (
+  sourceUrl: string,
+  origin: string | null,
+) => {
+  if (!origin) {
+    return null
+  }
+
+  try {
+    const parsedSource = new URL(sourceUrl)
+    const parsedOrigin = new URL(origin)
+    if (
+      parsedSource.origin === parsedOrigin.origin &&
+      parsedSource.pathname === '/api/social-avatar'
+    ) {
+      return null
+    }
+    return buildSocialAvatarProxyUrl(sourceUrl, parsedOrigin.origin)
+  } catch {
+    return null
+  }
+}
 
 const loadHtmlImage = (
   url: string,

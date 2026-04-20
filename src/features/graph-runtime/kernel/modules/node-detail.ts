@@ -36,6 +36,7 @@ export function createNodeDetailModule(
     string,
     Promise<NodeDetailProfile | null>
   >()
+  const activeNodeProfilePrefetchPubkeys = new Set<string>()
 
   async function findPath(
     sourcePubkey: string,
@@ -98,6 +99,53 @@ export function createNodeDetailModule(
     return queueNodeDetailRequest(pubkey)
   }
 
+  async function prefetchNodeProfiles(pubkeys: string[]): Promise<string[]> {
+    const state = ctx.store.getState()
+    const rootPubkeyAtStart = state.rootNodePubkey
+    const targets: string[] = []
+
+    for (const pubkey of Array.from(new Set(pubkeys.filter(Boolean)))) {
+      const node = state.nodes[pubkey]
+      if (!node || !shouldHydrateNodeProfile(node)) {
+        continue
+      }
+      if (
+        activeNodeProfilePrefetchPubkeys.has(pubkey) ||
+        activeNodeDetailRequests.has(pubkey)
+      ) {
+        continue
+      }
+
+      activeNodeProfilePrefetchPubkeys.add(pubkey)
+      targets.push(pubkey)
+    }
+
+    if (targets.length === 0) {
+      return []
+    }
+
+    const relayUrls =
+      state.relayUrls.length > 0
+        ? state.relayUrls.slice()
+        : ctx.defaultRelayUrls.slice()
+
+    try {
+      await collaborators.profileHydration.hydrateNodeProfiles(
+        targets,
+        relayUrls,
+        () => ctx.store.getState().rootNodePubkey !== rootPubkeyAtStart,
+        {
+          persistProfileEvent: collaborators.persistence.persistProfileEvent,
+        },
+      )
+      return targets
+    } finally {
+      for (const pubkey of targets) {
+        activeNodeProfilePrefetchPubkeys.delete(pubkey)
+      }
+    }
+  }
+
   function queueNodeDetailRequest(pubkey: string): Promise<NodeDetailProfile | null> {
     const activeRequest = activeNodeDetailRequests.get(pubkey)
     if (activeRequest) {
@@ -121,10 +169,7 @@ export function createNodeDetailModule(
       return null
     }
 
-    if (
-      existingNode.profileState === 'ready' &&
-      hasUsableNodeProfile(existingNode)
-    ) {
+    if (!shouldHydrateNodeProfile(existingNode)) {
       return buildNodeProfileFromNode(existingNode)
     }
 
@@ -320,11 +365,21 @@ export function createNodeDetailModule(
     findPath,
     selectNode,
     getNodeDetail,
+    prefetchNodeProfiles,
     getActivePreviewRequest,
   }
 }
 
 export type NodeDetailModule = ReturnType<typeof createNodeDetailModule>
+
+const shouldHydrateNodeProfile = (node: {
+  profileState?: 'idle' | 'loading' | 'ready' | 'missing'
+  label?: string | null
+  picture?: string | null
+  about?: string | null
+  nip05?: string | null
+  lud16?: string | null
+}) => node.profileState !== 'ready' || !hasUsableNodeProfile(node)
 
 const hasUsableNodeProfile = (node: {
   label?: string | null

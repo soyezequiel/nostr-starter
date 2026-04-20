@@ -97,6 +97,7 @@ export interface RootLoader {
   ) => Promise<FindPathResult>
   selectNode: (pubkey: string | null) => SelectNodeResult
   getNodeDetail: (pubkey: string) => Promise<NodeDetailProfile | null>
+  prefetchNodeProfiles: (pubkeys: string[]) => Promise<string[]>
 }
 
 export type { AppKernelDependencies }

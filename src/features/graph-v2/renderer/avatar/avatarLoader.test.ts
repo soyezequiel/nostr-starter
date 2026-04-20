@@ -219,3 +219,80 @@ test('AvatarLoader.load falls back to img when fetch times out', async () => {
     })
   }
 })
+
+test('AvatarLoader.load falls back to the same-origin proxy when direct browser loading fails', async () => {
+  const originalDocument = globalThis.document
+  const originalImageBitmap = globalThis.ImageBitmap
+  const fetchUrls: string[] = []
+
+  class MockImageBitmap {
+    close() {}
+  }
+
+  Object.defineProperty(globalThis, 'ImageBitmap', {
+    configurable: true,
+    value: MockImageBitmap,
+  })
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          save: () => undefined,
+          beginPath: () => undefined,
+          arc: () => undefined,
+          closePath: () => undefined,
+          clip: () => undefined,
+          drawImage: () => undefined,
+          restore: () => undefined,
+        }),
+      }),
+    },
+  })
+
+  try {
+    const loader = new AvatarLoader({
+      proxyOrigin: 'http://localhost:3000',
+      fetchImpl: (async (input: RequestInfo | URL) => {
+        const url = String(input)
+        fetchUrls.push(url)
+        if (fetchUrls.length === 1) {
+          throw new TypeError('Failed to fetch')
+        }
+        return new Response(new Blob(['png'], { type: 'image/png' }), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        })
+      }) as unknown as typeof fetch,
+      createImageBitmapImpl: (async () =>
+        new MockImageBitmap()) as unknown as typeof createImageBitmap,
+    })
+
+    const loaded = await loader.load(
+      'https://images.example/avatar.png',
+      64,
+      new AbortController().signal,
+    )
+
+    assert.equal(loaded.bytes, 64 * 64 * 4)
+    assert.equal(fetchUrls.length, 2)
+    const proxyUrl = new URL(fetchUrls[1])
+    assert.equal(proxyUrl.origin, 'http://localhost:3000')
+    assert.equal(proxyUrl.pathname, '/api/social-avatar')
+    assert.equal(
+      proxyUrl.searchParams.get('url'),
+      'https://images.example/avatar.png',
+    )
+  } finally {
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: originalDocument,
+    })
+    Object.defineProperty(globalThis, 'ImageBitmap', {
+      configurable: true,
+      value: originalImageBitmap,
+    })
+  }
+})

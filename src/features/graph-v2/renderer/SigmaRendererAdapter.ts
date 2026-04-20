@@ -926,6 +926,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  public getVisibleNodePubkeys(): string[] {
+    return this.avatarOverlay?.getVisibleNodePubkeys() ?? []
+  }
+
   public async captureSocialGraph(
     options: SocialGraphCaptureOptions = {},
   ): Promise<Blob> {

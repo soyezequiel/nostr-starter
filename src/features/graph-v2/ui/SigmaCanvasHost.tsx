@@ -51,6 +51,7 @@ export interface SigmaCanvasHostHandle {
   subscribeToCameraTicks: (listener: () => void) => () => void
   subscribeToRenderTicks: (listener: () => void) => () => void
   captureSocialGraph: (options?: SocialGraphCaptureOptions) => Promise<Blob>
+  getVisibleNodePubkeys: () => string[]
   getAvatarRuntimeDebugSnapshot: () => AvatarRuntimeStateDebugSnapshot | null
 }
 
@@ -218,6 +219,8 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
         }
         return adapter.captureSocialGraph(options)
       },
+      getVisibleNodePubkeys: () =>
+        adapterRef.current?.getVisibleNodePubkeys() ?? [],
       getAvatarRuntimeDebugSnapshot: () =>
         adapterRef.current?.getAvatarRuntimeDebugSnapshot() ?? null,
     }),

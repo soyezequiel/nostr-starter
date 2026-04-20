@@ -301,6 +301,110 @@ test('getNodeDetail retries profiles marked ready without usable profile fields'
   assert.equal(store.getState().nodes.alice?.profileEventId, 'evt-sleepy')
 })
 
+test('prefetchNodeProfiles hydrates incomplete visible profiles without selecting them', async () => {
+  const store = createStoreForNodeDetail()
+  store.getState().setRelayUrls(['wss://relay.example'])
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: null,
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      keywordHits: 0,
+      discoveredAt: 1,
+      profileState: 'missing',
+      source: 'follow',
+    },
+    {
+      pubkey: 'bob',
+      label: 'Bob',
+      picture: 'https://cdn.example.com/bob.jpg',
+      about: null,
+      nip05: null,
+      lud16: null,
+      keywordHits: 0,
+      discoveredAt: 2,
+      profileState: 'ready',
+      source: 'follow',
+    },
+  ])
+
+  const hydrateCalls: Array<{ pubkeys: string[]; relayUrls: string[] }> = []
+  const nodeDetail = createNodeDetailModule(
+    {
+      store,
+      repositories: {
+        profiles: {
+          get: async () => null,
+        },
+      },
+      eventsWorker: {
+        invoke: async () => {
+          throw new Error('events worker should not be used in this test')
+        },
+      },
+      graphWorker: {
+        invoke: async () => {
+          throw new Error('graph worker should not be used in this test')
+        },
+        dispose: () => {},
+      },
+      createRelayAdapter: () => ({
+        subscribe: () => ({
+          subscribe: () => () => {},
+        }),
+        count: async () => [],
+        getRelayHealth: () => ({}),
+        subscribeToRelayHealth: () => () => {},
+        close: () => {},
+      }),
+      defaultRelayUrls: ['wss://relay.example'],
+      now: () => 1_000,
+      emitter: createKernelEventEmitter(),
+    },
+    {
+      persistence: {
+        persistContactListEvent: async () => {},
+        persistProfileEvent: async () => {},
+      },
+      profileHydration: {
+        hydrateNodeProfiles: async (pubkeys: string[], relayUrls: string[]) => {
+          hydrateCalls.push({ pubkeys, relayUrls })
+          const existingNode = store.getState().nodes.alice
+          store.getState().upsertNodes([
+            {
+              ...existingNode,
+              label: 'Alice',
+              picture: 'https://cdn.example.com/alice.jpg',
+              about: 'Alice bio',
+              nip05: 'alice@example.com',
+              lud16: null,
+              profileEventId: 'evt-alice',
+              profileFetchedAt: 123,
+              profileSource: 'relay',
+              profileState: 'ready',
+            },
+          ])
+        },
+        syncNodeProfile: () => {},
+        markNodeProfileMissing: () => {},
+      },
+    },
+  )
+
+  const requestedPubkeys = await nodeDetail.prefetchNodeProfiles(['alice', 'bob'])
+
+  assert.deepEqual(requestedPubkeys, ['alice'])
+  assert.deepEqual(hydrateCalls, [
+    { pubkeys: ['alice'], relayUrls: ['wss://relay.example'] },
+  ])
+  assert.equal(store.getState().selectedNodePubkey, null)
+  assert.equal(store.getState().openPanel, 'overview')
+  assert.equal(store.getState().nodes.alice?.label, 'Alice')
+})
+
 test('selectNode prefetches node detail metadata for the identity panel', async () => {
   const store = createStoreForNodeDetail()
   store.getState().setRelayUrls(['wss://relay.example'])

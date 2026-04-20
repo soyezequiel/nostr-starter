@@ -102,6 +102,10 @@ export class LegacyKernelBridge {
     return this.runtime.getNodeDetail(pubkey)
   }
 
+  public async prefetchNodeProfiles(pubkeys: string[]) {
+    return this.runtime.prefetchNodeProfiles(pubkeys)
+  }
+
   public togglePinnedNode(pubkey: string) {
     const state = this.store.getState()
 

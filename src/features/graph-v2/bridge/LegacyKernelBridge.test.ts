@@ -44,6 +44,7 @@ const createRuntimeStub = () => ({
     selectedPubkey: null,
   }),
   getNodeDetail: async () => null,
+  prefetchNodeProfiles: async () => [],
 })
 
 test('mirrors the paired store state into the canonical domain store', () => {

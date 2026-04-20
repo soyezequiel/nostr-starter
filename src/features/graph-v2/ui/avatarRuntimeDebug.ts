@@ -1,4 +1,5 @@
 import type { AvatarRuntimeStateDebugSnapshot } from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import type { VisibleProfileWarmupDebugSnapshot } from '@/features/graph-v2/ui/visibleProfileWarmup'
 
 export interface AvatarRuntimeDebugBrowserSnapshot {
   userAgent: string
@@ -19,6 +20,7 @@ export interface AvatarRuntimeDebugPayloadInput {
   generatedAt: string
   debugFileName: string
   state: AvatarRuntimeStateDebugSnapshot
+  profileWarmup?: VisibleProfileWarmupDebugSnapshot | null
   browser?: AvatarRuntimeDebugBrowserSnapshot
   location?: AvatarRuntimeDebugLocationSnapshot
 }
@@ -34,6 +36,7 @@ export const buildAvatarRuntimeDebugPayload = ({
   generatedAt,
   debugFileName,
   state,
+  profileWarmup,
   browser,
   location,
 }: AvatarRuntimeDebugPayloadInput) => {
@@ -117,6 +120,7 @@ export const buildAvatarRuntimeDebugPayload = ({
       cacheFailures: failedReasons,
       blockedReasons,
     },
+    profileWarmup: profileWarmup ?? null,
     runtime: {
       options: state.runtimeOptions,
       perfBudget: state.perfBudget,

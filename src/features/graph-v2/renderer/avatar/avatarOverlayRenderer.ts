@@ -388,6 +388,7 @@ export class AvatarOverlayRenderer {
   private readonly lastMotionByNode = new Map<string, AvatarNodeMotionSample>()
   private lastFrameTs = 0
   private lastCameraSignature: string | null = null
+  private lastVisibleNodePubkeys: string[] = []
   private lastDebugSnapshot: AvatarOverlayDebugSnapshot | null = null
   private readonly boundAfterRender: () => void
   private disposed = false
@@ -417,6 +418,10 @@ export class AvatarOverlayRenderer {
     return this.lastDebugSnapshot
   }
 
+  public getVisibleNodePubkeys(): string[] {
+    return this.lastVisibleNodePubkeys.slice()
+  }
+
   private onAfterRender() {
     if (this.disposed) {
       return
@@ -434,6 +439,7 @@ export class AvatarOverlayRenderer {
     }
     const ctx = this.getOverlayContext()
     if (!ctx) {
+      this.lastVisibleNodePubkeys = []
       this.lastDebugSnapshot = null
       return
     }
@@ -580,6 +586,7 @@ export class AvatarOverlayRenderer {
         monogramCanvas: this.cache.getMonogram(pubkey, monogramInput),
       })
     })
+    this.lastVisibleNodePubkeys = Array.from(seenNodes)
 
     this.drawFocusAuras(ctx, focusAuraItems)
     if (!budget.drawAvatars) {
