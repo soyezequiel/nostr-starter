@@ -1,6 +1,11 @@
 ﻿import type { Filter } from 'nostr-tools'
 
 import type { GraphNode } from '@/features/graph-runtime/app/store'
+import {
+  getAccountTraceConfig,
+  isAccountTraceRoot,
+  traceAccountFlow,
+} from '@/features/graph-runtime/debug/accountTrace'
 import type { KernelContext, RelayAdapterInstance } from '@/features/graph-runtime/kernel/modules/context'
 import {
   collectRelayEvents,
@@ -158,12 +163,51 @@ export function createFollowerDiscoveryModule(
     inboundFollowerPubkeys: readonly string[],
     isStale: () => boolean,
   ): string[] {
+    const debugEnabled =
+      typeof process !== 'undefined' &&
+      process.env.NEXT_PUBLIC_GRAPH_V2_DEBUG === '1'
+    const traceConfig = getAccountTraceConfig()
+    const traceThisRoot = isAccountTraceRoot(rootPubkey)
+
     if (isStale()) {
+      if (debugEnabled) {
+        console.info(
+          '[graph-v2:debug] mergeProgressiveInboundFollowers: stale',
+          { rootPubkey, incomingCount: inboundFollowerPubkeys.length },
+        )
+      }
+      if (traceThisRoot && traceConfig) {
+        traceAccountFlow('mergeProgressiveInboundFollowers.stale', {
+          incomingCount: inboundFollowerPubkeys.length,
+          incomingHasTraceTarget: inboundFollowerPubkeys.includes(
+            traceConfig.targetPubkey,
+          ),
+        })
+      }
       return []
     }
 
     const state = ctx.store.getState()
     if (state.rootNodePubkey !== rootPubkey || !state.nodes[rootPubkey]) {
+      if (debugEnabled) {
+        console.info(
+          '[graph-v2:debug] mergeProgressiveInboundFollowers: root mismatch',
+          {
+            rootPubkey,
+            stateRootNodePubkey: state.rootNodePubkey,
+            hasRootNode: Boolean(state.nodes[rootPubkey]),
+          },
+        )
+      }
+      if (traceThisRoot && traceConfig) {
+        traceAccountFlow('mergeProgressiveInboundFollowers.rootMismatch', {
+          stateRootNodePubkey: state.rootNodePubkey,
+          hasRootNode: Boolean(state.nodes[rootPubkey]),
+          incomingHasTraceTarget: inboundFollowerPubkeys.includes(
+            traceConfig.targetPubkey,
+          ),
+        })
+      }
       return []
     }
 
@@ -195,6 +239,43 @@ export function createFollowerDiscoveryModule(
       ),
     )
 
+    if (debugEnabled) {
+      console.info(
+        '[graph-v2:debug] mergeProgressiveInboundFollowers: upsert summary',
+        {
+          rootPubkey,
+          incomingCount: inboundFollowerPubkeys.length,
+          incomingPubkeys: inboundFollowerPubkeys,
+          newNodeCount: inboundNewNodes.length,
+          nodeAcceptedCount: nodeResult.acceptedPubkeys.length,
+          nodeRejectedCount: nodeResult.rejectedPubkeys.length,
+          nodeRejectedPubkeys: nodeResult.rejectedPubkeys,
+          acceptedFollowerCount: acceptedFollowerPubkeys.length,
+          capReached: freshState.graphCaps.capReached,
+          maxNodes: freshState.graphCaps.maxNodes,
+          nodeCount: Object.keys(freshState.nodes).length,
+        },
+      )
+    }
+    if (traceThisRoot && traceConfig) {
+      traceAccountFlow('mergeProgressiveInboundFollowers.upsertSummary', {
+        incomingCount: inboundFollowerPubkeys.length,
+        incomingHasTraceTarget: inboundFollowerPubkeys.includes(
+          traceConfig.targetPubkey,
+        ),
+        traceTargetAlreadyHadNode: Boolean(state.nodes[traceConfig.targetPubkey]),
+        traceTargetHasNodeAfterUpsert: Boolean(
+          freshState.nodes[traceConfig.targetPubkey],
+        ),
+        traceTargetAcceptedAsFollower: acceptedFollowerPubkeys.includes(
+          traceConfig.targetPubkey,
+        ),
+        nodeRejectedPubkeys: nodeResult.rejectedPubkeys,
+        capReached: freshState.graphCaps.capReached,
+        nodeCount: Object.keys(freshState.nodes).length,
+      })
+    }
+
     if (acceptedFollowerPubkeys.length === 0) {
       return []
     }
@@ -205,6 +286,31 @@ export function createFollowerDiscoveryModule(
     const followersNeedingLinks = acceptedFollowerPubkeys.filter(
       (pubkey) => !existingInboundFollowers.has(pubkey),
     )
+    const traceTargetNeededLink = traceConfig
+      ? followersNeedingLinks.includes(traceConfig.targetPubkey)
+      : false
+
+    if (debugEnabled) {
+      console.info(
+        '[graph-v2:debug] mergeProgressiveInboundFollowers: links',
+        {
+          rootPubkey,
+          existingInboundFollowerCount: existingInboundFollowers.size,
+          followersNeedingLinksCount: followersNeedingLinks.length,
+          followersNeedingLinks,
+        },
+      )
+    }
+    if (traceThisRoot && traceConfig) {
+      traceAccountFlow('mergeProgressiveInboundFollowers.beforeLinks', {
+        existingInboundFollowerCount: existingInboundFollowers.size,
+        traceTargetHadInboundLinkBefore: existingInboundFollowers.has(
+          traceConfig.targetPubkey,
+        ),
+        traceTargetNeededLink,
+        followersNeedingLinksCount: followersNeedingLinks.length,
+      })
+    }
 
     freshState.upsertInboundLinks(
       followersNeedingLinks.map((pubkey) => ({
@@ -213,6 +319,16 @@ export function createFollowerDiscoveryModule(
         relation: 'inbound' as const,
       })),
     )
+    if (traceThisRoot && traceConfig) {
+      const afterState = ctx.store.getState()
+      traceAccountFlow('mergeProgressiveInboundFollowers.afterLinks', {
+        traceTargetHasInboundLinkAfter: Boolean(
+          afterState.inboundAdjacency[rootPubkey]?.includes(traceConfig.targetPubkey),
+        ),
+        inboundGraphRevision: afterState.inboundGraphRevision,
+        inboundLinkCount: afterState.inboundLinks.length,
+      })
+    }
 
     if (
       nodeResult.acceptedPubkeys.length > 0 ||

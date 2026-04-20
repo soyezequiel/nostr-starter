@@ -4,6 +4,11 @@ import {
   DEFAULT_GRAPH_V2_LAYER,
   isGraphV2Layer,
 } from '@/features/graph-v2/domain/invariants'
+import {
+  getAccountTraceConfig,
+  isAccountTraceRoot,
+  traceAccountFlow,
+} from '@/features/graph-runtime/debug/accountTrace'
 import type {
   CanonicalEdge,
   CanonicalGraphState,
@@ -231,6 +236,37 @@ export class LegacyStoreSnapshotAdapter {
       const canonicalEdge = createCanonicalEdge(edge, 'connections')
       if (!edgesById[canonicalEdge.id]) {
         edgesById[canonicalEdge.id] = canonicalEdge
+      }
+    }
+    if (isAccountTraceRoot(state.rootNodePubkey)) {
+      const traceConfig = getAccountTraceConfig()
+      if (traceConfig) {
+        const rootToTargetFollowId = createCanonicalEdgeId(
+          traceConfig.rootPubkey,
+          traceConfig.targetPubkey,
+          'follow',
+        )
+        const targetToRootInboundId = createCanonicalEdgeId(
+          traceConfig.targetPubkey,
+          traceConfig.rootPubkey,
+          'inbound',
+        )
+        const targetToRootFollowId = createCanonicalEdgeId(
+          traceConfig.targetPubkey,
+          traceConfig.rootPubkey,
+          'follow',
+        )
+        traceAccountFlow('legacySnapshotAdapter.adaptEdges', {
+          linkCount: state.links.length,
+          inboundLinkCount: state.inboundLinks.length,
+          canonicalEdgeCount: Object.keys(edgesById).length,
+          hasTraceTargetNode: Boolean(state.nodes[traceConfig.targetPubkey]),
+          hasRootToTraceTargetFollowEdge: Boolean(edgesById[rootToTargetFollowId]),
+          hasTraceTargetToRootInboundEdge: Boolean(edgesById[targetToRootInboundId]),
+          hasTraceTargetToRootFollowEdge: Boolean(edgesById[targetToRootFollowId]),
+          graphRevision: state.graphRevision,
+          inboundGraphRevision: state.inboundGraphRevision,
+        })
       }
     }
 

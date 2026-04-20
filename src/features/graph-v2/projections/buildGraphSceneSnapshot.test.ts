@@ -222,6 +222,28 @@ test('colors reciprocal follows as mutual connections while keeping idle nodes n
   assert.equal(alice?.color, '#9da8c9')
 })
 
+test('colors root follow plus inbound follower evidence as mutual in the base graph', () => {
+  const state = createState({
+    activeLayer: 'graph',
+  })
+  state.edgesById['alice->root:inbound'] = {
+    id: 'alice->root:inbound',
+    source: 'alice',
+    target: 'root',
+    relation: 'inbound',
+    origin: 'inbound',
+    weight: 1,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const edgesById = Object.fromEntries(
+    scene.render.visibleEdges.map((edge) => [edge.id, edge]),
+  )
+
+  assert.equal(edgesById['root->alice:follow']?.color, '#5fd39d')
+  assert.equal(edgesById['alice->root:inbound']?.color, '#5fd39d')
+})
+
 test('renders expanded nodes with the same base size as the root', () => {
   const state = createState()
   state.nodesByPubkey.alice = {

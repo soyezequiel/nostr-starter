@@ -7,6 +7,11 @@ import type {
   RootLoadState,
   RootVisibleLinkProgress,
 } from '@/features/graph-runtime/app/store'
+import {
+  getAccountTraceConfig,
+  isAccountTraceRoot,
+  traceAccountFlow,
+} from '@/features/graph-runtime/debug/accountTrace'
 import type { RelayDiscoveryStatsRecord } from '@/features/graph-runtime/db/entities'
 import type {
   RelayCountResult,
@@ -22,10 +27,17 @@ import type { KernelContext, RelayAdapterInstance } from '@/features/graph-runti
 import {
   COVERAGE_RECOVERY_MESSAGE,
   MAX_SESSION_RELAYS,
+  NODE_EXPAND_CONNECT_TIMEOUT_MS,
+  NODE_EXPAND_PAGE_TIMEOUT_MS,
+  NODE_EXPAND_RETRY_COUNT,
+  NODE_EXPAND_STRAGGLER_GRACE_MS,
   NODE_EXPAND_INBOUND_QUERY_LIMIT,
+  ROOT_INBOUND_DISCOVERY_MAX_PAGES_PER_RELAY,
+  ROOT_INBOUND_DISCOVERY_RELAY_LIMIT,
   ROOT_LOADING_MESSAGE,
 } from '@/features/graph-runtime/kernel/modules/constants'
 import {
+  collectAdditionalPaginatedInboundFollowerEvents,
   collectInboundFollowerEvidence,
   collectRelayEvents,
   collectTargetedReciprocalFollowerEvidence,
@@ -76,6 +88,108 @@ interface ActiveLoadSession {
 
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
 const INITIAL_ROOT_DISCOVERY_RELAY_COUNT = 4
+
+function summarizeRelayCountResults(countResults: readonly RelayCountResult[]) {
+  const supportedResults = countResults.filter(
+    (result) => result.supported && result.count !== null,
+  )
+  const positiveResults = supportedResults.filter((result) => (result.count ?? 0) > 0)
+  const maxRelayCount = supportedResults.reduce(
+    (maxCount, result) => Math.max(maxCount, result.count ?? 0),
+    0,
+  )
+  const sumRelayCounts = supportedResults.reduce(
+    (sum, result) => sum + (result.count ?? 0),
+    0,
+  )
+
+  return {
+    relayCount: countResults.length,
+    supportedRelayCount: supportedResults.length,
+    positiveRelayCount: positiveResults.length,
+    maxRelayCount,
+    sumRelayCounts,
+    results: [...countResults]
+      .map((result) => ({
+        relayUrl: result.relayUrl,
+        count: result.count,
+        supported: result.supported,
+        elapsedMs: result.elapsedMs,
+        errorMessage: result.errorMessage,
+      }))
+      .sort((left, right) => {
+        const leftCount = left.count ?? -1
+        const rightCount = right.count ?? -1
+        if (leftCount !== rightCount) {
+          return rightCount - leftCount
+        }
+
+        if (left.supported !== right.supported) {
+          return left.supported ? -1 : 1
+        }
+
+        return left.elapsedMs - right.elapsedMs
+      }),
+  }
+}
+
+function summarizeRelayCollectionResult(result: RelayCollectionResult) {
+  const relayEventCounts = new Map<string, number>()
+  const authorPubkeys = new Set<string>()
+  const eventIds = new Set<string>()
+
+  for (const envelope of result.events) {
+    relayEventCounts.set(
+      envelope.relayUrl,
+      (relayEventCounts.get(envelope.relayUrl) ?? 0) + 1,
+    )
+    authorPubkeys.add(envelope.event.pubkey)
+    eventIds.add(envelope.event.id)
+  }
+
+  return {
+    eventCount: result.events.length,
+    uniqueAuthorCount: authorPubkeys.size,
+    uniqueEventIdCount: eventIds.size,
+    duplicateEventIdCount: result.events.length - eventIds.size,
+    errorMessage: result.error?.message ?? null,
+    stats: result.summary
+      ? {
+          acceptedEvents: result.summary.stats.acceptedEvents,
+          duplicateRelayEvents: result.summary.stats.duplicateRelayEvents,
+          rejectedEvents: result.summary.stats.rejectedEvents,
+        }
+      : null,
+    relayEventCounts: Array.from(
+      relayEventCounts,
+      ([relayUrl, eventCount]) => ({
+        relayUrl,
+        eventCount,
+      }),
+    ).sort((left, right) => {
+      if (left.eventCount !== right.eventCount) {
+        return right.eventCount - left.eventCount
+      }
+
+      return left.relayUrl.localeCompare(right.relayUrl)
+    }),
+    relayHealth: result.summary
+      ? Object.values(result.summary.relayHealth)
+          .map((health) => ({
+            url: health.url,
+            status: health.status,
+            attempt: health.attempt,
+            consecutiveFailures: health.consecutiveFailures,
+            lastErrorCode: health.lastErrorCode ?? null,
+            lastNotice: health.lastNotice ?? null,
+            lastCloseReason: health.lastCloseReason ?? null,
+            lastEventMs: health.lastEventMs ?? null,
+            lastEoseMs: health.lastEoseMs ?? null,
+          }))
+          .sort((left, right) => left.url.localeCompare(right.url))
+      : [],
+  }
+}
 
 function createRootCollectionProgress(input: {
   status: RootCollectionProgressStatus
@@ -168,6 +282,8 @@ export function createRootLoaderModule(
     const loadId = loadSequence + 1
     loadSequence = loadId
     const loadStartedAt = ctx.now()
+    const traceConfig = getAccountTraceConfig()
+    const traceThisRoot = isAccountTraceRoot(rootPubkey)
     const storeState = ctx.store.getState()
     const preserveExistingGraph = options.preserveExistingGraph ?? false
     const bootstrapRelayUrls = mergeRelayUrlSets(options.bootstrapRelayUrls)
@@ -194,6 +310,26 @@ export function createRootLoaderModule(
       relayDiscoveryStats,
       bootstrapRelayUrls,
     )
+    if (traceThisRoot && traceConfig) {
+      traceAccountFlow('rootLoader.loadRoot.start', {
+        loadId,
+        preserveExistingGraph,
+        relayUrls,
+        bootstrapRelayUrls,
+        baseRelayUrls,
+        targetPubkey: traceConfig.targetPubkey,
+        initialRootDiscoveryRelayCount: INITIAL_ROOT_DISCOVERY_RELAY_COUNT,
+        inboundQueryLimit: NODE_EXPAND_INBOUND_QUERY_LIMIT,
+        inboundPaginationMaxPagesPerRelay:
+          ROOT_INBOUND_DISCOVERY_MAX_PAGES_PER_RELAY,
+        inboundPaginationRelayLimit: ROOT_INBOUND_DISCOVERY_RELAY_LIMIT,
+        maxSessionRelays: MAX_SESSION_RELAYS,
+        nodeExpandConnectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+        nodeExpandPageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+        nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
+        nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+      })
+    }
     ctx.emitter.emit({ type: 'root-load-started', pubkey: rootPubkey })
     storeState.setRelayUrls(relayUrls)
     if (options.useDefaultRelays) {
@@ -264,6 +400,18 @@ export function createRootLoaderModule(
           relayHints: [],
         }
       : await loadCachedSnapshot(rootPubkey)
+    if (traceThisRoot && traceConfig) {
+      traceAccountFlow('rootLoader.cacheSnapshot', {
+        followCount: cachedSnapshot.followPubkeys.length,
+        inboundFollowerCount: cachedSnapshot.inboundFollowerPubkeys.length,
+        cacheFollowIncludesTraceTarget: cachedSnapshot.followPubkeys.includes(
+          traceConfig.targetPubkey,
+        ),
+        cacheInboundIncludesTraceTarget:
+          cachedSnapshot.inboundFollowerPubkeys.includes(traceConfig.targetPubkey),
+        relayHints: cachedSnapshot.relayHints,
+      })
+    }
     if (isStaleLoad(loadId)) {
       return finalize(rootPubkey, createCancelledResult(relayUrls))
     }
@@ -349,6 +497,11 @@ export function createRootLoaderModule(
         if (isStaleLoad(loadId)) {
           return
         }
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.inboundCountProbe.result', {
+            ...summarizeRelayCountResults(countResults),
+          })
+        }
 
         void ctx.repositories.relayDiscoveryStats
           .recordCountResults(countResults, ctx.now())
@@ -402,6 +555,10 @@ export function createRootLoaderModule(
       let pendingInboundProgressEnvelopes: RelayEventEnvelope[] = []
       const progressivelyHydratedInboundPubkeys = new Set<string>()
       const fastPathHydratedPubkeys = new Set<string>()
+      let targetedReciprocalProgressEventId: string | null = null
+      let progressiveTargetedReciprocalEvidence:
+        | Awaited<ReturnType<typeof collectTargetedReciprocalFollowerEvidence>>
+        | null = null
       let discoveryProgressActive = true
       const publishVisibleLinkProgress = (force = false) => {
         if (isStaleLoad(loadId) || !discoveryProgressActive) {
@@ -474,6 +631,15 @@ export function createRootLoaderModule(
             visibleLinkCount = parsedContactList.followPubkeys.length
             followingTotalCount = parsedContactList.followPubkeys.length
             followingTotalKnown = true
+            if (traceThisRoot && traceConfig) {
+              traceAccountFlow('rootLoader.contactListProgress.parsed', {
+                eventId: latestEnvelope.event.id,
+                relayUrl: latestEnvelope.relayUrl,
+                followCount: parsedContactList.followPubkeys.length,
+                contactListIncludesTraceTarget:
+                  parsedContactList.followPubkeys.includes(traceConfig.targetPubkey),
+              })
+            }
             if (
               applyFastContactListGraph(
                 latestEnvelope,
@@ -532,6 +698,19 @@ export function createRootLoaderModule(
           rootPubkey,
         )
           .then((progressiveEvidence) => {
+            if (traceThisRoot && traceConfig) {
+              traceAccountFlow('rootLoader.inboundProgress.result', {
+                parsedEventCount: latestInboundEvents.length,
+                followerCount: progressiveEvidence.followerPubkeys.length,
+                includesTraceTarget: progressiveEvidence.followerPubkeys.includes(
+                  traceConfig.targetPubkey,
+                ),
+                stale: isStaleLoad(loadId),
+                discoveryProgressActive,
+                parseSequence,
+                currentParseSequence: inboundProgressParseSequence,
+              })
+            }
             if (
               isStaleLoad(loadId) ||
               !discoveryProgressActive ||
@@ -547,7 +726,7 @@ export function createRootLoaderModule(
                 progressiveEvidence.followerPubkeys,
                 () => isStaleLoad(loadId),
               )
-            followersLoadedCount = acceptedFollowerPubkeys.length
+            followersLoadedCount = getCurrentInboundFollowerPubkeys(rootPubkey).length
             const hydrationTargets = acceptedFollowerPubkeys.filter((pubkey) => {
               if (progressivelyHydratedInboundPubkeys.has(pubkey)) {
                 return false
@@ -566,6 +745,134 @@ export function createRootLoaderModule(
           })
           .catch(() => {
             publishVisibleLinkProgress(true)
+          })
+      }
+      const scheduleTargetedReciprocalProgressMerge = (
+        contactListEventId: string,
+        followPubkeys: readonly string[],
+        relayHints: readonly string[],
+      ) => {
+        const candidatePubkeys = Array.from(
+          new Set(
+            followPubkeys.filter(
+              (followPubkey) => followPubkey && followPubkey !== rootPubkey,
+            ),
+          ),
+        )
+
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.targetedProgress.considered', {
+            contactListEventId,
+            candidateCount: candidatePubkeys.length,
+            hasTraceTargetCandidate: candidatePubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            alreadyScheduledForEvent:
+              targetedReciprocalProgressEventId === contactListEventId,
+            isStale: isStaleLoad(loadId),
+          })
+        }
+        if (
+          candidatePubkeys.length === 0 ||
+          targetedReciprocalProgressEventId === contactListEventId ||
+          isStaleLoad(loadId)
+        ) {
+          return
+        }
+
+        targetedReciprocalProgressEventId = contactListEventId
+        const targetedRelayUrls = mergeBoundedRelayUrlSets(
+          MAX_SESSION_RELAYS,
+          relayUrls,
+          relayHints,
+        )
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.targetedProgress.scheduled', {
+            contactListEventId,
+            candidateCount: candidatePubkeys.length,
+            hasTraceTargetCandidate: candidatePubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            targetedRelayUrls,
+          })
+        }
+        const targetedAdapter = ctx.createRelayAdapter({
+          relayUrls: targetedRelayUrls,
+          connectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+          pageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+          retryCount: NODE_EXPAND_RETRY_COUNT,
+          stragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+        })
+
+        void collectTargetedReciprocalFollowerEvidence({
+          adapter: targetedAdapter,
+          eventsWorker: ctx.eventsWorker,
+          followPubkeys: candidatePubkeys,
+          targetPubkey: rootPubkey,
+        })
+          .then((targetedEvidence) => {
+            if (traceThisRoot && traceConfig) {
+              traceAccountFlow('rootLoader.targetedProgress.result', {
+                followerCount: targetedEvidence.followerPubkeys.length,
+                includesTraceTarget: targetedEvidence.followerPubkeys.includes(
+                  traceConfig.targetPubkey,
+                ),
+                partial: targetedEvidence.partial,
+                stale: isStaleLoad(loadId),
+              })
+            }
+            if (
+              isStaleLoad(loadId) ||
+              targetedEvidence.followerPubkeys.length === 0
+            ) {
+              return
+            }
+
+            progressiveTargetedReciprocalEvidence =
+              progressiveTargetedReciprocalEvidence === null
+                ? targetedEvidence
+                : mergeInboundFollowerEvidence(
+                    progressiveTargetedReciprocalEvidence,
+                    targetedEvidence,
+                  )
+
+            const acceptedFollowerPubkeys =
+              followerDiscovery.mergeProgressiveInboundFollowers(
+                rootPubkey,
+                targetedEvidence.followerPubkeys,
+                () => isStaleLoad(loadId),
+              )
+            followersLoadedCount = getCurrentInboundFollowerPubkeys(rootPubkey).length
+            const hydrationTargets = acceptedFollowerPubkeys.filter((pubkey) => {
+              if (progressivelyHydratedInboundPubkeys.has(pubkey)) {
+                return false
+              }
+
+              progressivelyHydratedInboundPubkeys.add(pubkey)
+              return true
+            })
+
+            followerDiscovery.hydrateInboundFollowerProfiles(
+              hydrationTargets,
+              targetedRelayUrls,
+              () => isStaleLoad(loadId),
+            )
+            publishVisibleLinkProgress(true)
+          })
+          .catch((error) => {
+            if (traceThisRoot) {
+              traceAccountFlow('rootLoader.targetedProgress.error', {
+                error,
+              })
+            }
+            console.warn(
+              'Background targeted reciprocal follower evidence failed during root load progress:',
+              error,
+            )
+            publishVisibleLinkProgress(true)
+          })
+          .finally(() => {
+            targetedAdapter.close()
           })
       }
       const applyFastContactListGraph = (
@@ -596,6 +903,22 @@ export function createRootLoaderModule(
           cachedSnapshot.rootProfile?.name ?? cachedSnapshot.rootLabel,
           cachedSnapshot.rootProfile,
         )
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.fastContactListGraph.applied', {
+            eventId: envelope.event.id,
+            relayUrl: envelope.relayUrl,
+            followCount: parsedContactList.followPubkeys.length,
+            contactListIncludesTraceTarget: parsedContactList.followPubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            currentInboundIncludesTraceTarget:
+              currentInboundFollowerPubkeys.includes(traceConfig.targetPubkey),
+            visiblePubkeysIncludesTraceTarget:
+              replacementResult.visiblePubkeys.includes(traceConfig.targetPubkey),
+            discoveredFollowCount: replacementResult.discoveredFollowCount,
+            rejectedPubkeys: replacementResult.rejectedPubkeys,
+          })
+        }
         const restoredExpandedPubkeys = restoreExpandedNeighborhood(
           preservedExpandedNeighborhood,
         )
@@ -656,6 +979,11 @@ export function createRootLoaderModule(
             },
           ),
         })
+        scheduleTargetedReciprocalProgressMerge(
+          envelope.event.id,
+          parsedContactList.followPubkeys,
+          parsedContactList.relayHints,
+        )
 
         return true
       }
@@ -668,7 +996,7 @@ export function createRootLoaderModule(
       const finalRelayUrls = relayUrls.filter(
         (relayUrl) => !initialRelayUrls.includes(relayUrl),
       )
-      const collectRootDiscoveryWave = (
+      const collectRootDiscoveryWave = async (
         waveRelayUrls: string[],
         offsets: {
           contactListEventCount: number
@@ -677,9 +1005,23 @@ export function createRootLoaderModule(
           contactListEventCount: 0,
           inboundCandidateEventCount: 0,
         },
-      ) =>
-        Promise.all([
-          collectRelayEvents(adapter, [
+        options: {
+          adapter?: RelayAdapterInstance
+          enableProgress?: boolean
+        } = {},
+      ) => {
+        const waveAdapter = options.adapter ?? adapter
+        const enableProgress = options.enableProgress ?? true
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.discoveryWave.start', {
+            waveRelayUrls,
+            offsets,
+            inboundQueryLimit: NODE_EXPAND_INBOUND_QUERY_LIMIT,
+          })
+        }
+
+        const [contactListResult, inboundFollowerResult] = await Promise.all([
+          collectRelayEvents(waveAdapter, [
             {
               authors: [rootPubkey],
               kinds: [3],
@@ -687,6 +1029,9 @@ export function createRootLoaderModule(
           ], {
             relayUrls: waveRelayUrls,
             onProgress: (progress) => {
+              if (!enableProgress) {
+                return
+              }
               contactListEventCount =
                 offsets.contactListEventCount + progress.eventCount
               lastRelayUrl = progress.latestEnvelope?.relayUrl ?? lastRelayUrl
@@ -694,7 +1039,7 @@ export function createRootLoaderModule(
               publishVisibleLinkProgress()
             },
           }),
-          collectRelayEvents(adapter, [
+          collectRelayEvents(waveAdapter, [
             {
               kinds: [3],
               '#p': [rootPubkey],
@@ -703,6 +1048,9 @@ export function createRootLoaderModule(
           ], {
             relayUrls: waveRelayUrls,
             onProgress: (progress) => {
+              if (!enableProgress) {
+                return
+              }
               inboundCandidateEventCount =
                 offsets.inboundCandidateEventCount + progress.eventCount
               lastRelayUrl = progress.latestEnvelope?.relayUrl ?? lastRelayUrl
@@ -711,6 +1059,123 @@ export function createRootLoaderModule(
             },
           }),
         ])
+
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.discoveryWave.result', {
+            waveRelayUrls,
+            contactList: summarizeRelayCollectionResult(contactListResult),
+            inboundFollowers: summarizeRelayCollectionResult(
+              inboundFollowerResult,
+            ),
+          })
+        }
+
+        return [contactListResult, inboundFollowerResult] as const
+      }
+      const startRemainingRelayEnrichment = (offsets: {
+        contactListEventCount: number
+        inboundCandidateEventCount: number
+      }) => {
+        if (finalRelayUrls.length === 0) {
+          return
+        }
+
+        const orderedFinalRelayUrls = orderRelayUrlsByCountProbe(
+          finalRelayUrls,
+          inboundCountProbeResults,
+        )
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.remainingRelays.ordered', {
+            finalRelayUrls,
+            orderedFinalRelayUrls,
+            countProbe: summarizeRelayCountResults(inboundCountProbeResults),
+          })
+        }
+
+        const remainingAdapter = ctx.createRelayAdapter({
+          relayUrls: orderedFinalRelayUrls,
+        })
+        void collectRootDiscoveryWave(orderedFinalRelayUrls, offsets, {
+          adapter: remainingAdapter,
+          enableProgress: false,
+        })
+          .then(async ([finalContactListResult, finalInboundFollowerResult]) => {
+            if (traceThisRoot) {
+              traceAccountFlow('rootLoader.remainingRelays.backgroundResult', {
+                contactList: summarizeRelayCollectionResult(finalContactListResult),
+                inboundFollowers: summarizeRelayCollectionResult(
+                  finalInboundFollowerResult,
+                ),
+              })
+            }
+            if (
+              isStaleLoad(loadId) ||
+              finalInboundFollowerResult.events.length === 0
+            ) {
+              return
+            }
+
+            const finalInboundEvidence = await collectInboundFollowerEvidence(
+              ctx.eventsWorker,
+              selectLatestReplaceableEventsByPubkey(
+                finalInboundFollowerResult.events,
+              ),
+              rootPubkey,
+              {
+                onContactListParsed: (envelope, parsed) =>
+                  collaborators.persistence.persistContactListEvent(
+                    envelope,
+                    parsed,
+                  ),
+              },
+            )
+            if (traceThisRoot && traceConfig) {
+              traceAccountFlow(
+                'rootLoader.remainingRelays.backgroundInboundEvidence',
+                {
+                  inboundCandidateEventCount:
+                    finalInboundFollowerResult.events.length,
+                  followerCount: finalInboundEvidence.followerPubkeys.length,
+                  includesTraceTarget:
+                    finalInboundEvidence.followerPubkeys.includes(
+                      traceConfig.targetPubkey,
+                    ),
+                  partial: finalInboundEvidence.partial,
+                },
+              )
+            }
+            if (
+              isStaleLoad(loadId) ||
+              finalInboundEvidence.followerPubkeys.length === 0
+            ) {
+              return
+            }
+
+            const acceptedFollowerPubkeys =
+              followerDiscovery.mergeProgressiveInboundFollowers(
+                rootPubkey,
+                finalInboundEvidence.followerPubkeys,
+                () => isStaleLoad(loadId),
+              )
+            followersLoadedCount = getCurrentInboundFollowerPubkeys(rootPubkey).length
+            followerDiscovery.hydrateInboundFollowerProfiles(
+              acceptedFollowerPubkeys,
+              orderedFinalRelayUrls,
+              () => isStaleLoad(loadId),
+            )
+          })
+          .catch((error) => {
+            if (traceThisRoot) {
+              traceAccountFlow('rootLoader.remainingRelays.backgroundError', {
+                error,
+              })
+            }
+            console.warn('Background remaining relay enrichment failed:', error)
+          })
+          .finally(() => {
+            remainingAdapter.close()
+          })
+      }
       const completeRootDiscovery = async (
         initialContactListResult: RelayCollectionResult,
         initialInboundFollowerResult: RelayCollectionResult,
@@ -721,30 +1186,80 @@ export function createRootLoaderModule(
       ): Promise<LoadRootResult> => {
         const finishLoad = (result: LoadRootResult) =>
           emitCompletion ? finalize(rootPubkey, result) : result
-        let contactListResult = initialContactListResult
+        const contactListResult = initialContactListResult
         let inboundFollowerResult = initialInboundFollowerResult
 
-        if (collectRemainingRelays && finalRelayUrls.length > 0) {
-          const orderedFinalRelayUrls = orderRelayUrlsByCountProbe(
-            finalRelayUrls,
-            inboundCountProbeResults,
-          )
-          ctx.store.getState().setRootLoadState({
-            message: `Grafo inicial cargado. Enriqueciendo followers, perfiles y zaps...`,
+        const orderedPaginationRelayUrls = orderRelayUrlsByCountProbe(
+          relayUrls,
+          inboundCountProbeResults,
+        )
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.paginatedInboundEvidence.beforeStart', {
+            orderedPaginationRelayUrls,
+            seedEventCount: inboundFollowerResult.events.length,
+            seedSummary: summarizeRelayCollectionResult(inboundFollowerResult),
+            countProbe: summarizeRelayCountResults(inboundCountProbeResults),
           })
-          const [finalContactListResult, finalInboundFollowerResult] =
-            await collectRootDiscoveryWave(orderedFinalRelayUrls, {
-              contactListEventCount: contactListResult.events.length,
-              inboundCandidateEventCount: inboundFollowerResult.events.length,
-            })
-          contactListResult = mergeRelayCollectionResults(
-            contactListResult,
-            finalContactListResult,
-          )
+        }
+
+        const paginatedInboundFollowerResult =
+          await collectAdditionalPaginatedInboundFollowerEvents({
+            adapter,
+            countResults: inboundCountProbeResults,
+            isStale: () => isStaleLoad(loadId),
+            onPage: (progress) => {
+              inboundCandidateEventCount =
+                inboundFollowerResult.events.length + progress.totalNewEventCount
+              lastRelayUrl = progress.relayUrl
+              scheduleInboundProgressMerge(progress.newEnvelopes, true)
+              const totalLabel =
+                progress.knownCount === null
+                  ? ''
+                  : ` de ~${progress.knownCount}`
+              ctx.store.getState().setRootLoadState({
+                message: `Paginando followers inbound en ${formatRelayProgressUrl(progress.relayUrl)}: +${progress.newEventCount} eventos nuevos${totalLabel}.`,
+                visibleLinkProgress: buildVisibleLinkProgressSnapshot(
+                  ctx.now(),
+                  'partial',
+                  {
+                    visibleLinkCount: followingLoadedCount,
+                    contactListEventCount: contactListResult.events.length,
+                    inboundCandidateEventCount,
+                    lastRelayUrl,
+                  },
+                ),
+              })
+            },
+            relayUrls: orderedPaginationRelayUrls,
+            seedEnvelopes: inboundFollowerResult.events,
+            targetPubkey: rootPubkey,
+          })
+
+        if (
+          paginatedInboundFollowerResult.events.length > 0 ||
+          paginatedInboundFollowerResult.error !== null
+        ) {
           inboundFollowerResult = mergeRelayCollectionResults(
             inboundFollowerResult,
-            finalInboundFollowerResult,
+            paginatedInboundFollowerResult,
           )
+        }
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.paginatedInboundEvidence.result', {
+            pageCount: paginatedInboundFollowerResult.pageCount,
+            newEventCount: paginatedInboundFollowerResult.events.length,
+            relaySummaries: paginatedInboundFollowerResult.relaySummaries,
+            inboundCandidateFetch: summarizeRelayCollectionResult(
+              inboundFollowerResult,
+            ),
+          })
+        }
+
+        if (collectRemainingRelays) {
+          startRemainingRelayEnrichment({
+            contactListEventCount: contactListResult.events.length,
+            inboundCandidateEventCount: inboundFollowerResult.events.length,
+          })
         }
 
         discoveryProgressActive = false
@@ -780,6 +1295,19 @@ export function createRootLoaderModule(
               collaborators.persistence.persistContactListEvent(envelope, parsed),
           },
         )
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.finalInboundEvidence.result', {
+            inboundCandidateEventCount: inboundFollowerResult.events.length,
+            inboundCandidateFetch: summarizeRelayCollectionResult(
+              inboundFollowerResult,
+            ),
+            followerCount: inboundFollowerEvidence.followerPubkeys.length,
+            includesTraceTarget: inboundFollowerEvidence.followerPubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            partial: inboundFollowerEvidence.partial,
+          })
+        }
         if (inboundFollowerEvidence.followerPubkeys.length > 0) {
           void followerDiscovery.persistInboundFollowerSnapshot(
             rootPubkey,
@@ -864,35 +1392,78 @@ export function createRootLoaderModule(
         )
         followingTotalCount = parsedContactList.followPubkeys.length
         followingTotalKnown = true
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.finalContactList.parsed', {
+            eventId: latestContactListEvent.event.id,
+            relayUrl: latestContactListEvent.relayUrl,
+            followCount: parsedContactList.followPubkeys.length,
+            contactListIncludesTraceTarget: parsedContactList.followPubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+          })
+        }
         if (isStaleLoad(loadId)) {
           return finishLoad(createCancelledResult(relayUrls))
         }
-        let targetedReciprocalFollowerPartial = false
-        try {
-          ctx.store.getState().setRootLoadState({
-            message:
-              'Buscando reciprocidad entre follows del root y followers inbound...',
+        const hasTargetedReciprocalCandidates = parsedContactList.followPubkeys.some(
+          (followPubkey) => followPubkey.length > 0 && followPubkey !== rootPubkey,
+        )
+        const targetedReciprocalFollowerPartial =
+          hasTargetedReciprocalCandidates &&
+          progressiveTargetedReciprocalEvidence === null
+        scheduleTargetedReciprocalProgressMerge(
+          latestContactListEvent.event.id,
+          parsedContactList.followPubkeys,
+          parsedContactList.relayHints,
+        )
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.finalTargetedEvidence.backgroundQueued', {
+            hasTargetedReciprocalCandidates,
+            alreadyHasProgressiveEvidence:
+              progressiveTargetedReciprocalEvidence !== null,
+            partial: targetedReciprocalFollowerPartial,
           })
-          const targetedReciprocalFollowerEvidence =
-            await collectTargetedReciprocalFollowerEvidence({
-              adapter,
-              eventsWorker: ctx.eventsWorker,
-              followPubkeys: parsedContactList.followPubkeys,
-              targetPubkey: rootPubkey,
+        }
+        if (progressiveTargetedReciprocalEvidence !== null) {
+          if (traceThisRoot && traceConfig) {
+            traceAccountFlow('rootLoader.progressiveTargetedEvidence.mergeFinal', {
+              followerCount:
+                progressiveTargetedReciprocalEvidence.followerPubkeys.length,
+              includesTraceTarget:
+                progressiveTargetedReciprocalEvidence.followerPubkeys.includes(
+                  traceConfig.targetPubkey,
+                ),
+              partial: progressiveTargetedReciprocalEvidence.partial,
             })
+          }
           inboundFollowerEvidence = mergeInboundFollowerEvidence(
             inboundFollowerEvidence,
-            targetedReciprocalFollowerEvidence,
-          )
-        } catch (error) {
-          targetedReciprocalFollowerPartial = true
-          console.warn(
-            'Targeted reciprocal follower evidence failed during root load:',
-            error,
+            progressiveTargetedReciprocalEvidence,
           )
         }
-        followersTotalCount = inboundFollowerEvidence.followerPubkeys.length
-        followersTotalKnown = true
+        followersTotalCount =
+          followersTotalCount === null
+            ? inboundFollowerEvidence.followerPubkeys.length
+            : Math.max(
+                followersTotalCount,
+                inboundFollowerEvidence.followerPubkeys.length,
+              )
+        followersTotalKnown = false
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.finalMergedInboundEvidence', {
+            followerCount: inboundFollowerEvidence.followerPubkeys.length,
+            displayedTotalCount: followersTotalCount,
+            displayedTotalKnown: followersTotalKnown,
+            includesTraceTarget: inboundFollowerEvidence.followerPubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            partial: inboundFollowerEvidence.partial,
+            countProbe: summarizeRelayCountResults(inboundCountProbeResults),
+            inboundCandidateFetch: summarizeRelayCollectionResult(
+              inboundFollowerResult,
+            ),
+          })
+        }
         if (isStaleLoad(loadId)) {
           return finishLoad(createCancelledResult(relayUrls))
         }
@@ -923,6 +1494,24 @@ export function createRootLoaderModule(
           cachedSnapshot.rootProfile?.name ?? cachedSnapshot.rootLabel,
           cachedSnapshot.rootProfile,
         )
+        if (traceThisRoot && traceConfig) {
+          traceAccountFlow('rootLoader.finalReplaceRootGraph.result', {
+            followInputIncludesTraceTarget: parsedContactList.followPubkeys.includes(
+              traceConfig.targetPubkey,
+            ),
+            inboundInputIncludesTraceTarget:
+              inboundFollowerEvidence.followerPubkeys.includes(
+                traceConfig.targetPubkey,
+              ),
+            visiblePubkeysIncludesTraceTarget:
+              replacementResult.visiblePubkeys.includes(traceConfig.targetPubkey),
+            inboundInputCount: inboundFollowerEvidence.followerPubkeys.length,
+            visiblePubkeyCount: replacementResult.visiblePubkeys.length,
+            discoveredFollowCount: replacementResult.discoveredFollowCount,
+            rejectedPubkeys: replacementResult.rejectedPubkeys,
+            graphCaps: ctx.store.getState().graphCaps,
+          })
+        }
         followingLoadedCount = replacementResult.discoveredFollowCount
         followersLoadedCount = getCurrentInboundFollowerPubkeys(rootPubkey).length
         const restoredExpandedPubkeys = restoreExpandedNeighborhood(
@@ -1240,6 +1829,40 @@ export function createRootLoaderModule(
         relation: 'inbound' as const,
       })),
     )
+    if (isAccountTraceRoot(rootPubkey)) {
+      const traceConfig = getAccountTraceConfig()
+      if (traceConfig) {
+        const afterState = ctx.store.getState()
+        traceAccountFlow('rootLoader.replaceRootGraph.afterStoreWrite', {
+          followInputIncludesTraceTarget: followPubkeys.includes(
+            traceConfig.targetPubkey,
+          ),
+          inboundInputIncludesTraceTarget: inboundFollowerPubkeys.includes(
+            traceConfig.targetPubkey,
+          ),
+          acceptedFollowIncludesTraceTarget: acceptedFollowPubkeys.includes(
+            traceConfig.targetPubkey,
+          ),
+          acceptedInboundIncludesTraceTarget:
+            acceptedInboundFollowerPubkeys.includes(traceConfig.targetPubkey),
+          hasTraceTargetNode: Boolean(afterState.nodes[traceConfig.targetPubkey]),
+          hasRootToTraceTargetFollowLink: afterState.links.some(
+            (link) =>
+              link.source === rootPubkey &&
+              link.target === traceConfig.targetPubkey &&
+              link.relation === 'follow',
+          ),
+          hasTraceTargetToRootInboundLink: afterState.inboundLinks.some(
+            (link) =>
+              link.source === traceConfig.targetPubkey &&
+              link.target === rootPubkey &&
+              link.relation === 'inbound',
+          ),
+          graphRevision: afterState.graphRevision,
+          inboundGraphRevision: afterState.inboundGraphRevision,
+        })
+      }
+    }
     state.setNodeStructurePreviewState(rootPubkey, {
       status: 'ready',
       message: null,

@@ -1,4 +1,9 @@
 import type { CanonicalEdge, CanonicalGraphState } from '@/features/graph-v2/domain/types'
+import {
+  getAccountTraceConfig,
+  isAccountTraceRoot,
+  traceAccountFlow,
+} from '@/features/graph-runtime/debug/accountTrace'
 import { buildLayerProjection } from '@/features/graph-v2/projections/buildLayerProjection'
 import type {
   GraphPhysicsEdge,
@@ -81,22 +86,35 @@ const resolveBaseNodeColor = (
   node: CanonicalGraphState['nodesByPubkey'][string],
 ) => (node.source === 'root' ? ROOT_COLOR : getCommonNodeColor(node.pubkey))
 
+const isFollowEvidenceRelation = (relation: CanonicalEdge['relation']) =>
+  relation === 'follow' || relation === 'inbound'
+
 const getReciprocalFollowEdgeIds = (edges: readonly CanonicalEdge[]) => {
-  const followEdgeIds = new Set<string>()
+  const edgeIdsByDirection = new Map<string, string[]>()
   const reciprocalEdgeIds = new Set<string>()
 
   for (const edge of edges) {
-    if (edge.relation !== 'follow') {
+    if (!isFollowEvidenceRelation(edge.relation)) {
       continue
     }
 
-    const reverseId = `${edge.target}->${edge.source}:follow`
-    if (followEdgeIds.has(reverseId)) {
+    const directionKey = `${edge.source}->${edge.target}`
+    const reverseDirectionKey = `${edge.target}->${edge.source}`
+    const reverseEdgeIds = edgeIdsByDirection.get(reverseDirectionKey)
+
+    if (reverseEdgeIds) {
       reciprocalEdgeIds.add(edge.id)
-      reciprocalEdgeIds.add(reverseId)
+      for (const reverseEdgeId of reverseEdgeIds) {
+        reciprocalEdgeIds.add(reverseEdgeId)
+      }
     }
 
-    followEdgeIds.add(edge.id)
+    const directionEdgeIds = edgeIdsByDirection.get(directionKey)
+    if (directionEdgeIds) {
+      directionEdgeIds.push(edge.id)
+    } else {
+      edgeIdsByDirection.set(directionKey, [edge.id])
+    }
   }
 
   return reciprocalEdgeIds
@@ -280,6 +298,7 @@ const MAX_SNAPSHOT_SIGNATURE_CACHE_ENTRIES = 24
 
 let _snapCalls = 0
 let _snapHits = 0
+let lastAccountTraceSceneKey = ''
 
 const rememberSnapshotBySignature = (
   signature: string,
@@ -467,6 +486,85 @@ const computeGraphSceneSnapshot = (
       },
     )
   })
+  if (isAccountTraceRoot(state.rootPubkey)) {
+    const traceConfig = getAccountTraceConfig()
+    if (traceConfig) {
+      const allEdges = Object.values(state.edgesById)
+      const rootToTargetFollow = allEdges.find(
+        (edge) =>
+          edge.source === traceConfig.rootPubkey &&
+          edge.target === traceConfig.targetPubkey &&
+          edge.relation === 'follow',
+      )
+      const targetToRootInbound = allEdges.find(
+        (edge) =>
+          edge.source === traceConfig.targetPubkey &&
+          edge.target === traceConfig.rootPubkey &&
+          edge.relation === 'inbound',
+      )
+      const targetToRootFollow = allEdges.find(
+        (edge) =>
+          edge.source === traceConfig.targetPubkey &&
+          edge.target === traceConfig.rootPubkey &&
+          edge.relation === 'follow',
+      )
+      const visibleTraceEdgeIds = new Set(
+        visibleEdges
+          .filter(
+            (edge) =>
+              (edge.source === traceConfig.rootPubkey &&
+                edge.target === traceConfig.targetPubkey) ||
+              (edge.source === traceConfig.targetPubkey &&
+                edge.target === traceConfig.rootPubkey),
+          )
+          .map((edge) => edge.id),
+      )
+      const forceTraceEdges = renderForceEdges.filter(
+        (edge) =>
+          (edge.source === traceConfig.rootPubkey &&
+            edge.target === traceConfig.targetPubkey) ||
+          (edge.source === traceConfig.targetPubkey &&
+            edge.target === traceConfig.rootPubkey),
+      )
+      const sceneKey = JSON.stringify([
+        state.sceneSignature,
+        Boolean(state.nodesByPubkey[traceConfig.targetPubkey]),
+        Boolean(rootToTargetFollow),
+        Boolean(targetToRootInbound),
+        Boolean(targetToRootFollow),
+        Array.from(visibleTraceEdgeIds).sort(),
+        forceTraceEdges.map((edge) => [edge.id, edge.hidden, edge.color]).sort(),
+      ])
+
+      if (sceneKey !== lastAccountTraceSceneKey) {
+        lastAccountTraceSceneKey = sceneKey
+        traceAccountFlow('buildGraphSceneSnapshot.traceTarget', {
+          activeLayer: state.activeLayer,
+          hasTraceTargetNode: Boolean(state.nodesByPubkey[traceConfig.targetPubkey]),
+          hasRootToTraceTargetFollowEdge: Boolean(rootToTargetFollow),
+          hasTraceTargetToRootInboundEdge: Boolean(targetToRootInbound),
+          hasTraceTargetToRootFollowEdge: Boolean(targetToRootFollow),
+          rootToTraceTargetFollowIsMutual: rootToTargetFollow
+            ? reciprocalForceEdgeIds.has(rootToTargetFollow.id)
+            : false,
+          traceTargetToRootInboundIsMutual: targetToRootInbound
+            ? reciprocalForceEdgeIds.has(targetToRootInbound.id)
+            : false,
+          visibleTraceEdgeIds: Array.from(visibleTraceEdgeIds).sort(),
+          forceTraceEdges: forceTraceEdges.map((edge) => ({
+            id: edge.id,
+            relation: edge.relation,
+            hidden: edge.hidden,
+            color: edge.color,
+            size: edge.size,
+          })),
+          nodeCount: renderNodes.length,
+          visibleEdgeCount: visibleEdges.length,
+          forceEdgeCount: renderForceEdges.length,
+        })
+      }
+    }
+  }
   const physics = DEFAULT_PHYSICS_ELIGIBILITY_POLICY.select({
     forceEdges: renderForceEdges,
     renderNodes,
