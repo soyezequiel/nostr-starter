@@ -87,7 +87,7 @@ interface ActiveLoadSession {
 }
 
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
-const INITIAL_ROOT_DISCOVERY_RELAY_COUNT = 4
+const INITIAL_ROOT_DISCOVERY_RELAY_COUNT = 6
 
 function summarizeRelayCountResults(countResults: readonly RelayCountResult[]) {
   const supportedResults = countResults.filter(
@@ -1099,7 +1099,8 @@ export function createRootLoaderModule(
           adapter: remainingAdapter,
           enableProgress: false,
         })
-          .then(async ([finalContactListResult, finalInboundFollowerResult]) => {
+          .then(async ([finalContactListResult, initialFinalInboundFollowerResult]) => {
+            let finalInboundFollowerResult = initialFinalInboundFollowerResult
             if (traceThisRoot) {
               traceAccountFlow('rootLoader.remainingRelays.backgroundResult', {
                 contactList: summarizeRelayCollectionResult(finalContactListResult),
@@ -1108,10 +1109,45 @@ export function createRootLoaderModule(
                 ),
               })
             }
+            if (isStaleLoad(loadId)) {
+              return
+            }
+
+            const paginatedInboundFollowerResult =
+              await collectAdditionalPaginatedInboundFollowerEvents({
+                adapter: remainingAdapter,
+                countResults: inboundCountProbeResults,
+                isStale: () => isStaleLoad(loadId),
+                relayUrls: orderedFinalRelayUrls,
+                seedEnvelopes: finalInboundFollowerResult.events,
+                targetPubkey: rootPubkey,
+              })
+
             if (
-              isStaleLoad(loadId) ||
-              finalInboundFollowerResult.events.length === 0
+              paginatedInboundFollowerResult.events.length > 0 ||
+              paginatedInboundFollowerResult.error !== null
             ) {
+              finalInboundFollowerResult = mergeRelayCollectionResults(
+                finalInboundFollowerResult,
+                paginatedInboundFollowerResult,
+              )
+            }
+
+            if (traceThisRoot) {
+              traceAccountFlow(
+                'rootLoader.remainingRelays.backgroundPaginatedInboundResult',
+                {
+                  pageCount: paginatedInboundFollowerResult.pageCount,
+                  newEventCount: paginatedInboundFollowerResult.events.length,
+                  relaySummaries: paginatedInboundFollowerResult.relaySummaries,
+                  inboundFollowers: summarizeRelayCollectionResult(
+                    finalInboundFollowerResult,
+                  ),
+                },
+              )
+            }
+
+            if (isStaleLoad(loadId) || finalInboundFollowerResult.events.length === 0) {
               return
             }
 

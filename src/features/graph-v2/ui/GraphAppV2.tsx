@@ -46,7 +46,7 @@ import {
 } from '@/features/graph-v2/projections/personSearchHighlight'
 import type {
   GraphInteractionCallbacks,
-  GraphSceneSnapshot,
+  GraphRenderEdge,
   GraphViewportState,
 } from '@/features/graph-v2/renderer/contracts'
 import {
@@ -142,16 +142,20 @@ interface LoadRootInput
   profileFetchedAt?: number | null
 }
 
+
+
+// Returns true when the two pubkeys are linked by a non-hidden visible edge
+// (checked in both directions, since edges may be stored as A→B or B→A).
 const hasVisibleEdgeBetween = (
-  scene: GraphSceneSnapshot,
-  source: string,
-  target: string,
-) => {
-  for (const edge of scene.render.visibleEdges) {
+  edges: readonly GraphRenderEdge[],
+  pubkeyA: string,
+  pubkeyB: string,
+): boolean => {
+  for (const edge of edges) {
     if (edge.hidden) continue
     if (
-      (edge.source === source && edge.target === target) ||
-      (edge.source === target && edge.target === source)
+      (edge.source === pubkeyA && edge.target === pubkeyB) ||
+      (edge.source === pubkeyB && edge.target === pubkeyA)
     ) {
       return true
     }
@@ -1261,11 +1265,14 @@ export default function GraphAppV2() {
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     if (!showZaps) return false
-    if (!visibleNodeSet.has(zap.fromPubkey)) return false
-    if (!visibleNodeSet.has(zap.toPubkey)) return false
-    if (!hasVisibleEdgeBetween(deferredScene, zap.fromPubkey, zap.toPubkey)) return false
+    // Gate on edge existence so the animation travels along a visible edge.
+    // We intentionally do NOT require fromPubkey to be in visibleNodeSet:
+    // zaps sent by non-root nodes are valid as long as the edge between the
+    // two endpoints exists in the rendered scene. The overlay's play() will
+    // silently return false if a node has no viewport position.
+    if (!hasVisibleEdgeBetween(deferredScene.render.visibleEdges, zap.fromPubkey, zap.toPubkey)) return false
     return sigmaHostRef.current?.playZap(zap) ?? false
-  }, [deferredScene, showZaps, visibleNodeSet])
+  }, [deferredScene.render.visibleEdges, showZaps])
 
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {

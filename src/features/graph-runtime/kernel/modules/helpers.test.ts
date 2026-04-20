@@ -240,6 +240,15 @@ test('collectAdditionalPaginatedInboundFollowerEvents pagina por relay con curso
       newEventCount: 2,
       stoppedReason: 'count-reached',
     },
+    {
+      relayUrl: relayB,
+      seedEventCount: 1,
+      knownCount: 1,
+      requestedPageCount: 0,
+      collectedEventCount: 1,
+      newEventCount: 0,
+      stoppedReason: 'not-needed',
+    },
   ])
   assert.deepEqual(capturedQueries, [
     {
@@ -260,6 +269,180 @@ test('collectAdditionalPaginatedInboundFollowerEvents pagina por relay con curso
       pageIndex: 2,
       newEventCount: 2,
       totalNewEventCount: 2,
+    },
+  ])
+})
+
+test('collectAdditionalPaginatedInboundFollowerEvents pagina relays con COUNT util aunque el seed inicial sea bajo', async () => {
+  const rootPubkey = 'root'
+  const relayA = 'wss://relay-a.example'
+  const seedEnvelopes = [
+    createContactListEnvelope('alice', ['root'], 'event-a1', {
+      createdAt: 300,
+      relayUrl: relayA,
+    }),
+  ]
+  const pageEnvelopes = [
+    createContactListEnvelope('bob', ['root'], 'event-a2', {
+      createdAt: 200,
+      relayUrl: relayA,
+    }),
+  ]
+  const capturedQueries: Array<{
+    filters: Filter[]
+    relayUrls: string[] | undefined
+  }> = []
+
+  const adapter: RelayAdapterInstance = {
+    subscribe(filters, options?: RelaySubscribeOptions) {
+      capturedQueries.push({
+        filters,
+        relayUrls: options?.relayUrls,
+      })
+      return {
+        subscribe(observer) {
+          queueMicrotask(() => {
+            observer.nextBatch?.(pageEnvelopes)
+            observer.complete?.(createRelaySummary(filters))
+          })
+
+          return () => {}
+        },
+      }
+    },
+    count: async () => [],
+    getRelayHealth: () => ({}),
+    subscribeToRelayHealth: () => () => {},
+    close: () => {},
+  }
+
+  const result = await collectAdditionalPaginatedInboundFollowerEvents({
+    adapter,
+    countResults: [
+      {
+        relayUrl: relayA,
+        count: 2,
+        supported: true,
+        elapsedMs: 10,
+        errorMessage: null,
+      },
+    ],
+    maxPagesPerRelay: 2,
+    pageConcurrency: 1,
+    pageLimit: 250,
+    relayLimit: 1,
+    relayUrls: [relayA],
+    seedEnvelopes,
+    targetPubkey: rootPubkey,
+  })
+
+  assert.equal(result.pageCount, 1)
+  assert.deepEqual(
+    result.events.map((envelope) => envelope.event.id),
+    ['event-a2'],
+  )
+  assert.deepEqual(capturedQueries, [
+    {
+      relayUrls: [relayA],
+      filters: [
+        {
+          kinds: [3],
+          '#p': ['root'],
+          limit: 250,
+          until: 299,
+        },
+      ],
+    },
+  ])
+})
+
+test('collectAdditionalPaginatedInboundFollowerEvents pagina relays sin seed inicial cuando COUNT reporta followers', async () => {
+  const rootPubkey = 'root'
+  const relayA = 'wss://relay-a.example'
+  const pageEnvelopes = [
+    createContactListEnvelope('alice', ['root'], 'event-a1', {
+      createdAt: 300,
+      relayUrl: relayA,
+    }),
+    createContactListEnvelope('bob', ['root'], 'event-a2', {
+      createdAt: 200,
+      relayUrl: relayA,
+    }),
+  ]
+  const capturedQueries: Array<{
+    filters: Filter[]
+    relayUrls: string[] | undefined
+  }> = []
+
+  const adapter: RelayAdapterInstance = {
+    subscribe(filters, options?: RelaySubscribeOptions) {
+      capturedQueries.push({
+        filters,
+        relayUrls: options?.relayUrls,
+      })
+      return {
+        subscribe(observer) {
+          queueMicrotask(() => {
+            observer.nextBatch?.(pageEnvelopes)
+            observer.complete?.(createRelaySummary(filters))
+          })
+
+          return () => {}
+        },
+      }
+    },
+    count: async () => [],
+    getRelayHealth: () => ({}),
+    subscribeToRelayHealth: () => () => {},
+    close: () => {},
+  }
+
+  const result = await collectAdditionalPaginatedInboundFollowerEvents({
+    adapter,
+    countResults: [
+      {
+        relayUrl: relayA,
+        count: 2,
+        supported: true,
+        elapsedMs: 10,
+        errorMessage: null,
+      },
+    ],
+    maxPagesPerRelay: 1,
+    pageConcurrency: 1,
+    pageLimit: 250,
+    relayLimit: 1,
+    relayUrls: [relayA],
+    seedEnvelopes: [],
+    targetPubkey: rootPubkey,
+  })
+
+  assert.equal(result.pageCount, 1)
+  assert.deepEqual(
+    result.events.map((envelope) => envelope.event.id),
+    ['event-a1', 'event-a2'],
+  )
+  assert.deepEqual(result.relaySummaries, [
+    {
+      relayUrl: relayA,
+      seedEventCount: 0,
+      knownCount: 2,
+      requestedPageCount: 1,
+      collectedEventCount: 2,
+      newEventCount: 2,
+      stoppedReason: 'count-reached',
+    },
+  ])
+  assert.deepEqual(capturedQueries, [
+    {
+      relayUrls: [relayA],
+      filters: [
+        {
+          kinds: [3],
+          '#p': ['root'],
+          limit: 250,
+        },
+      ],
     },
   ])
 })

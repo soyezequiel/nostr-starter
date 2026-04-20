@@ -5,7 +5,7 @@ import { NDKEvent } from '@nostr-dev-kit/ndk';
 import { useAuthStore } from '@/store/auth';
 import {
   connectNDK,
-  fetchFollowers,
+  fetchFollowerCount,
   fetchFollowing,
   fetchUserNotes,
   formatTimestamp,
@@ -98,7 +98,7 @@ function ProfileSkeleton({ status }: { status: string }) {
 
 export default function Profile() {
   const { isConnected, profile } = useAuthStore();
-  const [followers, setFollowers] = useState<string[]>([]);
+  const [followerCount, setFollowerCount] = useState(0);
   const [following, setFollowing] = useState<string[]>([]);
   const [notes, setNotes] = useState<NDKEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -119,9 +119,9 @@ export default function Profile() {
         if (cancelled) return;
 
         setLoadingStatus('Consultando followers, following y notas recientes en paralelo...');
-        const followersRequest = fetchFollowers(profile.pubkey).then((result) => {
+        const followersRequest = fetchFollowerCount(profile.pubkey).then((result) => {
           if (!cancelled) {
-            setLoadingStatus(`Followers cargados (${result.length}). Esperando follows y notas...`);
+            setLoadingStatus(`Followers estimados (${result}). Esperando follows y notas...`);
           }
           return result;
         });
@@ -147,7 +147,7 @@ export default function Profile() {
         if (cancelled) return;
 
         setLoadingStatus('Aplicando metadata, contadores y timeline al perfil...');
-        setFollowers(followersData);
+        setFollowerCount(followersData);
         setFollowing(followingData);
         setNotes(notesData);
       } catch (error) {
@@ -319,7 +319,7 @@ export default function Profile() {
         <div className="mb-6 grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
           {[
             { label: 'Following', value: following.length },
-            { label: 'Followers', value: followers.length },
+            { label: 'Followers', value: followerCount },
             { label: 'Notes', value: notes.length },
           ].map((stat) => (
             <div key={stat.label} className="rounded-xl border border-lc-border/50 bg-lc-dark px-4 py-3 text-center">

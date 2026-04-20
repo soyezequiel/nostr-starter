@@ -1327,6 +1327,8 @@ function selectPaginatedInboundRelayUrls({
       ).size
       const knownCount = countByRelayUrl.get(relayUrl) ?? null
       const hasKnownMore = knownCount !== null && knownCount > seedEventCount
+      const hasUsefulKnownCountWithThinSeed =
+        knownCount !== null && knownCount > 0 && seedEventCount < pageLimit
       const likelyHasMoreWithoutCount =
         knownCount === null && seedEventCount >= pageLimit
 
@@ -1335,7 +1337,10 @@ function selectPaginatedInboundRelayUrls({
         index,
         seedEventCount,
         knownCount,
-        shouldPaginate: hasKnownMore || likelyHasMoreWithoutCount,
+        shouldPaginate:
+          hasKnownMore ||
+          hasUsefulKnownCountWithThinSeed ||
+          likelyHasMoreWithoutCount,
       }
     })
     .filter((relay) => relay.shouldPaginate)
