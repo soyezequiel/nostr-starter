@@ -70,6 +70,8 @@ const createState = (
     },
   },
   sceneSignature: 'test-scene',
+  nodeVisualRevision: 1,
+  nodeDetailRevision: 0,
   rootPubkey: 'root',
   activeLayer: 'mutuals',
   connectionsSourceLayer: 'graph',

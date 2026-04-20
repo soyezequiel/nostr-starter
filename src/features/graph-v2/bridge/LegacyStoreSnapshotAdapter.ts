@@ -1,4 +1,4 @@
-﻿import type { AppStore } from '@/features/graph-runtime/app/store/types'
+import type { AppStore, RootLoadState } from '@/features/graph-runtime/app/store/types'
 import {
   createCanonicalEdgeId,
   DEFAULT_GRAPH_V2_LAYER,
@@ -11,11 +11,19 @@ import {
 } from '@/features/graph-runtime/debug/accountTrace'
 import type {
   CanonicalEdge,
+  CanonicalGraphSceneState,
   CanonicalGraphState,
-  CanonicalNode,
+  CanonicalGraphUiState,
   CanonicalRelayEndpoint,
   CanonicalRelayState,
 } from '@/features/graph-v2/domain/types'
+
+const EMPTY_ROOT_LOAD_STATE: RootLoadState = {
+  status: 'idle',
+  message: null,
+  loadedFrom: 'none',
+  visibleLinkProgress: null,
+}
 
 const createCanonicalEdge = (
   edge: AppStore['links'][number],
@@ -32,7 +40,7 @@ const createCanonicalEdge = (
 const createCanonicalNode = (
   state: AppStore,
   node: AppStore['nodes'][string],
-): CanonicalNode => ({
+): CanonicalGraphSceneState['nodesByPubkey'][string] => ({
   pubkey: node.pubkey,
   label: node.label ?? null,
   picture: node.picture ?? null,
@@ -60,24 +68,9 @@ const createCanonicalRelayEndpoint = (
   lastNotice: state.relayHealth[relayUrl]?.lastNotice ?? null,
 })
 
-const createSceneNodeVisualSignature = (nodes: AppStore['nodes']) =>
-  Object.values(nodes)
-    .map((node) =>
-      JSON.stringify([
-        node.pubkey,
-        node.label ?? '',
-        node.picture ?? '',
-        node.source,
-        node.discoveredAt ?? '',
-      ]),
-    )
-    .sort()
-    .join('|')
-
 const createSceneSignature = (
   state: AppStore,
-  activeLayer: CanonicalGraphState['activeLayer'],
-  nodeVisualSignature: string,
+  activeLayer: CanonicalGraphSceneState['activeLayer'],
   pinnedNodePubkeysSignature: string,
   expandedNodePubkeysSignature: string,
 ) =>
@@ -86,15 +79,13 @@ const createSceneSignature = (
     activeLayer,
     state.connectionsSourceLayer,
     state.selectedNodePubkey ?? 'no-selection',
-    nodeVisualSignature,
-    expandedNodePubkeysSignature,
-    Object.keys(state.nodes).length,
-    state.links.length + state.inboundLinks.length + state.connectionsLinks.length,
     state.graphRevision,
     state.inboundGraphRevision,
     state.connectionsLinksRevision,
-    state.relayUrls.join(','),
-    state.isGraphStale ? 'stale' : 'fresh',
+    state.nodeVisualRevision,
+    expandedNodePubkeysSignature,
+    Object.keys(state.nodes).length,
+    state.links.length + state.inboundLinks.length + state.connectionsLinks.length,
     pinnedNodePubkeysSignature,
   ].join('|')
 
@@ -113,7 +104,7 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousNodeExpansionStates: AppStore['nodeExpansionStates'] | null = null
 
-  private previousNodesByPubkey: Record<string, CanonicalNode> = {}
+  private previousNodesByPubkey: Record<string, CanonicalGraphSceneState['nodesByPubkey'][string]> = {}
 
   private previousRelayUrls: AppStore['relayUrls'] | null = null
 
@@ -127,6 +118,8 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousRootLoad: AppStore['rootLoad'] | null = null
 
+  private previousUiState: CanonicalGraphUiState | null = null
+
   private previousDiscoveryExpandedNodePubkeys: AppStore['expandedNodePubkeys'] | null = null
 
   private previousGraphRevision: number | null = null
@@ -135,7 +128,7 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousConnectionsLinksRevision: number | null = null
 
-  private previousDiscoveryState: CanonicalGraphState['discoveryState'] | null = null
+  private previousSceneDiscoveryState: CanonicalGraphSceneState['discoveryState'] | null = null
 
   private previousPinnedNodePubkeys: AppStore['pinnedNodePubkeys'] | null = null
 
@@ -144,10 +137,6 @@ export class LegacyStoreSnapshotAdapter {
   private previousPinnedRootNodePubkey: AppStore['rootNodePubkey'] | null = null
 
   private previousCanonicalPinnedNodePubkeys: Set<string> = new Set<string>()
-
-  private previousSceneSignatureNodes: AppStore['nodes'] | null = null
-
-  private previousSceneNodeVisualSignature = ''
 
   private previousSceneSignaturePinnedNodePubkeys: ReadonlySet<string> | null = null
 
@@ -159,13 +148,57 @@ export class LegacyStoreSnapshotAdapter {
 
   private previousSceneExpandedNodePubkeysSignature = ''
 
-  private previousSnapshot: CanonicalGraphState | null = null
+  private previousSceneSnapshot: CanonicalGraphSceneState | null = null
+
+  private previousCombinedSnapshot: CanonicalGraphState | null = null
 
   public adapt(state: AppStore): CanonicalGraphState {
+    const scene = this.adaptScene(state)
+    const ui = this.adaptUi(state)
+
+    if (
+      this.previousCombinedSnapshot &&
+      this.previousCombinedSnapshot.nodesByPubkey === scene.nodesByPubkey &&
+      this.previousCombinedSnapshot.edgesById === scene.edgesById &&
+      this.previousCombinedSnapshot.sceneSignature === scene.sceneSignature &&
+      this.previousCombinedSnapshot.nodeDetailRevision === scene.nodeDetailRevision &&
+      this.previousCombinedSnapshot.rootPubkey === scene.rootPubkey &&
+      this.previousCombinedSnapshot.activeLayer === scene.activeLayer &&
+      this.previousCombinedSnapshot.connectionsSourceLayer ===
+        scene.connectionsSourceLayer &&
+      this.previousCombinedSnapshot.selectedNodePubkey === scene.selectedNodePubkey &&
+      this.previousCombinedSnapshot.pinnedNodePubkeys === scene.pinnedNodePubkeys &&
+      this.previousCombinedSnapshot.discoveryState.expandedNodePubkeys ===
+        scene.discoveryState.expandedNodePubkeys &&
+      this.previousCombinedSnapshot.discoveryState.graphRevision ===
+        scene.discoveryState.graphRevision &&
+      this.previousCombinedSnapshot.discoveryState.inboundGraphRevision ===
+        scene.discoveryState.inboundGraphRevision &&
+      this.previousCombinedSnapshot.discoveryState.connectionsLinksRevision ===
+        scene.discoveryState.connectionsLinksRevision &&
+      this.previousCombinedSnapshot.discoveryState.rootLoad === ui.rootLoad &&
+      this.previousCombinedSnapshot.relayState === ui.relayState
+    ) {
+      return this.previousCombinedSnapshot
+    }
+
+    const snapshot: CanonicalGraphState = {
+      ...scene,
+      relayState: ui.relayState,
+      discoveryState: {
+        ...scene.discoveryState,
+        rootLoad: ui.rootLoad,
+      },
+    }
+
+    this.previousCombinedSnapshot = snapshot
+    return snapshot
+  }
+
+  public adaptScene(state: AppStore): CanonicalGraphSceneState {
     const edgesById = this.adaptEdges(state)
     const nodesByPubkey = this.adaptNodes(state)
-    const relayState = this.adaptRelayState(state)
-    const discoveryState = this.adaptDiscoveryState(state)
+    const discoveryState = this.adaptSceneDiscoveryState(state)
     const pinnedNodePubkeys = this.adaptPinnedNodePubkeys(state)
     const activeLayer = isGraphV2Layer(state.activeLayer)
       ? state.activeLayer
@@ -173,42 +206,64 @@ export class LegacyStoreSnapshotAdapter {
     const sceneSignature = createSceneSignature(
       state,
       activeLayer,
-      this.getSceneNodeVisualSignature(state.nodes),
       this.getScenePinnedNodePubkeysSignature(pinnedNodePubkeys),
       this.getSceneExpandedNodePubkeysSignature(state.expandedNodePubkeys),
     )
 
     if (
-      this.previousSnapshot &&
-      this.previousSnapshot.edgesById === edgesById &&
-      this.previousSnapshot.nodesByPubkey === nodesByPubkey &&
-      this.previousSnapshot.sceneSignature === sceneSignature &&
-      this.previousSnapshot.rootPubkey === state.rootNodePubkey &&
-      this.previousSnapshot.activeLayer === activeLayer &&
-      this.previousSnapshot.connectionsSourceLayer === state.connectionsSourceLayer &&
-      this.previousSnapshot.selectedNodePubkey === state.selectedNodePubkey &&
-      this.previousSnapshot.pinnedNodePubkeys === pinnedNodePubkeys &&
-      this.previousSnapshot.relayState === relayState &&
-      this.previousSnapshot.discoveryState === discoveryState
+      this.previousSceneSnapshot &&
+      this.previousSceneSnapshot.edgesById === edgesById &&
+      this.previousSceneSnapshot.nodesByPubkey === nodesByPubkey &&
+      this.previousSceneSnapshot.sceneSignature === sceneSignature &&
+      this.previousSceneSnapshot.nodeVisualRevision === state.nodeVisualRevision &&
+      this.previousSceneSnapshot.nodeDetailRevision === state.nodeDetailRevision &&
+      this.previousSceneSnapshot.rootPubkey === state.rootNodePubkey &&
+      this.previousSceneSnapshot.activeLayer === activeLayer &&
+      this.previousSceneSnapshot.connectionsSourceLayer ===
+        state.connectionsSourceLayer &&
+      this.previousSceneSnapshot.selectedNodePubkey === state.selectedNodePubkey &&
+      this.previousSceneSnapshot.pinnedNodePubkeys === pinnedNodePubkeys &&
+      this.previousSceneSnapshot.discoveryState === discoveryState
     ) {
-      return this.previousSnapshot
+      return this.previousSceneSnapshot
     }
 
-    const snapshot: CanonicalGraphState = {
+    const snapshot: CanonicalGraphSceneState = {
       nodesByPubkey,
       edgesById,
       sceneSignature,
+      nodeVisualRevision: state.nodeVisualRevision,
+      nodeDetailRevision: state.nodeDetailRevision,
       rootPubkey: state.rootNodePubkey,
       activeLayer,
       connectionsSourceLayer: state.connectionsSourceLayer,
       selectedNodePubkey: state.selectedNodePubkey,
       pinnedNodePubkeys,
-      relayState,
       discoveryState,
     }
 
-    this.previousSnapshot = snapshot
+    this.previousSceneSnapshot = snapshot
     return snapshot
+  }
+
+  public adaptUi(state: AppStore): CanonicalGraphUiState {
+    const relayState = this.adaptRelayState(state)
+    const rootLoad = this.adaptRootLoad(state)
+
+    if (
+      this.previousUiState &&
+      this.previousUiState.relayState === relayState &&
+      this.previousUiState.rootLoad === rootLoad
+    ) {
+      return this.previousUiState
+    }
+
+    this.previousUiState = {
+      relayState,
+      rootLoad,
+    }
+
+    return this.previousUiState
   }
 
   private adaptEdges(state: AppStore) {
@@ -238,6 +293,7 @@ export class LegacyStoreSnapshotAdapter {
         edgesById[canonicalEdge.id] = canonicalEdge
       }
     }
+
     if (isAccountTraceRoot(state.rootNodePubkey)) {
       const traceConfig = getAccountTraceConfig()
       if (traceConfig) {
@@ -334,32 +390,38 @@ export class LegacyStoreSnapshotAdapter {
     return this.previousRelayState
   }
 
-  private adaptDiscoveryState(state: AppStore) {
+  private adaptRootLoad(state: AppStore) {
+    if (this.previousRootLoad === state.rootLoad) {
+      return this.previousRootLoad ?? EMPTY_ROOT_LOAD_STATE
+    }
+
+    this.previousRootLoad = state.rootLoad
+    return state.rootLoad
+  }
+
+  private adaptSceneDiscoveryState(state: AppStore) {
     if (
-      this.previousRootLoad === state.rootLoad &&
       this.previousDiscoveryExpandedNodePubkeys === state.expandedNodePubkeys &&
       this.previousGraphRevision === state.graphRevision &&
       this.previousInboundGraphRevision === state.inboundGraphRevision &&
       this.previousConnectionsLinksRevision === state.connectionsLinksRevision &&
-      this.previousDiscoveryState
+      this.previousSceneDiscoveryState
     ) {
-      return this.previousDiscoveryState
+      return this.previousSceneDiscoveryState
     }
 
-    this.previousRootLoad = state.rootLoad
     this.previousDiscoveryExpandedNodePubkeys = state.expandedNodePubkeys
     this.previousGraphRevision = state.graphRevision
     this.previousInboundGraphRevision = state.inboundGraphRevision
     this.previousConnectionsLinksRevision = state.connectionsLinksRevision
-    this.previousDiscoveryState = {
-      rootLoad: state.rootLoad,
+    this.previousSceneDiscoveryState = {
       expandedNodePubkeys: new Set(state.expandedNodePubkeys),
       graphRevision: state.graphRevision,
       inboundGraphRevision: state.inboundGraphRevision,
       connectionsLinksRevision: state.connectionsLinksRevision,
     }
 
-    return this.previousDiscoveryState
+    return this.previousSceneDiscoveryState
   }
 
   private adaptPinnedNodePubkeys(state: AppStore) {
@@ -385,17 +447,6 @@ export class LegacyStoreSnapshotAdapter {
     }
 
     return this.previousCanonicalPinnedNodePubkeys
-  }
-
-  private getSceneNodeVisualSignature(nodes: AppStore['nodes']) {
-    if (this.previousSceneSignatureNodes === nodes) {
-      return this.previousSceneNodeVisualSignature
-    }
-
-    this.previousSceneSignatureNodes = nodes
-    this.previousSceneNodeVisualSignature = createSceneNodeVisualSignature(nodes)
-
-    return this.previousSceneNodeVisualSignature
   }
 
   private getScenePinnedNodePubkeysSignature(pinnedNodePubkeys: ReadonlySet<string>) {

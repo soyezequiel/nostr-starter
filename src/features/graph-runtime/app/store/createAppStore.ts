@@ -1,5 +1,5 @@
 ﻿import { useStore } from 'zustand'
-import { createJSONStorage, persist } from 'zustand/middleware'
+import { createJSONStorage, persist, subscribeWithSelector } from 'zustand/middleware'
 import { createStore } from 'zustand/vanilla'
 
 import { createAnalysisSlice } from '@/features/graph-runtime/app/store/slices/analysisSlice'
@@ -41,39 +41,41 @@ const getPersistedSavedRoots = (
 
 export const createAppStore = (): AppStoreApi =>
   createStore<AppStore>()(
-    persist(
-      (...args) => ({
-        ...createGraphSlice(...args),
-        ...createAnalysisSlice(...args),
-        ...createZapSlice(...args),
-        ...createKeywordSlice(...args),
-        ...createRelaySlice(...args),
-        ...createUiSlice(...args),
-        ...createExportSlice(...args),
-        ...createPathfindingSlice(...args),
-      }),
-      {
-        name: 'nostr-graph-saved-roots',
-        version: SAVED_ROOTS_PERSIST_VERSION,
-        storage: createJSONStorage(() => localStorage),
-        partialize: (state): { savedRoots: SavedRootEntry[] } => ({
-          savedRoots: state.savedRoots,
+    subscribeWithSelector(
+      persist(
+        (...args) => ({
+          ...createGraphSlice(...args),
+          ...createAnalysisSlice(...args),
+          ...createZapSlice(...args),
+          ...createKeywordSlice(...args),
+          ...createRelaySlice(...args),
+          ...createUiSlice(...args),
+          ...createExportSlice(...args),
+          ...createPathfindingSlice(...args),
         }),
-        migrate: (persistedState, version): PersistedSavedRootsState => {
-          const savedRoots = getPersistedSavedRoots(persistedState)
+        {
+          name: 'nostr-graph-saved-roots',
+          version: SAVED_ROOTS_PERSIST_VERSION,
+          storage: createJSONStorage(() => localStorage),
+          partialize: (state): { savedRoots: SavedRootEntry[] } => ({
+            savedRoots: state.savedRoots,
+          }),
+          migrate: (persistedState, version): PersistedSavedRootsState => {
+            const savedRoots = getPersistedSavedRoots(persistedState)
 
-          if (version < SAVED_ROOTS_PERSIST_VERSION) {
-            return {
-              savedRoots: seedDefaultSavedRoots(savedRoots),
+            if (version < SAVED_ROOTS_PERSIST_VERSION) {
+              return {
+                savedRoots: seedDefaultSavedRoots(savedRoots),
+              }
             }
-          }
 
-          return { savedRoots }
+            return { savedRoots }
+          },
+          onRehydrateStorage: () => (state) => {
+            state?.setSavedRootsHydrated(true)
+          },
         },
-        onRehydrateStorage: () => (state) => {
-          state?.setSavedRootsHydrated(true)
-        },
-      },
+      ),
     ),
   )
 

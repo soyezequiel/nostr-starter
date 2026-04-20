@@ -34,10 +34,10 @@ Flujo actual:
 
 1. `SigmaRootInput.tsx` acepta `npub`, `nprofile`, pubkey hex, NIP-05, links con puntero NIP-19 o la sesion conectada.
 2. `resolveRootIdentity()` resuelve pubkey, relay hints y evidencia de origen.
-3. `LegacyKernelBridge` conecta la UI nueva con `browserAppKernel`.
+3. `LegacyKernelBridge` conecta la UI nueva con `browserAppKernel` y separa snapshot de escena vs estado UI (`rootLoad` / relays) para no invalidar Sigma por progreso de carga.
 4. El kernel carga raiz, relays, vecinos, expansion de nodos, detalle, capas, zaps y persistencia.
 5. Los workers parsean eventos y calculan analisis pesado fuera de React.
-6. `graph-v2/projections/` arma snapshots para render y fisica.
+6. `graph-v2/projections/` arma snapshots para render y fisica; la firma de escena vive sobre revisiones del store, no sobre serializacion completa de nodos.
 7. `SigmaCanvasHost` monta Sigma y `renderer/` corre ForceAtlas2 sobre el grafo de fisica.
 
 Limites importantes:

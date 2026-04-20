@@ -1,8 +1,8 @@
-import type { CanonicalGraphState } from '@/features/graph-v2/domain/types'
+import type { CanonicalGraphSceneState } from '@/features/graph-v2/domain/types'
 import type { NodeDetailProjection } from '@/features/graph-v2/renderer/contracts'
 
 export const buildNodeDetailProjection = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
 ): NodeDetailProjection => {
   const pubkey = state.selectedNodePubkey
 

@@ -51,23 +51,38 @@ export interface CanonicalRelayState {
   isGraphStale: boolean
 }
 
-export interface CanonicalDiscoveryState {
-  rootLoad: RootLoadState
+export interface CanonicalSceneDiscoveryState {
   expandedNodePubkeys: ReadonlySet<string>
   graphRevision: number
   inboundGraphRevision: number
   connectionsLinksRevision: number
 }
 
-export interface CanonicalGraphState {
+export interface CanonicalGraphUiState {
+  rootLoad: RootLoadState
+  relayState: CanonicalRelayState
+}
+
+export interface CanonicalGraphSceneState {
   nodesByPubkey: Record<string, CanonicalNode>
   edgesById: Record<string, CanonicalEdge>
   sceneSignature: string
+  nodeVisualRevision: number
+  nodeDetailRevision: number
   rootPubkey: string | null
   activeLayer: GraphV2Layer
   connectionsSourceLayer: ConnectionsSourceLayer
   selectedNodePubkey: string | null
   pinnedNodePubkeys: ReadonlySet<string>
-  relayState: CanonicalRelayState
+  discoveryState: CanonicalSceneDiscoveryState
+}
+
+export interface CanonicalDiscoveryState extends CanonicalSceneDiscoveryState {
+  rootLoad: RootLoadState
+}
+
+export interface CanonicalGraphState
+  extends Omit<CanonicalGraphSceneState, 'discoveryState'>,
+    CanonicalGraphUiState {
   discoveryState: CanonicalDiscoveryState
 }

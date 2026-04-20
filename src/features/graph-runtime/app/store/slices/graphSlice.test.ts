@@ -109,3 +109,182 @@ test('upsertNodes still allows explicit null profile field clears', () => {
   assert.equal(node.lud16, null)
   assert.equal(node.profileEventId, null)
 })
+
+test('upsertNodePatches merges same-pubkey patches into one visual and detail revision bump', () => {
+  const store = createStoreForGraphSlice()
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: 'https://cdn.example.com/alice.jpg',
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'loading',
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+
+  const before = store.getState()
+  const result = store.getState().upsertNodePatches([
+    {
+      pubkey: 'alice',
+      about: 'Primer bio',
+      profileFetchedAt: 10,
+      profileState: 'loading',
+    },
+    {
+      pubkey: 'alice',
+      label: 'Alice Final',
+    },
+    {
+      pubkey: 'alice',
+      about: 'Bio final',
+      profileFetchedAt: 20,
+      profileSource: 'relay',
+      profileState: 'ready',
+    },
+  ])
+  const after = store.getState()
+
+  assert.deepEqual(result.acceptedPubkeys, ['alice'])
+  assert.deepEqual(result.rejectedPubkeys, [])
+  assert.equal(after.nodes.alice?.label, 'Alice Final')
+  assert.equal(after.nodes.alice?.about, 'Bio final')
+  assert.equal(after.nodes.alice?.profileFetchedAt, 20)
+  assert.equal(after.nodes.alice?.profileSource, 'relay')
+  assert.equal(after.nodes.alice?.profileState, 'ready')
+  assert.equal(after.graphRevision, before.graphRevision)
+  assert.equal(after.nodeVisualRevision, before.nodeVisualRevision + 1)
+  assert.equal(after.nodeDetailRevision, before.nodeDetailRevision + 1)
+})
+
+test('upsertNodePatches only bumps detail revision for detail-only changes', () => {
+  const store = createStoreForGraphSlice()
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'loading',
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+
+  const before = store.getState()
+  store.getState().upsertNodePatches([
+    {
+      pubkey: 'alice',
+      about: 'Detail-only update',
+      profileFetchedAt: 42,
+      profileSource: 'relay',
+      profileState: 'ready',
+    },
+  ])
+  const after = store.getState()
+
+  assert.equal(after.graphRevision, before.graphRevision)
+  assert.equal(after.nodeVisualRevision, before.nodeVisualRevision)
+  assert.equal(after.nodeDetailRevision, before.nodeDetailRevision + 1)
+})
+
+test('upsertNodePatches bumps visual revision for visual changes', () => {
+  const store = createStoreForGraphSlice()
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'idle',
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+
+  const before = store.getState()
+  store.getState().upsertNodePatches([
+    {
+      pubkey: 'alice',
+      label: 'Alice Updated',
+    },
+  ])
+  const after = store.getState()
+
+  assert.equal(after.graphRevision, before.graphRevision)
+  assert.equal(after.nodeVisualRevision, before.nodeVisualRevision + 1)
+  assert.equal(after.nodeDetailRevision, before.nodeDetailRevision)
+})
+
+test('upsertNodePatches preserves maxNodes and rejected pubkeys', () => {
+  const store = createStoreForGraphSlice()
+
+  store.getState().setGraphMaxNodes(1)
+  store.getState().upsertNodes([
+    {
+      pubkey: 'root',
+      label: 'Root',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'ready',
+      keywordHits: 0,
+      discoveredAt: 0,
+      source: 'root',
+    },
+  ])
+
+  const before = store.getState()
+  const result = store.getState().upsertNodePatches([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'ready',
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+  const after = store.getState()
+
+  assert.deepEqual(result.acceptedPubkeys, [])
+  assert.deepEqual(result.rejectedPubkeys, ['alice'])
+  assert.equal(after.graphCaps.capReached, true)
+  assert.equal(Object.keys(after.nodes).length, 1)
+  assert.equal(after.graphRevision, before.graphRevision)
+  assert.equal(after.nodeVisualRevision, before.nodeVisualRevision)
+  assert.equal(after.nodeDetailRevision, before.nodeDetailRevision)
+})

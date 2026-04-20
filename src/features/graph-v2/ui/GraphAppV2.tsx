@@ -31,6 +31,7 @@ import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridg
 import { GRAPH_V2_LAYERS } from '@/features/graph-v2/domain/invariants'
 import type {
   CanonicalGraphState,
+  CanonicalGraphUiState,
   CanonicalNode,
 } from '@/features/graph-v2/domain/types'
 import {
@@ -240,26 +241,13 @@ const createClientSceneSignature = (state: CanonicalGraphState) =>
     state.activeLayer,
     state.connectionsSourceLayer,
     state.selectedNodePubkey ?? 'no-selection',
-    Object.values(state.nodesByPubkey)
-      .map((node) =>
-        JSON.stringify([
-          node.pubkey,
-          node.label ?? '',
-          node.picture ?? '',
-          node.source,
-          node.discoveredAt ?? '',
-        ]),
-      )
-      .sort()
-      .join('|'),
-    Array.from(state.discoveryState.expandedNodePubkeys).sort().join(','),
-    Object.keys(state.nodesByPubkey).length,
-    Object.keys(state.edgesById).length,
     state.discoveryState.graphRevision,
     state.discoveryState.inboundGraphRevision,
     state.discoveryState.connectionsLinksRevision,
-    state.relayState.urls.join(','),
-    state.relayState.isGraphStale ? 'stale' : 'fresh',
+    state.nodeVisualRevision,
+    Array.from(state.discoveryState.expandedNodePubkeys).sort().join(','),
+    Object.keys(state.nodesByPubkey).length,
+    Object.keys(state.edgesById).length,
     Array.from(state.pinnedNodePubkeys).sort().join(','),
   ].join('|')
 
@@ -268,6 +256,13 @@ const withClientSceneSignature = (
 ): CanonicalGraphState => ({
   ...state,
   sceneSignature: createClientSceneSignature(state),
+})
+
+const pickFixtureUiState = (
+  state: CanonicalGraphState,
+): CanonicalGraphUiState => ({
+  relayState: state.relayState,
+  rootLoad: state.discoveryState.rootLoad,
 })
 
 // ── Sub-components (settings/relay content) ───────────────────────────────────
@@ -873,7 +868,16 @@ export default function GraphAppV2() {
     if (typeof window === 'undefined') return false
     return window.sessionStorage.getItem(IDENTITY_FIRST_RUN_HELP_KEY) === '1'
   })
-  const liveDomainState = useSyncExternalStore(bridge.subscribe, bridge.getState, bridge.getState)
+  const liveSceneState = useSyncExternalStore(
+    bridge.subscribeScene,
+    bridge.getSceneState,
+    bridge.getSceneState,
+  )
+  const liveUiState = useSyncExternalStore(
+    bridge.subscribeUi,
+    bridge.getUiState,
+    bridge.getUiState,
+  )
   const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
     () => (isFixtureMode ? createDragLocalFixture().state : null),
   )
@@ -941,21 +945,22 @@ export default function GraphAppV2() {
     return () => clearInterval(id)
   }, [])
 
-  const domainState = fixtureState ?? liveDomainState
+  const sceneState = fixtureState ?? liveSceneState
+  const uiState = fixtureState ? pickFixtureUiState(fixtureState) : liveUiState
   const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
 
   useEffect(() => {
-    if (domainState.rootPubkey && !isFixtureMode) {
+    if (sceneState.rootPubkey && !isFixtureMode) {
       setIsRootSheetOpen(false)
     }
-  }, [domainState.rootPubkey, isFixtureMode])
+  }, [sceneState.rootPubkey, isFixtureMode])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         if (isPersonSearchOpen) { setIsPersonSearchOpen(false); return }
         if (isSettingsOpen) { setIsSettingsOpen(false); return }
-        if (isRootSheetOpen && domainState.rootPubkey) { setIsRootSheetOpen(false); return }
+        if (isRootSheetOpen && sceneState.rootPubkey) { setIsRootSheetOpen(false); return }
         return
       }
       if (event.key === '/') {
@@ -967,7 +972,7 @@ export default function GraphAppV2() {
         }
         if (isRootSheetOpen) return
         event.preventDefault()
-        if (domainState.rootPubkey) {
+        if (sceneState.rootPubkey) {
           setIsSettingsOpen(false)
           setIsPersonSearchOpen(true)
           return
@@ -977,7 +982,7 @@ export default function GraphAppV2() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [domainState.rootPubkey, isPersonSearchOpen, isRootSheetOpen, isSettingsOpen])
+  }, [sceneState.rootPubkey, isPersonSearchOpen, isRootSheetOpen, isSettingsOpen])
 
   const callbacks = useMemo<GraphInteractionCallbacks>(
     () =>
@@ -1016,12 +1021,12 @@ export default function GraphAppV2() {
   const prevSignatureRef = useRef<string | null>(null)
   useEffect(() => {
     if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
-    const sig = domainState.sceneSignature
+    const sig = sceneState.sceneSignature
     const prev = prevSignatureRef.current
     if (prev !== null && prev !== sig) {
       const prevParts = prev.split('|')
       const nextParts = sig.split('|')
-      const KEYS = ['rootPubkey','activeLayer','connectionsSourceLayer','selectedNodePubkey','nodeVisuals','expandedNodePubkeys','nodeCount','edgeCount','graphRevision','inboundGraphRevision','connectionsLinksRevision','relayUrls','relayFreshness','pinnedNodePubkeys']
+      const KEYS = ['rootPubkey','activeLayer','connectionsSourceLayer','selectedNodePubkey','graphRevision','inboundGraphRevision','connectionsLinksRevision','nodeVisualRevision','expandedNodePubkeys','nodeCount','edgeCount','pinnedNodePubkeys']
       const changed = KEYS.filter((k, i) => prevParts[i] !== nextParts[i])
       console.info('[graph-v2 perf] sceneSignature changed:', changed.join(', '))
     }
@@ -1029,9 +1034,9 @@ export default function GraphAppV2() {
   })
 
   const scene = useMemo(
-    () => buildGraphSceneSnapshot(domainState),
+    () => buildGraphSceneSnapshot(sceneState),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [domainState.sceneSignature],
+    [sceneState.sceneSignature],
   )
   const deferredScene = useDeferredValue(scene)
   const deferredPersonSearchQuery = useDeferredValue(personSearchQuery)
@@ -1047,10 +1052,10 @@ export default function GraphAppV2() {
     () => applyPersonSearchHighlight(deferredScene, personSearchMatches),
     [deferredScene, personSearchMatches],
   )
-  const detail = useMemo(() => buildNodeDetailProjection(domainState), [domainState])
+  const detail = useMemo(() => buildNodeDetailProjection(sceneState), [sceneState])
 
   useEffect(() => {
-    if (isFixtureMode || !domainState.rootPubkey || deferredScene.render.nodes.length === 0) {
+    if (isFixtureMode || !sceneState.rootPubkey || deferredScene.render.nodes.length === 0) {
       return
     }
 
@@ -1071,7 +1076,7 @@ export default function GraphAppV2() {
       const selection = selectVisibleProfileWarmupPubkeys({
         viewportPubkeys,
         scenePubkeys,
-        nodesByPubkey: domainState.nodesByPubkey,
+        nodesByPubkey: sceneState.nodesByPubkey,
         attemptedAtByPubkey,
         inflightPubkeys,
         now,
@@ -1082,7 +1087,7 @@ export default function GraphAppV2() {
         buildVisibleProfileWarmupDebugSnapshot({
           viewportPubkeys,
           scenePubkeys,
-          nodesByPubkey: domainState.nodesByPubkey,
+          nodesByPubkey: sceneState.nodesByPubkey,
           attemptedAtByPubkey,
           inflightPubkeys,
           now,
@@ -1141,27 +1146,27 @@ export default function GraphAppV2() {
   }, [
     bridge,
     deferredScene.render.nodes,
-    domainState.nodesByPubkey,
-    domainState.rootPubkey,
+    sceneState.nodesByPubkey,
+    sceneState.rootPubkey,
     isFixtureMode,
   ])
 
-  const currentRootNode = domainState.rootPubkey
-    ? domainState.nodesByPubkey[domainState.rootPubkey] ?? null
+  const currentRootNode = sceneState.rootPubkey
+    ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
     : null
-  const rootLoadMessage = domainState.discoveryState.rootLoad.message
+  const rootLoadMessage = uiState.rootLoad.message
   const visibleLoadFeedback =
     loadFeedback === 'Cargando root...' && rootLoadMessage
       ? rootLoadMessage
       : loadFeedback ?? rootLoadMessage
-  const rootLoadStatus = domainState.discoveryState.rootLoad.status
+  const rootLoadStatus = uiState.rootLoad.status
   // Show overlay while the root is actively being fetched, but not inside the
   // loader modal (the modal has its own feedback) and not if we already have
   // a meaningful number of nodes drawn.
   const isGraphLoading =
     !isRootSheetOpen &&
     (isRootLoadScreenOpen ||
-      (domainState.rootPubkey !== null &&
+      (sceneState.rootPubkey !== null &&
         rootLoadStatus === 'loading' &&
         scene.render.nodes.length < 3))
   const isDragFixtureLab = fixtureName === 'drag-local'
@@ -1199,17 +1204,17 @@ export default function GraphAppV2() {
   }, [savedRoots, savedRootsHydrated, setSavedRootProfile])
 
   useEffect(() => {
-    if (!domainState.rootPubkey || !currentRootNode) return
+    if (!sceneState.rootPubkey || !currentRootNode) return
     if (!currentRootNode.label && !currentRootNode.picture && !currentRootNode.nip05 && !currentRootNode.about && !currentRootNode.lud16) return
     setSavedRootProfile(
-      domainState.rootPubkey,
+      sceneState.rootPubkey,
       mapCanonicalNodeToSavedRootProfile(currentRootNode),
       currentRootNode.profileFetchedAt ?? Date.now(),
     )
-  }, [currentRootNode, domainState.rootPubkey, setSavedRootProfile])
+  }, [currentRootNode, sceneState.rootPubkey, setSavedRootProfile])
 
   const togglePinnedNode = useCallback((pubkey: string) => {
-    const shouldPin = !domainState.pinnedNodePubkeys.has(pubkey)
+    const shouldPin = !sceneState.pinnedNodePubkeys.has(pubkey)
     sigmaHostRef.current?.setNodePinned(pubkey, shouldPin)
 
     if (!isFixtureMode) { bridge.togglePinnedNode(pubkey); return }
@@ -1219,7 +1224,7 @@ export default function GraphAppV2() {
       else pinnedNodePubkeys.add(pubkey)
       return { ...current, pinnedNodePubkeys }
     })
-  }, [bridge, domainState.pinnedNodePubkeys, isFixtureMode, updateFixtureState])
+  }, [bridge, sceneState.pinnedNodePubkeys, isFixtureMode, updateFixtureState])
 
   const handleToggleDetailPin = useCallback((pubkey: string) => {
     dismissIdentityHelp()
@@ -1280,7 +1285,7 @@ export default function GraphAppV2() {
   }, [physicsEnabled])
 
   const shouldEnableLiveZapFeed =
-    showZaps && !isFixtureMode && domainState.activeLayer !== 'connections'
+    showZaps && !isFixtureMode && sceneState.activeLayer !== 'connections'
   const handleLiveZap = useCallback((zap: ParsedZap) => {
     handleZap(zap)
   }, [handleZap])
@@ -1455,32 +1460,32 @@ export default function GraphAppV2() {
 
   // ── Derived values for UI components ───────────────────────────────────────
 
-  const hasRoot = domainState.rootPubkey !== null
+  const hasRoot = sceneState.rootPubkey !== null
 
   // Saved-roots profile snapshot as fallback while the kernel is still
   // hydrating `currentRootNode` — prevents empty avatar / display name on
   // first paint after selecting a saved root.
   const savedRootProfile = useMemo(() => {
-    if (!domainState.rootPubkey) return null
-    return savedRoots.find((r) => r.pubkey === domainState.rootPubkey)?.profile ?? null
-  }, [savedRoots, domainState.rootPubkey])
+    if (!sceneState.rootPubkey) return null
+    return savedRoots.find((r) => r.pubkey === sceneState.rootPubkey)?.profile ?? null
+  }, [savedRoots, sceneState.rootPubkey])
   const rootDisplayName =
     currentRootNode?.label ?? savedRootProfile?.displayName ?? savedRootProfile?.name ?? null
   const rootPictureUrl = currentRootNode?.picture ?? savedRootProfile?.picture ?? null
   const rootNpubEncoded = useMemo(() => {
-    return encodePubkeyAsNpub(domainState.rootPubkey)
-  }, [domainState.rootPubkey])
+    return encodePubkeyAsNpub(sceneState.rootPubkey)
+  }, [sceneState.rootPubkey])
 
   // Filter bar: active pill maps from active layer
   const filterActiveId = useMemo((): FilterPill['id'] => {
-    const layer = domainState.activeLayer
+    const layer = sceneState.activeLayer
     if (layer === 'following') return 'following'
     if (layer === 'followers') return 'followers'
     if (layer === 'mutuals') return 'mutuals'
     if (layer === 'connections') return 'connections'
     if (layer === 'following-non-followers' || layer === 'nonreciprocal-followers') return 'oneway'
     return 'all'
-  }, [domainState.activeLayer])
+  }, [sceneState.activeLayer])
 
   const filterPills: FilterPill[] = useMemo(() => [
     {
@@ -1533,16 +1538,16 @@ export default function GraphAppV2() {
     if (id === 'followers') { toggleLayer('followers'); return }
     if (id === 'mutuals')   { toggleLayer('mutuals'); return }
     if (id === 'connections') {
-      if (domainState.activeLayer === 'connections') return
+      if (sceneState.activeLayer === 'connections') return
       toggleLayer('connections')
       return
     }
     if (id === 'oneway') {
-      const cur = domainState.activeLayer
+      const cur = sceneState.activeLayer
       if (cur === 'following-non-followers' || cur === 'nonreciprocal-followers') return
       toggleLayer('following-non-followers')
     }
-  }, [domainState.activeLayer, toggleLayer])
+  }, [sceneState.activeLayer, toggleLayer])
 
   // HUD stats
   const hudStats: HudStat[] = useMemo(() => [
@@ -1556,8 +1561,8 @@ export default function GraphAppV2() {
     },
     {
       k: 'Relays',
-      v: `${domainState.relayState.isGraphStale ? Math.max(0, deferredScene.render.diagnostics.relayCount - 1) : deferredScene.render.diagnostics.relayCount}/${deferredScene.render.diagnostics.relayCount}`,
-      tone: domainState.relayState.isGraphStale ? 'warn' : 'good',
+      v: `${uiState.relayState.isGraphStale ? Math.max(0, uiState.relayState.urls.length - 1) : uiState.relayState.urls.length}/${uiState.relayState.urls.length}`,
+      tone: uiState.relayState.isGraphStale ? 'warn' : 'good',
     },
     {
       k: 'Frame',
@@ -1568,10 +1573,10 @@ export default function GraphAppV2() {
     avatarPerfSnapshot,
     deferredScene.physics.diagnostics.edgeCount,
     deferredScene.render.diagnostics.nodeCount,
-    deferredScene.render.diagnostics.relayCount,
     deferredScene.render.diagnostics.visibleEdgeCount,
-    domainState.relayState.isGraphStale,
     physicsEnabled,
+    uiState.relayState.isGraphStale,
+    uiState.relayState.urls.length,
   ])
 
   // Rail buttons — every entry is a DIRECT action or toggle.
@@ -1584,14 +1589,14 @@ export default function GraphAppV2() {
   }, [])
 
   const handleOpenPersonSearch = useCallback(() => {
-    if (!domainState.rootPubkey) {
+    if (!sceneState.rootPubkey) {
       setIsRootSheetOpen(true)
       return
     }
     setIsRootSheetOpen(false)
     setIsSettingsOpen(false)
     setIsPersonSearchOpen(true)
-  }, [domainState.rootPubkey])
+  }, [sceneState.rootPubkey])
 
   const handleClearPersonSearch = useCallback(() => {
     setPersonSearchQuery('')
@@ -1635,12 +1640,12 @@ export default function GraphAppV2() {
   }, [])
 
   const handleStaleRelays = useCallback(() => {
-    if (!domainState.relayState.isGraphStale) {
+    if (!uiState.relayState.isGraphStale) {
       setActionFeedback('Relays al dia: no hay override para revertir.')
       return
     }
     void handleRevertRelays()
-  }, [domainState.relayState.isGraphStale, handleRevertRelays])
+  }, [handleRevertRelays, uiState.relayState.isGraphStale])
 
   const handleCopyNpub = useCallback((npub: string) => {
     void copyToClipboard(npub)
@@ -1674,7 +1679,7 @@ export default function GraphAppV2() {
     const profileWarmup = buildVisibleProfileWarmupDebugSnapshot({
       viewportPubkeys,
       scenePubkeys,
-      nodesByPubkey: domainState.nodesByPubkey,
+      nodesByPubkey: sceneState.nodesByPubkey,
       attemptedAtByPubkey: visibleProfileWarmupAttemptedAtRef.current,
       inflightPubkeys: visibleProfileWarmupInflightRef.current,
       now: Date.now(),
@@ -1705,7 +1710,7 @@ export default function GraphAppV2() {
     setActionFeedback(
       `Debug de avatares descargado. ${drawnImages}/${withPicture} fotos dibujadas; ${loadCandidates}/${visibleNodes} nodos visibles en cola útil.`,
     )
-  }, [deferredScene.render.nodes, domainState.nodesByPubkey])
+  }, [deferredScene.render.nodes, sceneState.nodesByPubkey])
 
   const handleShareImage = useCallback(() => {
     if (isSocialCaptureBusy) {
@@ -1891,9 +1896,9 @@ export default function GraphAppV2() {
     },
     {
       id: 'stale',
-      tip: domainState.relayState.isGraphStale ? 'Revertir relays' : 'Relays al día',
+      tip: uiState.relayState.isGraphStale ? 'Revertir relays' : 'Relays al día',
       icon: <ClockIcon />,
-      active: domainState.relayState.isGraphStale,
+      active: uiState.relayState.isGraphStale,
       onClick: handleStaleRelays,
       dividerAfter: true,
     },
@@ -1907,7 +1912,6 @@ export default function GraphAppV2() {
       onClick: handleOpenPersonSearch,
     },
   ], [
-    domainState.relayState.isGraphStale,
     handleOpenPersonSearch,
     handleRecenter,
     handleStaleRelays,
@@ -1920,6 +1924,7 @@ export default function GraphAppV2() {
     personSearchQuery,
     physicsEnabled,
     showZaps,
+    uiState.relayState.isGraphStale,
   ])
 
   // Toasts — combine feedback sources
@@ -1989,11 +1994,11 @@ export default function GraphAppV2() {
       case 'relays':
         return (
           <RelayEditor
-            isGraphStale={domainState.relayState.isGraphStale}
+            isGraphStale={uiState.relayState.isGraphStale}
             onApply={handleApplyRelays}
             onRevert={handleRevertRelays}
-            overrideStatus={domainState.relayState.overrideStatus}
-            relayUrls={domainState.relayState.urls}
+            overrideStatus={uiState.relayState.overrideStatus}
+            relayUrls={uiState.relayState.urls}
           />
         )
       case 'dev':
@@ -2041,13 +2046,13 @@ export default function GraphAppV2() {
               {[
                 ['Topología render', String(deferredScene.render.diagnostics.topologySignature)],
                 ['Topología física', String(deferredScene.physics.diagnostics.topologySignature)],
-                ['Relays',       String(deferredScene.render.diagnostics.relayCount)],
-                ['Pinned',       String(domainState.pinnedNodePubkeys.size)],
+                ['Relays',       String(uiState.relayState.urls.length)],
+                ['Pinned',       String(sceneState.pinnedNodePubkeys.size)],
                 ['Viewport',     isFixtureMode
                   ? (lastViewportRatio ? `${lastViewportRatio.toFixed(2)}×` : 'idle')
                   : (controller.getLastViewport() ? `${controller.getLastViewport()?.ratio.toFixed(2)}×` : 'idle')],
-                ['Capa activa',  domainState.activeLayer],
-                ['Root',         domainState.rootPubkey ? 'cargado' : 'vacío'],
+                ['Capa activa',  sceneState.activeLayer],
+                ['Root',         sceneState.rootPubkey ? 'cargado' : 'vacío'],
               ].map(([k, v]) => (
                 <div className="sg-diag-row" key={k as string}>
                   <span className="sg-diag-row__k">{k}</span>
@@ -2098,7 +2103,7 @@ export default function GraphAppV2() {
   const renderDetailContent = () => {
     if (!detail.node) return null
 
-    const isRootNode = detail.pubkey === domainState.rootPubkey
+    const isRootNode = detail.pubkey === sceneState.rootPubkey
     const relBadge = isRootNode ? 'IDENTIDAD RAÍZ' :
       (detail.mutualCount > 0) ? 'MUTUO' :
       detail.followingCount > 0 ? 'LO SIGO' :
@@ -2359,7 +2364,7 @@ export default function GraphAppV2() {
       {/* Loading overlay — while root data is arriving */}
       {isGraphLoading && (
         <SigmaLoadingOverlay
-          identityLabel={rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null}
+          identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
           message={visibleLoadFeedback}
           nodeCount={displayScene.render.nodes.length}
         />
@@ -2371,7 +2376,7 @@ export default function GraphAppV2() {
         onSwitchRoot={handleOpenRootSheet}
         onShareFormatChange={setSocialCaptureFormat}
         onShareImage={isDev ? handleShareImage : undefined}
-        rootDisplayName={hasRoot ? (rootDisplayName ?? domainState.rootPubkey?.slice(0, 10) ?? null) : null}
+        rootDisplayName={hasRoot ? (rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null) : null}
         rootNpub={rootNpubEncoded}
         rootPictureUrl={rootPictureUrl}
         shareBusy={isSocialCaptureBusy}

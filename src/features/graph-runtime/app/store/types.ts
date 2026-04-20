@@ -263,6 +263,8 @@ export interface ReplaceGraphSnapshotInput {
   inboundLinks: GraphLink[]
 }
 
+export type GraphNodePatch = { pubkey: string } & Partial<GraphNode>
+
 export interface ToggleDeepUserSelectionResult {
   selectedDeepUserPubkeys: string[]
   slotsRemaining: number
@@ -281,6 +283,8 @@ export interface GraphSlice {
   connectionsLinksRevision: number
   graphRevision: number
   inboundGraphRevision: number
+  nodeVisualRevision: number
+  nodeDetailRevision: number
   rootNodePubkey: string | null
   graphCaps: GraphCaps
   expandedNodePubkeys: Set<string>
@@ -288,6 +292,7 @@ export interface GraphSlice {
   nodeStructurePreviewStates: Record<string, NodeStructurePreviewState>
   setRootNodePubkey: (pubkey: string | null) => void
   upsertNodes: (nodes: GraphNode[]) => UpsertGraphNodesResult
+  upsertNodePatches: (patches: GraphNodePatch[]) => UpsertGraphNodesResult
   replaceGraphSnapshot: (
     snapshot: ReplaceGraphSnapshotInput,
   ) => UpsertGraphNodesResult

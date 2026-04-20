@@ -1,5 +1,6 @@
 ﻿import type { Filter } from 'nostr-tools'
 
+import type { GraphNodePatch } from '@/features/graph-runtime/app/store/types'
 import type { NodeDetailProfile } from '@/features/graph-runtime/kernel/runtime'
 import type { KernelContext } from '@/features/graph-runtime/kernel/modules/context'
 import type { ProfileRecord } from '@/features/graph-runtime/db/entities'
@@ -24,7 +25,50 @@ import {
 import { getTerminalAvatarFailureForPicture } from '@/features/graph-runtime/debug/avatarTerminalFailures'
 import { normalizeMediaUrl } from '@/lib/media'
 
+const PROFILE_PATCH_BUFFER_FLUSH_MS = 16
+const PROFILE_PATCH_BUFFER_MAX = 64
+
 export function createProfileHydrationModule(ctx: KernelContext) {
+  const pendingNodePatches = new Map<string, GraphNodePatch>()
+  let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+  const flushPendingNodePatches = () => {
+    if (pendingFlushTimer !== null) {
+      clearTimeout(pendingFlushTimer)
+      pendingFlushTimer = null
+    }
+
+    if (pendingNodePatches.size === 0) {
+      return
+    }
+
+    const patches = Array.from(pendingNodePatches.values())
+    pendingNodePatches.clear()
+    ctx.store.getState().upsertNodePatches(patches)
+  }
+
+  const queueNodePatch = (patch: GraphNodePatch) => {
+    const previousPatch = pendingNodePatches.get(patch.pubkey)
+    pendingNodePatches.set(
+      patch.pubkey,
+      previousPatch ? mergeNodePatch(previousPatch, patch) : patch,
+    )
+
+    if (pendingNodePatches.size >= PROFILE_PATCH_BUFFER_MAX) {
+      flushPendingNodePatches()
+      return
+    }
+
+    if (pendingFlushTimer !== null) {
+      return
+    }
+
+    pendingFlushTimer = setTimeout(() => {
+      pendingFlushTimer = null
+      flushPendingNodePatches()
+    }, PROFILE_PATCH_BUFFER_FLUSH_MS)
+  }
+
   const markBatchProfilesMissing = (batch: readonly string[]) => {
     for (const pubkey of batch) {
       const existingNode = ctx.store.getState().nodes[pubkey]
@@ -32,7 +76,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
         continue
       }
 
-      markNodeProfileMissing(pubkey)
+      markNodeProfileMissing(pubkey, { buffered: true })
     }
   }
 
@@ -78,6 +122,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             profileCreatedAt: cachedProfile.createdAt,
             profileFetchedAt: cachedProfile.fetchedAt,
           },
+          { buffered: true },
         )
       }
     } catch (error) {
@@ -211,12 +256,13 @@ export function createProfileHydrationModule(ctx: KernelContext) {
                       null,
                       parsed.picture,
                     ).nextPicture,
-                    fallbackPicture: summarizeAvatarPictureTransition(
-                      null,
-                      profileOverrides?.picture,
-                    ).nextPicture,
-                  }
+                  fallbackPicture: summarizeAvatarPictureTransition(
+                    null,
+                    profileOverrides?.picture,
+                  ).nextPicture,
+                }
                 : undefined,
+              { buffered: true },
             )
             syncedPubkeys.add(envelope.event.pubkey)
             return true
@@ -327,7 +373,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             if (!existingNode || existingNode.profileState === 'ready') {
               continue
             }
-            markNodeProfileMissing(pubkey)
+            markNodeProfileMissing(pubkey, { buffered: true })
           }
         } catch {
           if (isStale()) {
@@ -343,7 +389,9 @@ export function createProfileHydrationModule(ctx: KernelContext) {
         NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY,
         processBatch,
       )
+      flushPendingNodePatches()
     } finally {
+      flushPendingNodePatches()
       adapter.close()
     }
   }
@@ -428,6 +476,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     pubkey: string,
     profile: NodeDetailProfile,
     traceContext?: Record<string, unknown>,
+    options?: { buffered?: boolean },
   ): void {
     const existingNode = ctx.store.getState().nodes[pubkey]
 
@@ -475,23 +524,31 @@ export function createProfileHydrationModule(ctx: KernelContext) {
       })
     }
 
-    ctx.store.getState().upsertNodes([
-      {
-        ...existingNode,
-        label: profile.name ?? undefined,
-        picture: nextPicture,
-        about: profile.about,
-        nip05: profile.nip05,
-        lud16: profile.lud16,
-        profileEventId: profile.eventId,
-        profileFetchedAt: profile.fetchedAt,
-        profileSource: profile.profileSource ?? null,
-        profileState: 'ready',
-      },
-    ])
+    const patch: GraphNodePatch = {
+      pubkey,
+      label: profile.name ?? undefined,
+      picture: nextPicture,
+      about: profile.about,
+      nip05: profile.nip05,
+      lud16: profile.lud16,
+      profileEventId: profile.eventId,
+      profileFetchedAt: profile.fetchedAt,
+      profileSource: profile.profileSource ?? null,
+      profileState: 'ready',
+    }
+
+    if (options?.buffered) {
+      queueNodePatch(patch)
+      return
+    }
+
+    ctx.store.getState().upsertNodePatches([patch])
   }
 
-  function markNodeProfileMissing(pubkey: string): void {
+  function markNodeProfileMissing(
+    pubkey: string,
+    options?: { buffered?: boolean },
+  ): void {
     const existingNode = ctx.store.getState().nodes[pubkey]
 
     if (!existingNode || existingNode.profileState === 'ready') {
@@ -510,19 +567,24 @@ export function createProfileHydrationModule(ctx: KernelContext) {
       })
     }
 
-    ctx.store.getState().upsertNodes([
-      {
-        ...existingNode,
-        picture: null,
-        about: null,
-        nip05: null,
-        lud16: null,
-        profileEventId: null,
-        profileFetchedAt: null,
-        profileSource: null,
-        profileState: 'missing',
-      },
-    ])
+    const patch: GraphNodePatch = {
+      pubkey,
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'missing',
+    }
+
+    if (options?.buffered) {
+      queueNodePatch(patch)
+      return
+    }
+
+    ctx.store.getState().upsertNodePatches([patch])
   }
 
   return { hydrateNodeProfiles, syncNodeProfile, markNodeProfileMissing }
@@ -531,6 +593,23 @@ export function createProfileHydrationModule(ctx: KernelContext) {
 export type ProfileHydrationModule = ReturnType<
   typeof createProfileHydrationModule
 >
+
+const mergeNodePatch = (
+  existingPatch: GraphNodePatch,
+  nextPatch: GraphNodePatch,
+): GraphNodePatch => {
+  const mergedPatch = { ...existingPatch }
+
+  for (const [key, value] of Object.entries(nextPatch) as Array<
+    [keyof GraphNodePatch, GraphNodePatch[keyof GraphNodePatch]]
+  >) {
+    if (value !== undefined) {
+      Object.assign(mergedPatch, { [key]: value })
+    }
+  }
+
+  return mergedPatch
+}
 
 const hasUsefulProfileFields = (profile: {
   name?: string | null

@@ -1,4 +1,4 @@
-import type { CanonicalEdge, CanonicalGraphState } from '@/features/graph-v2/domain/types'
+import type { CanonicalEdge, CanonicalGraphSceneState } from '@/features/graph-v2/domain/types'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
 import {
   createCanonicalEdgeId,
@@ -151,7 +151,7 @@ const buildNonReciprocalEdges = (
   )
 
 const projectionCache = new WeakMap<
-  CanonicalGraphState['edgesById'],
+  CanonicalGraphSceneState['edgesById'],
   Map<string, LayerProjection>
 >()
 
@@ -169,7 +169,7 @@ const getExpandedNodePubkeysSignature = (pubkeys: ReadonlySet<string>) => {
 }
 
 const createProjectionCacheKey = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
   layer: GraphV2Layer,
 ) =>
   [
@@ -185,7 +185,7 @@ let _projCalls = 0
 let _projHits = 0
 
 export const buildLayerProjection = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
   layer: GraphV2Layer = state.activeLayer,
 ): LayerProjection => {
   const isPerfEnabled =
@@ -222,7 +222,7 @@ export const getProjectionCacheStats = () => ({
 })
 
 const computeLayerProjection = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
   layer: GraphV2Layer,
 ): LayerProjection => {
   const allEdges = Object.values(state.edgesById)

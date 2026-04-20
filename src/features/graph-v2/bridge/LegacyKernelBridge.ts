@@ -1,4 +1,5 @@
-﻿import type {
+import type {
+  AppStore,
   AppStoreApi,
   ConnectionsSourceLayer,
   UiLayer,
@@ -12,7 +13,24 @@ import {
 } from '@/features/graph-runtime/kernel/runtime'
 import { GraphDomainStore } from '@/features/graph-v2/application/GraphDomainStore'
 import { LegacyStoreSnapshotAdapter } from '@/features/graph-v2/bridge/LegacyStoreSnapshotAdapter'
+import type {
+  CanonicalGraphSceneState,
+  CanonicalGraphState,
+  CanonicalGraphUiState,
+} from '@/features/graph-v2/domain/types'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
+
+interface StoreWithSelector<TState> {
+  subscribe(listener: (state: TState, previousState: TState) => void): () => void
+  subscribe<TSlice>(
+    selector: (state: TState) => TSlice,
+    listener: (slice: TSlice, previousSlice: TSlice) => void,
+    options?: {
+      equalityFn?: (left: TSlice, right: TSlice) => boolean
+      fireImmediately?: boolean
+    },
+  ): () => void
+}
 
 interface LegacyKernelBridgeOptions {
   runtime?: RootLoader
@@ -29,7 +47,19 @@ export class LegacyKernelBridge {
 
   private readonly snapshotAdapter = new LegacyStoreSnapshotAdapter()
 
-  private unsubscribe: (() => void) | null = null
+  private unsubscribeScene: (() => void) | null = null
+
+  private unsubscribeUi: (() => void) | null = null
+
+  private readonly sceneListeners = new Set<() => void>()
+
+  private readonly uiListeners = new Set<() => void>()
+
+  private readonly compatibilityListeners = new Set<() => void>()
+
+  private uiState: CanonicalGraphUiState
+
+  private combinedState: CanonicalGraphState
 
   public constructor({
     runtime,
@@ -44,30 +74,69 @@ export class LegacyKernelBridge {
 
     this.runtime = runtime ?? browserAppKernel
     this.store = store ?? browserAppStore
-    this.domainStore =
-      domainStore ??
-      new GraphDomainStore(this.snapshotAdapter.adapt(this.store.getState()))
+
+    const initialSceneState = this.snapshotAdapter.adaptScene(this.store.getState())
+    this.uiState = this.snapshotAdapter.adaptUi(this.store.getState())
+    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    this.domainStore = domainStore ?? new GraphDomainStore(initialSceneState)
     this.connect()
   }
 
-  public getState = () => this.domainStore.getState()
+  public getState = () => this.combinedState
 
-  public subscribe = (listener: () => void) => this.domainStore.subscribe(listener)
+  public getSceneState = () => this.domainStore.getState()
+
+  public getUiState = () => this.uiState
+
+  public subscribe = (listener: () => void) => {
+    this.compatibilityListeners.add(listener)
+    return () => {
+      this.compatibilityListeners.delete(listener)
+    }
+  }
+
+  public subscribeScene = (listener: () => void) => {
+    this.sceneListeners.add(listener)
+    return () => {
+      this.sceneListeners.delete(listener)
+    }
+  }
+
+  public subscribeUi = (listener: () => void) => {
+    this.uiListeners.add(listener)
+    return () => {
+      this.uiListeners.delete(listener)
+    }
+  }
 
   public connect() {
-    if (this.unsubscribe !== null) {
+    if (this.unsubscribeScene !== null || this.unsubscribeUi !== null) {
       return
     }
 
-    this.domainStore.replaceState(this.snapshotAdapter.adapt(this.store.getState()))
-    this.unsubscribe = this.store.subscribe((state) => {
-      this.domainStore.replaceState(this.snapshotAdapter.adapt(state))
-    })
+    this.replaceSceneState(this.snapshotAdapter.adaptScene(this.store.getState()))
+    this.replaceUiState(this.snapshotAdapter.adaptUi(this.store.getState()))
+
+    const selectorStore = this.store as AppStoreApi & StoreWithSelector<AppStore>
+    this.unsubscribeScene = selectorStore.subscribe(
+      (state) => this.snapshotAdapter.adaptScene(state),
+      (sceneState) => {
+        this.replaceSceneState(sceneState)
+      },
+    )
+    this.unsubscribeUi = selectorStore.subscribe(
+      (state) => this.snapshotAdapter.adaptUi(state),
+      (uiState) => {
+        this.replaceUiState(uiState)
+      },
+    )
   }
 
   public dispose() {
-    this.unsubscribe?.()
-    this.unsubscribe = null
+    this.unsubscribeScene?.()
+    this.unsubscribeUi?.()
+    this.unsubscribeScene = null
+    this.unsubscribeUi = null
   }
 
   public async loadRoot(pubkey: string, options?: LoadRootOptions) {
@@ -125,5 +194,34 @@ export class LegacyKernelBridge {
 
   public clearPinnedNodes() {
     this.store.getState().clearPinnedNodes()
+  }
+
+  private replaceSceneState(nextSceneState: CanonicalGraphSceneState) {
+    const previousSceneState = this.domainStore.getState()
+    if (previousSceneState === nextSceneState) {
+      return
+    }
+
+    this.domainStore.replaceState(nextSceneState)
+    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    this.emit(this.sceneListeners)
+    this.emit(this.compatibilityListeners)
+  }
+
+  private replaceUiState(nextUiState: CanonicalGraphUiState) {
+    if (this.uiState === nextUiState) {
+      return
+    }
+
+    this.uiState = nextUiState
+    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    this.emit(this.uiListeners)
+    this.emit(this.compatibilityListeners)
+  }
+
+  private emit(listeners: ReadonlySet<() => void>) {
+    for (const listener of listeners) {
+      listener()
+    }
   }
 }

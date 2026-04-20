@@ -28,6 +28,8 @@ const createState = (
   },
   edgesById: {},
   sceneSignature: 'detail-test-scene',
+  nodeVisualRevision: 1,
+  nodeDetailRevision: 0,
   rootPubkey: 'root',
   activeLayer: 'graph',
   connectionsSourceLayer: 'following',

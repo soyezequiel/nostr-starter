@@ -79,8 +79,6 @@ export interface GraphRenderDiagnostics {
   activeLayer: GraphV2Layer
   nodeCount: number
   visibleEdgeCount: number
-  relayCount: number
-  isGraphStale: boolean
   topologySignature: string
 }
 

@@ -89,6 +89,8 @@ const createState = (
     },
   },
   sceneSignature: `test-scene-${sceneCounter += 1}`,
+  nodeVisualRevision: 1,
+  nodeDetailRevision: 0,
   rootPubkey: 'root',
   activeLayer: 'following',
   connectionsSourceLayer: 'following',

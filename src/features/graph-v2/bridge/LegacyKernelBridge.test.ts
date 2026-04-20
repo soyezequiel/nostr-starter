@@ -124,6 +124,50 @@ test('reuses the adapted canonical snapshot when unrelated legacy UI state chang
   bridge.dispose()
 })
 
+test('subscribeUi receives root load updates without invalidating the scene snapshot', () => {
+  const store = createAppStore()
+  const bridge = new LegacyKernelBridge({
+    runtime: createRuntimeStub(),
+    store,
+    domainStore: new GraphDomainStore(),
+  })
+
+  const firstSceneState = bridge.getSceneState()
+  const firstUiState = bridge.getUiState()
+  let sceneEmits = 0
+  let uiEmits = 0
+  let compatibilityEmits = 0
+  const unsubscribeScene = bridge.subscribeScene(() => {
+    sceneEmits += 1
+  })
+  const unsubscribeUi = bridge.subscribeUi(() => {
+    uiEmits += 1
+  })
+  const unsubscribeCompatibility = bridge.subscribe(() => {
+    compatibilityEmits += 1
+  })
+
+  store.getState().setRootLoadState({
+    status: 'loading',
+    message: 'Descubriendo links visibles...',
+    loadedFrom: 'none',
+    visibleLinkProgress: null,
+  })
+
+  assert.equal(sceneEmits, 0)
+  assert.equal(uiEmits, 1)
+  assert.equal(compatibilityEmits, 1)
+  assert.equal(bridge.getSceneState(), firstSceneState)
+  assert.notEqual(bridge.getUiState(), firstUiState)
+  assert.equal(bridge.getUiState().rootLoad.status, 'loading')
+  assert.equal(bridge.getState().discoveryState.rootLoad.message, 'Descubriendo links visibles...')
+
+  unsubscribeScene()
+  unsubscribeUi()
+  unsubscribeCompatibility()
+  bridge.dispose()
+})
+
 test('rebuilds only the affected adapted slices when graph data changes', () => {
   const store = createAppStore()
   const bridge = new LegacyKernelBridge({
@@ -133,6 +177,8 @@ test('rebuilds only the affected adapted slices when graph data changes', () => 
   })
 
   const initialState = bridge.getState()
+  const initialSceneState = bridge.getSceneState()
+  const initialUiState = bridge.getUiState()
 
   store.getState().upsertNodes([
     {
@@ -149,8 +195,12 @@ test('rebuilds only the affected adapted slices when graph data changes', () => 
   ])
 
   const nextState = bridge.getState()
+  const nextSceneState = bridge.getSceneState()
+  const nextUiState = bridge.getUiState()
 
   assert.notEqual(nextState, initialState)
+  assert.notEqual(nextSceneState, initialSceneState)
+  assert.equal(nextUiState, initialUiState)
   assert.notEqual(nextState.nodesByPubkey, initialState.nodesByPubkey)
   assert.equal(nextState.edgesById, initialState.edgesById)
   assert.equal(nextState.relayState, initialState.relayState)

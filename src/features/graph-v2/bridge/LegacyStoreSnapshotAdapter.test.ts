@@ -30,7 +30,8 @@ test('keeps the scene signature stable for progress and relay health updates', (
   state.upsertLinks([{ source: 'root', target: 'alice', relation: 'follow' }])
 
   const adapter = new LegacyStoreSnapshotAdapter()
-  const first = adapter.adapt(store.getState())
+  const firstScene = adapter.adaptScene(store.getState())
+  const firstUi = adapter.adaptUi(store.getState())
 
   store.getState().setRootLoadState({
     message: 'Descubriendo links visibles...',
@@ -58,9 +59,12 @@ test('keeps the scene signature stable for progress and relay health updates', (
     status: 'connected',
     lastCheckedAt: 1,
   })
-  const second = adapter.adapt(store.getState())
+  const secondScene = adapter.adaptScene(store.getState())
+  const secondUi = adapter.adaptUi(store.getState())
 
-  assert.equal(second.sceneSignature, first.sceneSignature)
+  assert.equal(secondScene, firstScene)
+  assert.notEqual(secondUi, firstUi)
+  assert.equal(secondScene.sceneSignature, firstScene.sceneSignature)
 })
 
 test('keeps the scene signature stable for non-visual node updates', () => {
@@ -88,22 +92,21 @@ test('keeps the scene signature stable for non-visual node updates', () => {
   state.upsertLinks([{ source: 'root', target: 'alice', relation: 'follow' }])
 
   const adapter = new LegacyStoreSnapshotAdapter()
-  const first = adapter.adapt(store.getState())
+  const first = adapter.adaptScene(store.getState())
 
-  store.getState().upsertNodes([
+  store.getState().upsertNodePatches([
     {
       pubkey: 'alice',
-      label: 'Alice',
-      keywordHits: 0,
-      discoveredAt: 1,
+      about: 'Profile detail update',
       profileFetchedAt: 2,
       profileState: 'loading',
-      source: 'follow',
     },
   ])
-  const second = adapter.adapt(store.getState())
+  const second = adapter.adaptScene(store.getState())
 
-  assert.equal(second.discoveryState.graphRevision, first.discoveryState.graphRevision + 1)
+  assert.equal(second.discoveryState.graphRevision, first.discoveryState.graphRevision)
+  assert.equal(second.nodeVisualRevision, first.nodeVisualRevision)
+  assert.equal(second.nodeDetailRevision, first.nodeDetailRevision + 1)
   assert.equal(second.sceneSignature, first.sceneSignature)
 })
 
@@ -132,20 +135,18 @@ test('changes the scene signature for visual node updates', () => {
   state.upsertLinks([{ source: 'root', target: 'alice', relation: 'follow' }])
 
   const adapter = new LegacyStoreSnapshotAdapter()
-  const first = adapter.adapt(store.getState())
+  const first = adapter.adaptScene(store.getState())
 
-  store.getState().upsertNodes([
+  store.getState().upsertNodePatches([
     {
       pubkey: 'alice',
       label: 'Alice Updated',
-      keywordHits: 0,
-      discoveredAt: 1,
-      profileState: 'ready',
-      source: 'follow',
     },
   ])
-  const second = adapter.adapt(store.getState())
+  const second = adapter.adaptScene(store.getState())
 
+  assert.equal(second.nodeVisualRevision, first.nodeVisualRevision + 1)
+  assert.equal(second.nodeDetailRevision, first.nodeDetailRevision)
   assert.notEqual(second.sceneSignature, first.sceneSignature)
 })
 
@@ -165,16 +166,16 @@ test('projects the fixed root into the canonical pinned set and scene signature'
   ])
 
   const adapter = new LegacyStoreSnapshotAdapter()
-  const before = adapter.adapt(store.getState())
+  const before = adapter.adaptScene(store.getState())
 
   state.setFixedRootPubkey('root')
-  const pinned = adapter.adapt(store.getState())
+  const pinned = adapter.adaptScene(store.getState())
 
   assert.equal(pinned.pinnedNodePubkeys.has('root'), true)
   assert.notEqual(pinned.sceneSignature, before.sceneSignature)
 
   state.setFixedRootPubkey(null)
-  const released = adapter.adapt(store.getState())
+  const released = adapter.adaptScene(store.getState())
 
   assert.equal(released.pinnedNodePubkeys.has('root'), false)
   assert.notEqual(released.sceneSignature, pinned.sceneSignature)

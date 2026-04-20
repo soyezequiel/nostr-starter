@@ -3,6 +3,7 @@
   GraphCaps,
   GraphLink,
   GraphNode,
+  GraphNodePatch,
   NodeExpansionState,
   NodeStructurePreviewState,
   GraphSlice,
@@ -49,6 +50,8 @@ export const createInitialGraphSliceState = (): Pick<
   | 'connectionsLinksRevision'
   | 'graphRevision'
   | 'inboundGraphRevision'
+  | 'nodeVisualRevision'
+  | 'nodeDetailRevision'
   | 'rootNodePubkey'
   | 'graphCaps'
   | 'expandedNodePubkeys'
@@ -64,6 +67,8 @@ export const createInitialGraphSliceState = (): Pick<
   connectionsLinksRevision: 0,
   graphRevision: 0,
   inboundGraphRevision: 0,
+  nodeVisualRevision: 0,
+  nodeDetailRevision: 0,
   rootNodePubkey: null,
   graphCaps: createInitialGraphCaps(),
   expandedNodePubkeys: new Set(),
@@ -115,34 +120,164 @@ const buildInboundAdjacencyFromLinks = (links: readonly GraphLink[]) => {
   return adjacency
 }
 
-const hasGraphNodeChanged = (left: GraphNode, right: GraphNode) =>
-  left.pubkey !== right.pubkey ||
-  left.label !== right.label ||
-  left.picture !== right.picture ||
-  left.about !== right.about ||
-  left.nip05 !== right.nip05 ||
-  left.lud16 !== right.lud16 ||
-  left.profileEventId !== right.profileEventId ||
-  left.profileFetchedAt !== right.profileFetchedAt ||
-  left.profileSource !== right.profileSource ||
-  left.profileState !== right.profileState ||
-  left.keywordHits !== right.keywordHits ||
-  left.discoveredAt !== right.discoveredAt ||
-  left.source !== right.source
-
 const mergeGraphNodePatch = (
-  existingNode: GraphNode,
-  incomingNode: GraphNode,
-): GraphNode => {
+  existingNode: GraphNodePatch,
+  incomingNode: GraphNodePatch,
+): GraphNodePatch => {
   const nextNode = { ...existingNode }
   for (const [key, value] of Object.entries(incomingNode) as Array<
-    [keyof GraphNode, GraphNode[keyof GraphNode]]
+    [keyof GraphNodePatch, GraphNodePatch[keyof GraphNodePatch]]
   >) {
     if (value !== undefined) {
       Object.assign(nextNode, { [key]: value })
     }
   }
   return nextNode
+}
+
+const hasGraphNodeVisualChange = (left: GraphNode, right: GraphNode) =>
+  left.pubkey !== right.pubkey ||
+  left.label !== right.label ||
+  left.picture !== right.picture ||
+  left.keywordHits !== right.keywordHits ||
+  left.discoveredAt !== right.discoveredAt ||
+  left.source !== right.source
+
+const hasGraphNodeDetailChange = (left: GraphNode, right: GraphNode) =>
+  left.about !== right.about ||
+  left.nip05 !== right.nip05 ||
+  left.lud16 !== right.lud16 ||
+  left.profileEventId !== right.profileEventId ||
+  left.profileFetchedAt !== right.profileFetchedAt ||
+  left.profileSource !== right.profileSource ||
+  left.profileState !== right.profileState
+
+const hasGraphNodeChanged = (left: GraphNode, right: GraphNode) =>
+  hasGraphNodeVisualChange(left, right) || hasGraphNodeDetailChange(left, right)
+
+const isCompleteGraphNode = (
+  patch: GraphNodePatch,
+): patch is GraphNode => (
+  typeof patch.keywordHits === 'number' &&
+  'discoveredAt' in patch &&
+  typeof patch.source === 'string'
+)
+
+const applyNodePatches = ({
+  state,
+  patches,
+}: {
+  state: Pick<
+    GraphSlice,
+    | 'nodes'
+    | 'graphCaps'
+    | 'graphRevision'
+    | 'nodeVisualRevision'
+    | 'nodeDetailRevision'
+  >
+  patches: readonly GraphNodePatch[]
+}) => {
+  const nextNodes = { ...state.nodes }
+  const acceptedPubkeys: string[] = []
+  const rejectedPubkeys: string[] = []
+  let capReached = state.graphCaps.capReached
+  let nodesChanged = false
+  let capsChanged = false
+  let structureChanged = false
+  let visualChanged = false
+  let detailChanged = false
+
+  for (const patch of patches) {
+    const existingNode = nextNodes[patch.pubkey]
+
+    if (existingNode) {
+      const nextNode = mergeGraphNodePatch(existingNode, patch) as GraphNode
+      if (hasGraphNodeChanged(existingNode, nextNode)) {
+        if ((existingNode.picture ?? null) !== (nextNode.picture ?? null)) {
+          traceAvatarFlow('graphStore.upsertNode.pictureChanged', {
+            pubkey: patch.pubkey,
+            pubkeyShort: truncateAvatarPubkey(patch.pubkey),
+            patchHasPicture: Object.prototype.hasOwnProperty.call(
+              patch,
+              'picture',
+            ),
+            previousProfileState: existingNode.profileState,
+            nextProfileState: nextNode.profileState,
+            previousProfileSource: existingNode.profileSource,
+            nextProfileSource: nextNode.profileSource,
+            previousNodeSource: existingNode.source,
+            nextNodeSource: nextNode.source,
+            ...summarizeAvatarPictureTransition(
+              existingNode.picture,
+              nextNode.picture,
+            ),
+          })
+        }
+
+        visualChanged =
+          hasGraphNodeVisualChange(existingNode, nextNode) || visualChanged
+        detailChanged =
+          hasGraphNodeDetailChange(existingNode, nextNode) || detailChanged
+        nextNodes[patch.pubkey] = nextNode
+        nodesChanged = true
+      }
+
+      acceptedPubkeys.push(patch.pubkey)
+      continue
+    }
+
+    if (!isCompleteGraphNode(patch)) {
+      rejectedPubkeys.push(patch.pubkey)
+      continue
+    }
+
+    if (getNodeCount(nextNodes) >= state.graphCaps.maxNodes) {
+      if (!capReached) {
+        capReached = true
+        capsChanged = true
+      }
+      if (patch.picture) {
+        traceAvatarFlow('graphStore.upsertNode.rejectedWithPicture', {
+          pubkey: patch.pubkey,
+          pubkeyShort: truncateAvatarPubkey(patch.pubkey),
+          maxNodes: state.graphCaps.maxNodes,
+          currentNodeCount: getNodeCount(nextNodes),
+          ...summarizeAvatarPictureTransition(null, patch.picture),
+        })
+      }
+      rejectedPubkeys.push(patch.pubkey)
+      continue
+    }
+
+    if (patch.picture) {
+      traceAvatarFlow('graphStore.upsertNode.createdWithPicture', {
+        pubkey: patch.pubkey,
+        pubkeyShort: truncateAvatarPubkey(patch.pubkey),
+        profileState: patch.profileState,
+        profileSource: patch.profileSource,
+        nodeSource: patch.source,
+        ...summarizeAvatarPictureTransition(null, patch.picture),
+      })
+    }
+
+    nextNodes[patch.pubkey] = patch
+    acceptedPubkeys.push(patch.pubkey)
+    nodesChanged = true
+    structureChanged = true
+    visualChanged = true
+  }
+
+  return {
+    nextNodes,
+    acceptedPubkeys,
+    rejectedPubkeys,
+    capReached,
+    capsChanged,
+    nodesChanged,
+    structureChanged,
+    visualChanged,
+    detailChanged,
+  }
 }
 
 export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
@@ -152,93 +287,68 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
   },
   upsertNodes: (incomingNodes) => {
     const state = get()
-    const nextNodes = { ...state.nodes }
-    const acceptedPubkeys: string[] = []
-    const rejectedPubkeys: string[] = []
-    let capReached = state.graphCaps.capReached
-    let changed = false
-    let capsChanged = false
+    const result = applyNodePatches({
+      state,
+      patches: incomingNodes,
+    })
 
-    for (const node of incomingNodes) {
-      const existingNode = nextNodes[node.pubkey]
-
-      if (existingNode) {
-        const nextNode = mergeGraphNodePatch(existingNode, node)
-        if (hasGraphNodeChanged(existingNode, nextNode)) {
-          if ((existingNode.picture ?? null) !== (nextNode.picture ?? null)) {
-            traceAvatarFlow('graphStore.upsertNode.pictureChanged', {
-              pubkey: node.pubkey,
-              pubkeyShort: truncateAvatarPubkey(node.pubkey),
-              patchHasPicture: Object.prototype.hasOwnProperty.call(
-                node,
-                'picture',
-              ),
-              previousProfileState: existingNode.profileState,
-              nextProfileState: nextNode.profileState,
-              previousProfileSource: existingNode.profileSource,
-              nextProfileSource: nextNode.profileSource,
-              previousNodeSource: existingNode.source,
-              nextNodeSource: nextNode.source,
-              ...summarizeAvatarPictureTransition(
-                existingNode.picture,
-                nextNode.picture,
-              ),
-            })
-          }
-          nextNodes[node.pubkey] = nextNode
-          changed = true
-        }
-        acceptedPubkeys.push(node.pubkey)
-        continue
-      }
-
-      if (getNodeCount(nextNodes) >= state.graphCaps.maxNodes) {
-        if (!capReached) {
-          capReached = true
-          capsChanged = true
-        }
-        if (node.picture) {
-          traceAvatarFlow('graphStore.upsertNode.rejectedWithPicture', {
-            pubkey: node.pubkey,
-            pubkeyShort: truncateAvatarPubkey(node.pubkey),
-            maxNodes: state.graphCaps.maxNodes,
-            currentNodeCount: getNodeCount(nextNodes),
-            ...summarizeAvatarPictureTransition(null, node.picture),
-          })
-        }
-        rejectedPubkeys.push(node.pubkey)
-        continue
-      }
-
-      if (node.picture) {
-        traceAvatarFlow('graphStore.upsertNode.createdWithPicture', {
-          pubkey: node.pubkey,
-          pubkeyShort: truncateAvatarPubkey(node.pubkey),
-          profileState: node.profileState,
-          profileSource: node.profileSource,
-          nodeSource: node.source,
-          ...summarizeAvatarPictureTransition(null, node.picture),
-        })
-      }
-      nextNodes[node.pubkey] = node
-      acceptedPubkeys.push(node.pubkey)
-      changed = true
-    }
-
-    if (changed || capsChanged) {
+    if (result.nodesChanged || result.capsChanged) {
       set({
-        nodes: nextNodes,
-        graphRevision: changed ? state.graphRevision + 1 : state.graphRevision,
+        nodes: result.nextNodes,
+        graphRevision:
+          state.graphRevision + (result.structureChanged ? 1 : 0),
+        nodeVisualRevision:
+          state.nodeVisualRevision + (result.visualChanged ? 1 : 0),
+        nodeDetailRevision:
+          state.nodeDetailRevision + (result.detailChanged ? 1 : 0),
         graphCaps: {
           ...state.graphCaps,
-          capReached,
+          capReached: result.capReached,
         },
       })
     }
 
     return {
-      acceptedPubkeys,
-      rejectedPubkeys,
+      acceptedPubkeys: result.acceptedPubkeys,
+      rejectedPubkeys: result.rejectedPubkeys,
+    }
+  },
+  upsertNodePatches: (patches) => {
+    const state = get()
+    const mergedPatchesByPubkey = new Map<string, GraphNodePatch>()
+
+    for (const patch of patches) {
+      const previousPatch = mergedPatchesByPubkey.get(patch.pubkey)
+      mergedPatchesByPubkey.set(
+        patch.pubkey,
+        previousPatch ? mergeGraphNodePatch(previousPatch, patch) : patch,
+      )
+    }
+
+    const result = applyNodePatches({
+      state,
+      patches: Array.from(mergedPatchesByPubkey.values()),
+    })
+
+    if (result.nodesChanged || result.capsChanged) {
+      set({
+        nodes: result.nextNodes,
+        graphRevision:
+          state.graphRevision + (result.structureChanged ? 1 : 0),
+        nodeVisualRevision:
+          state.nodeVisualRevision + (result.visualChanged ? 1 : 0),
+        nodeDetailRevision:
+          state.nodeDetailRevision + (result.detailChanged ? 1 : 0),
+        graphCaps: {
+          ...state.graphCaps,
+          capReached: result.capReached,
+        },
+      })
+    }
+
+    return {
+      acceptedPubkeys: result.acceptedPubkeys,
+      rejectedPubkeys: result.rejectedPubkeys,
     }
   },
   replaceGraphSnapshot: (snapshot: ReplaceGraphSnapshotInput) => {
@@ -297,6 +407,8 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       connectionsLinksRevision: 0,
       graphRevision: state.graphRevision + 1,
       inboundGraphRevision: state.inboundGraphRevision + 1,
+      nodeVisualRevision: state.nodeVisualRevision + 1,
+      nodeDetailRevision: state.nodeDetailRevision + 1,
       rootNodePubkey: snapshot.rootNodePubkey,
       graphCaps: {
         ...state.graphCaps,
@@ -386,6 +498,7 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       inboundLinks: nextInboundLinks,
       inboundAdjacency: nextInboundAdjacency,
       graphRevision: state.graphRevision + 1,
+      nodeVisualRevision: state.nodeVisualRevision + 1,
       expandedNodePubkeys: nextExpandedNodePubkeys,
       nodeExpansionStates: nextNodeExpansionStates,
       nodeStructurePreviewStates: nextNodeStructurePreviewStates,
@@ -547,6 +660,8 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
       },
       graphRevision: state.graphRevision + 1,
       inboundGraphRevision: state.inboundGraphRevision + 1,
+      nodeVisualRevision: state.nodeVisualRevision + 1,
+      nodeDetailRevision: state.nodeDetailRevision + 1,
     })
   },
 })

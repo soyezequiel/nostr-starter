@@ -1,4 +1,4 @@
-import type { CanonicalEdge, CanonicalGraphState } from '@/features/graph-v2/domain/types'
+import type { CanonicalEdge, CanonicalGraphSceneState } from '@/features/graph-v2/domain/types'
 import {
   getAccountTraceConfig,
   isAccountTraceRoot,
@@ -83,7 +83,7 @@ const getCommonNodeColor = (pubkey: string) => {
 }
 
 const resolveBaseNodeColor = (
-  node: CanonicalGraphState['nodesByPubkey'][string],
+  node: CanonicalGraphSceneState['nodesByPubkey'][string],
 ) => (node.source === 'root' ? ROOT_COLOR : getCommonNodeColor(node.pubkey))
 
 const isFollowEvidenceRelation = (relation: CanonicalEdge['relation']) =>
@@ -130,6 +130,25 @@ const sortAndDedupeSceneEdges = (edges: readonly CanonicalEdge[]) => {
   return Array.from(edgesById.values()).sort((left, right) =>
     left.id.localeCompare(right.id),
   )
+}
+
+const shouldIncludeFocusedContextEdge = ({
+  activeLayer,
+  edge,
+  visibleEdgeIds,
+}: {
+  activeLayer: CanonicalGraphSceneState['activeLayer']
+  edge: CanonicalEdge
+  visibleEdgeIds: ReadonlySet<string>
+}) => {
+  if (visibleEdgeIds.has(edge.id)) {
+    return true
+  }
+
+  // `following` keeps the selected node's follow neighborhood in physics even
+  // when those edges arrive through the connections origin, but filtered layers
+  // like `mutuals` must stay faithful to their own edge set.
+  return activeLayer === 'following' && edge.relation === 'follow'
 }
 
 const resolveFocusState = ({
@@ -292,7 +311,7 @@ class ForceEdgeEligibilityPolicy implements PhysicsEligibilityPolicy {
 
 const DEFAULT_PHYSICS_ELIGIBILITY_POLICY = new ForceEdgeEligibilityPolicy()
 
-const snapshotCache = new WeakMap<CanonicalGraphState, GraphSceneSnapshot>()
+const snapshotCache = new WeakMap<CanonicalGraphSceneState, GraphSceneSnapshot>()
 const snapshotSignatureCache = new Map<string, GraphSceneSnapshot>()
 const MAX_SNAPSHOT_SIGNATURE_CACHE_ENTRIES = 24
 
@@ -317,7 +336,7 @@ const rememberSnapshotBySignature = (
 }
 
 export const buildGraphSceneSnapshot = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
 ): GraphSceneSnapshot => {
   const isPerfEnabled =
     typeof process !== 'undefined' &&
@@ -357,7 +376,7 @@ export const getSnapshotCacheStats = () => ({
 })
 
 const computeGraphSceneSnapshot = (
-  state: CanonicalGraphState,
+  state: CanonicalGraphSceneState,
 ): GraphSceneSnapshot => {
   const layerProjection = buildLayerProjection(state)
   const visibleEdgeIds = new Set(
@@ -377,10 +396,11 @@ const computeGraphSceneSnapshot = (
           ...(hasVisualFocus
             ? Object.values(state.edgesById).filter(
                 (edge) =>
-                  // Solo aristas que ya pertenecen a la capa activa: evita que
-                  // capas filtradas (ej: 'mutuals') muestren conexiones no mutuas
-                  // al seleccionar un nodo.
-                  visibleEdgeIds.has(edge.id) &&
+                  shouldIncludeFocusedContextEdge({
+                    activeLayer: state.activeLayer,
+                    edge,
+                    visibleEdgeIds,
+                  }) &&
                   visibleNodePubkeys.has(edge.source) &&
                   visibleNodePubkeys.has(edge.target) &&
                   (edge.source === visualFocusPubkey ||
@@ -597,8 +617,6 @@ const computeGraphSceneSnapshot = (
         activeLayer: state.activeLayer,
         nodeCount: renderNodes.length,
         visibleEdgeCount: visibleEdges.length,
-        relayCount: state.relayState.urls.length,
-        isGraphStale: state.relayState.isGraphStale,
         topologySignature: [
           state.rootPubkey ?? 'no-root',
           state.activeLayer,
