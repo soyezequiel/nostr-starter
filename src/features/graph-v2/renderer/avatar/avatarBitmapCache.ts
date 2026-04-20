@@ -1,4 +1,9 @@
 import { getAvatarMonogram, getAvatarMonogramPalette } from '@/lib/avatarMonogram'
+import {
+  summarizeAvatarUrlKey,
+  traceAvatarFlow,
+  traceAvatarVerboseFlow,
+} from '@/features/graph-runtime/debug/avatarTrace'
 import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
 import type {
   AvatarCacheDebugSnapshot,
@@ -227,6 +232,12 @@ export class AvatarBitmapCache {
       startedAt: Date.now(),
     }
     this.entries.set(urlKey, entry)
+    traceAvatarVerboseFlow('renderer.avatarBitmapCache.markLoading', () => ({
+      urlKey: summarizeAvatarUrlKey(urlKey),
+      bucket,
+      cacheSize: this.entries.size,
+      capacity: this.cap,
+    }))
     return entry
   }
 
@@ -252,6 +263,15 @@ export class AvatarBitmapCache {
     }
     this.entries.set(urlKey, entry)
     this.totalBytes += bytes
+    traceAvatarFlow('renderer.avatarBitmapCache.markReady', () => ({
+      urlKey: summarizeAvatarUrlKey(urlKey),
+      bucket,
+      bytes,
+      totalBytes: this.totalBytes,
+      cacheSize: this.entries.size,
+      capacity: this.cap,
+      previousState: previous?.state ?? null,
+    }))
     this.evictIfNeeded()
     return entry
   }
@@ -275,10 +295,18 @@ export class AvatarBitmapCache {
       reason,
     }
     this.entries.set(urlKey, entry)
+    traceAvatarFlow('renderer.avatarBitmapCache.markFailed', () => ({
+      urlKey: summarizeAvatarUrlKey(urlKey),
+      reason,
+      expiresAt: entry.expiresAt,
+      cacheSize: this.entries.size,
+      capacity: this.cap,
+      previousState: previous?.state ?? null,
+    }))
     return entry
   }
 
-  public delete(urlKey: AvatarUrlKey) {
+  public delete(urlKey: AvatarUrlKey, reason = 'explicit') {
     const entry = this.entries.get(urlKey)
     if (!entry) {
       return
@@ -288,9 +316,21 @@ export class AvatarBitmapCache {
       closeBitmap(entry.bitmap)
     }
     this.entries.delete(urlKey)
+    traceAvatarFlow('renderer.avatarBitmapCache.delete', () => ({
+      urlKey: summarizeAvatarUrlKey(urlKey),
+      reason,
+      previousState: entry.state,
+      previousBucket: 'bucket' in entry ? entry.bucket : null,
+      totalBytes: this.totalBytes,
+      cacheSize: this.entries.size,
+      capacity: this.cap,
+    }))
   }
 
   public clear() {
+    const beforeSize = this.entries.size
+    const beforeMonograms = this.monograms.size
+    const beforeBytes = this.totalBytes
     for (const entry of this.entries.values()) {
       if (entry.state === 'ready') {
         closeBitmap(entry.bitmap)
@@ -299,6 +339,13 @@ export class AvatarBitmapCache {
     this.entries.clear()
     this.monograms.clear()
     this.totalBytes = 0
+    if (beforeSize > 0 || beforeMonograms > 0) {
+      traceAvatarFlow('renderer.avatarBitmapCache.clear', {
+        clearedEntries: beforeSize,
+        clearedMonograms: beforeMonograms,
+        clearedBytes: beforeBytes,
+      })
+    }
   }
 
   public size(): number {
@@ -355,6 +402,10 @@ export class AvatarBitmapCache {
     }
     if (entry.state === 'failed' && entry.expiresAt <= Date.now()) {
       this.entries.delete(urlKey)
+      traceAvatarFlow('renderer.avatarBitmapCache.failedExpired', () => ({
+        urlKey: summarizeAvatarUrlKey(urlKey),
+        reason: entry.reason,
+      }))
       return undefined
     }
     if (touch) {
@@ -367,6 +418,10 @@ export class AvatarBitmapCache {
     for (const [urlKey, entry] of this.entries) {
       if (entry.state === 'failed' && entry.expiresAt <= now) {
         this.entries.delete(urlKey)
+        traceAvatarFlow('renderer.avatarBitmapCache.failedExpired', () => ({
+          urlKey: summarizeAvatarUrlKey(urlKey),
+          reason: entry.reason,
+        }))
       }
     }
   }
@@ -386,7 +441,7 @@ export class AvatarBitmapCache {
       toEvict.push(next.value)
     }
     for (const key of toEvict) {
-      this.delete(key)
+      this.delete(key, 'lru_capacity')
     }
   }
 

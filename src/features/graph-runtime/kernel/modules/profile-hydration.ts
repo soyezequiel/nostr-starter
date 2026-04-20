@@ -15,6 +15,12 @@ import {
   runWithConcurrencyLimit,
   safeParseProfile,
 } from '@/features/graph-runtime/kernel/modules/helpers'
+import {
+  isAvatarTraceEnabled,
+  summarizeAvatarPictureTransition,
+  traceAvatarFlow,
+  truncateAvatarPubkey,
+} from '@/features/graph-runtime/debug/avatarTrace'
 import { normalizeMediaUrl } from '@/lib/media'
 
 export function createProfileHydrationModule(ctx: KernelContext) {
@@ -65,6 +71,12 @@ export function createProfileHydrationModule(ctx: KernelContext) {
         syncNodeProfile(
           cachedProfile.pubkey,
           mapProfileRecordToNodeProfile(cachedProfile),
+          {
+            inputSource: 'profile-cache',
+            profileEventId: cachedProfile.eventId,
+            profileCreatedAt: cachedProfile.createdAt,
+            profileFetchedAt: cachedProfile.fetchedAt,
+          },
         )
       }
     } catch (error) {
@@ -173,16 +185,38 @@ export function createProfileHydrationModule(ctx: KernelContext) {
               latestProfileOverridesByPubkey.delete(envelope.event.pubkey)
             }
 
-            syncNodeProfile(envelope.event.pubkey, {
-              eventId: envelope.event.id,
-              fetchedAt: envelope.receivedAtMs,
-              profileSource,
-              name: parsed.name,
-              about: parsed.about,
-              picture: profileOverrides?.picture ?? parsed.picture,
-              nip05: parsed.nip05,
-              lud16: parsed.lud16,
-            })
+            syncNodeProfile(
+              envelope.event.pubkey,
+              {
+                eventId: envelope.event.id,
+                fetchedAt: envelope.receivedAtMs,
+                profileSource,
+                name: parsed.name,
+                about: parsed.about,
+                picture: profileOverrides?.picture ?? parsed.picture,
+                nip05: parsed.nip05,
+                lud16: parsed.lud16,
+              },
+              isAvatarTraceEnabled()
+                ? {
+                    inputSource: 'profile-envelope',
+                    relayUrl: envelope.relayUrl,
+                    profileSource,
+                    eventId: envelope.event.id,
+                    eventCreatedAt: envelope.event.created_at,
+                    receivedAtMs: envelope.receivedAtMs,
+                    mediaFallbackApplied: Boolean(profileOverrides?.picture),
+                    rawPicture: summarizeAvatarPictureTransition(
+                      null,
+                      parsed.picture,
+                    ).nextPicture,
+                    fallbackPicture: summarizeAvatarPictureTransition(
+                      null,
+                      profileOverrides?.picture,
+                    ).nextPicture,
+                  }
+                : undefined,
+            )
             syncedPubkeys.add(envelope.event.pubkey)
             return true
           }
@@ -389,11 +423,31 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     )
   }
 
-  function syncNodeProfile(pubkey: string, profile: NodeDetailProfile): void {
+  function syncNodeProfile(
+    pubkey: string,
+    profile: NodeDetailProfile,
+    traceContext?: Record<string, unknown>,
+  ): void {
     const existingNode = ctx.store.getState().nodes[pubkey]
 
     if (!existingNode) {
       return
+    }
+
+    if ((existingNode.picture ?? null) !== (profile.picture ?? null)) {
+      traceAvatarFlow('profileHydration.syncNodeProfile.pictureChanged', {
+        pubkey,
+        pubkeyShort: truncateAvatarPubkey(pubkey),
+        previousProfileState: existingNode.profileState,
+        nextProfileState: 'ready',
+        previousProfileSource: existingNode.profileSource,
+        nextProfileSource: profile.profileSource ?? null,
+        ...summarizeAvatarPictureTransition(
+          existingNode.picture,
+          profile.picture,
+        ),
+        ...(traceContext ?? {}),
+      })
     }
 
     ctx.store.getState().upsertNodes([
@@ -417,6 +471,18 @@ export function createProfileHydrationModule(ctx: KernelContext) {
 
     if (!existingNode || existingNode.profileState === 'ready') {
       return
+    }
+
+    if (existingNode.picture) {
+      traceAvatarFlow('profileHydration.markNodeProfileMissing.pictureCleared', {
+        pubkey,
+        pubkeyShort: truncateAvatarPubkey(pubkey),
+        previousProfileState: existingNode.profileState,
+        nextProfileState: 'missing',
+        previousProfileSource: existingNode.profileSource,
+        nextProfileSource: null,
+        ...summarizeAvatarPictureTransition(existingNode.picture, null),
+      })
     }
 
     ctx.store.getState().upsertNodes([

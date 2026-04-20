@@ -7,6 +7,10 @@ import type {
   AvatarLoaderDebugSnapshot,
 } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import type { AvatarBitmap, AvatarUrlKey } from '@/features/graph-v2/renderer/avatar/types'
+import {
+  summarizeAvatarUrl,
+  traceAvatarFlow,
+} from '@/features/graph-runtime/debug/avatarTrace'
 import { buildSocialAvatarProxyUrl } from '@/features/graph-v2/renderer/socialAvatarProxy'
 
 const FETCH_TIMEOUT_MS = 8000
@@ -198,19 +202,42 @@ export class AvatarLoader {
         throw err
       }
       fetchError = err
+      traceAvatarFlow('renderer.avatarLoader.fetchFailed', () => ({
+        url: summarizeAvatarUrl(url),
+        bucket,
+        reason: extractAvatarLoadFailureReason(err),
+      }))
     }
 
     const proxyUrl = allowProxyFallback
       ? buildRuntimeAvatarProxyUrl(url, this.proxyOrigin)
       : null
     if (proxyUrl) {
+      traceAvatarFlow('renderer.avatarLoader.proxyFallback.start', () => ({
+        sourceUrl: summarizeAvatarUrl(url),
+        proxyUrl: summarizeAvatarUrl(proxyUrl),
+        bucket,
+      }))
       try {
-        return await this.loadViaFetch(proxyUrl, bucket, signal)
+        const loaded = await this.loadViaFetch(proxyUrl, bucket, signal)
+        traceAvatarFlow('renderer.avatarLoader.proxyFallback.ready', () => ({
+          sourceUrl: summarizeAvatarUrl(url),
+          proxyUrl: summarizeAvatarUrl(proxyUrl),
+          bucket,
+          bytes: loaded.bytes,
+        }))
+        return loaded
       } catch (err) {
         if (signal.aborted || isAbortError(err)) {
           throw err
         }
         fetchError = err
+        traceAvatarFlow('renderer.avatarLoader.proxyFallback.failed', () => ({
+          sourceUrl: summarizeAvatarUrl(url),
+          proxyUrl: summarizeAvatarUrl(proxyUrl),
+          bucket,
+          reason: extractAvatarLoadFailureReason(err),
+        }))
       }
     }
 
@@ -218,14 +245,31 @@ export class AvatarLoader {
       throw fetchError
     }
 
+    traceAvatarFlow('renderer.avatarLoader.imageElementFallback.start', () => ({
+      url: summarizeAvatarUrl(url),
+      bucket,
+      preservedReason: extractAvatarLoadFailureReason(fetchError),
+    }))
     try {
-      return await this.loadViaImageElement(url, bucket, signal)
+      const loaded = await this.loadViaImageElement(url, bucket, signal)
+      traceAvatarFlow('renderer.avatarLoader.imageElementFallback.ready', () => ({
+        url: summarizeAvatarUrl(url),
+        bucket,
+        bytes: loaded.bytes,
+      }))
+      return loaded
     } catch (fallbackErr) {
       if (signal.aborted || isAbortError(fallbackErr)) {
         throw fallbackErr
       }
       // Preserve the fetch/proxy error reason where possible; the img element
       // only reports a generic load failure.
+      traceAvatarFlow('renderer.avatarLoader.imageElementFallback.failed', () => ({
+        url: summarizeAvatarUrl(url),
+        bucket,
+        fallbackReason: extractAvatarLoadFailureReason(fallbackErr),
+        preservedReason: extractAvatarLoadFailureReason(fetchError),
+      }))
       throw fetchError
     }
   }
@@ -319,6 +363,19 @@ const mergeSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
 
 const isAbortError = (err: unknown) =>
   (err as { name?: string } | null)?.name === 'AbortError'
+
+const extractAvatarLoadFailureReason = (err: unknown) => {
+  const candidate = err as
+    | { reason?: string; message?: string; name?: string }
+    | null
+    | undefined
+  return (
+    candidate?.reason ??
+    candidate?.message ??
+    candidate?.name ??
+    'avatar_load_failed'
+  )
+}
 
 const readBrowserOrigin = () => {
   if (typeof globalThis === 'undefined') {

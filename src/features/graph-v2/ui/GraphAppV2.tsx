@@ -482,16 +482,12 @@ function DragTuningPanel({
 }
 
 function RenderOptionsPanel({
-  hideAvatarsOnMove,
   avatarRuntimeOptions,
   avatarPerfSnapshot,
-  onHideAvatarsOnMoveChange,
   onAvatarRuntimeOptionsChange,
 }: {
-  hideAvatarsOnMove: boolean
   avatarRuntimeOptions: AvatarRuntimeOptions
   avatarPerfSnapshot: PerfBudgetSnapshot | null
-  onHideAvatarsOnMoveChange: (enabled: boolean) => void
   onAvatarRuntimeOptionsChange: (options: AvatarRuntimeOptions) => void
 }) {
   const perfStatusLabel = avatarPerfSnapshot
@@ -556,12 +552,15 @@ function RenderOptionsPanel({
       </div>
       <div className="sg-setting-row">
         <div>
-          <div className="sg-setting-row__lbl">Ocultar durante pan/drag</div>
-          <div className="sg-setting-row__desc">Cambia a monograma durante movimiento</div>
+          <div className="sg-setting-row__lbl">Ocultar fotos en movimiento</div>
+          <div className="sg-setting-row__desc">Pasa a monograma durante pan/drag o cuando el nodo cambia rápido de posición en pantalla</div>
         </div>
         <button
-          className={`sg-toggle${hideAvatarsOnMove ? ' sg-toggle--on' : ''}`}
-          onClick={() => onHideAvatarsOnMoveChange(!hideAvatarsOnMove)}
+          className={`sg-toggle${avatarRuntimeOptions.hideImagesOnFastNodes ? ' sg-toggle--on' : ''}`}
+          onClick={() => onAvatarRuntimeOptionsChange({
+            ...avatarRuntimeOptions,
+            hideImagesOnFastNodes: !avatarRuntimeOptions.hideImagesOnFastNodes,
+          })}
           type="button"
         />
       </div>
@@ -637,17 +636,6 @@ function RenderOptionsPanel({
           step={4}
           type="range"
           value={avatarRuntimeOptions.hoverRevealMaxNodes}
-        />
-      </div>
-      <div className="sg-setting-row">
-        <div>
-          <div className="sg-setting-row__lbl">Ocultar foto si el nodo se mueve</div>
-          <div className="sg-setting-row__desc">Pasa a monograma mientras ese nodo cambia de posición en pantalla</div>
-        </div>
-        <button
-          className={`sg-toggle${avatarRuntimeOptions.hideImagesOnFastNodes ? ' sg-toggle--on' : ''}`}
-          onClick={() => onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, hideImagesOnFastNodes: !avatarRuntimeOptions.hideImagesOnFastNodes })}
-          type="button"
         />
       </div>
       <div className="sg-setting-row">
@@ -891,7 +879,6 @@ export default function GraphAppV2() {
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(false)
-  const [hideAvatarsOnMove, setHideAvatarsOnMove] = useState(false)
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
@@ -1989,9 +1976,7 @@ export default function GraphAppV2() {
           <RenderOptionsPanel
             avatarPerfSnapshot={avatarPerfSnapshot}
             avatarRuntimeOptions={avatarRuntimeOptions}
-            hideAvatarsOnMove={hideAvatarsOnMove}
             onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
-            onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
           />
         )
       case 'relays':
@@ -2030,9 +2015,7 @@ export default function GraphAppV2() {
             <RenderOptionsPanel
               avatarPerfSnapshot={avatarPerfSnapshot}
               avatarRuntimeOptions={avatarRuntimeOptions}
-              hideAvatarsOnMove={hideAvatarsOnMove}
               onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
-              onHideAvatarsOnMoveChange={setHideAvatarsOnMove}
             />
             <PhysicsTuningPanel
               onChange={updatePhysicsTuning}
@@ -2358,7 +2341,7 @@ export default function GraphAppV2() {
         callbacks={callbacks}
         dragInfluenceTuning={dragInfluenceTuning}
         enableDebugProbe={isTestMode}
-        hideAvatarsOnMove={hideAvatarsOnMove}
+        hideAvatarsOnMove={stableAvatarRuntimeOptions.hideImagesOnFastNodes}
         onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
         physicsAutoFreezeEnabled={isDev ? devPhysicsAutoFreezeEnabled : true}
         physicsTuning={physicsTuning}

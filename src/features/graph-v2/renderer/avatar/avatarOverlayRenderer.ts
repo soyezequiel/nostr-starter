@@ -11,6 +11,10 @@ import type {
   AvatarBitmapCache,
   MonogramInput,
 } from '@/features/graph-v2/renderer/avatar/avatarBitmapCache'
+import {
+  isAvatarTraceEnabled,
+  traceAvatarFlow,
+} from '@/features/graph-runtime/debug/avatarTrace'
 import type {
   AvatarLoaderBlockDebugEntry,
   AvatarOverlayDebugSnapshot,
@@ -390,6 +394,8 @@ export class AvatarOverlayRenderer {
   private lastCameraSignature: string | null = null
   private lastVisibleNodePubkeys: string[] = []
   private lastDebugSnapshot: AvatarOverlayDebugSnapshot | null = null
+  private lastAvatarTraceSignature: string | null = null
+  private lastAvatarTraceAtMs = 0
   private readonly boundAfterRender: () => void
   private disposed = false
 
@@ -632,6 +638,7 @@ export class AvatarOverlayRenderer {
         byCacheState: {},
         nodes: [],
       }
+      this.traceFrameSummary(nowMs, this.lastDebugSnapshot)
       this.pruneMotionSamples(seenNodes)
       return
     }
@@ -920,6 +927,7 @@ export class AvatarOverlayRenderer {
       byCacheState,
       nodes: debugNodes,
     }
+    this.traceFrameSummary(nowMs, this.lastDebugSnapshot)
 
     this.pruneMotionSamples(seenNodes)
     if (moving && !budget.showAllVisibleImages) {
@@ -927,6 +935,57 @@ export class AvatarOverlayRenderer {
       return
     }
     this.scheduler.reconcile(candidates, schedulerBudget)
+  }
+
+  private traceFrameSummary(
+    nowMs: number,
+    snapshot: AvatarOverlayDebugSnapshot,
+  ) {
+    if (!isAvatarTraceEnabled()) {
+      return
+    }
+    if (
+      snapshot.counts.visibleNodes === 0 &&
+      snapshot.counts.nodesWithPictureUrl === 0
+    ) {
+      return
+    }
+
+    const signature = JSON.stringify({
+      moving: snapshot.moving,
+      globalMotionActive: snapshot.globalMotionActive,
+      counts: snapshot.counts,
+      byDisableReason: snapshot.byDisableReason,
+      byLoadSkipReason: snapshot.byLoadSkipReason,
+      byDrawFallbackReason: snapshot.byDrawFallbackReason,
+      byCacheState: snapshot.byCacheState,
+      resolvedBudget: snapshot.resolvedBudget,
+    })
+
+    if (signature === this.lastAvatarTraceSignature) {
+      return
+    }
+    if (
+      this.lastAvatarTraceSignature !== null &&
+      nowMs - this.lastAvatarTraceAtMs < 1000
+    ) {
+      return
+    }
+
+    this.lastAvatarTraceSignature = signature
+    this.lastAvatarTraceAtMs = nowMs
+    traceAvatarFlow('renderer.avatarOverlay.frameSummary', {
+      generatedAtMs: snapshot.generatedAtMs,
+      cameraRatio: snapshot.cameraRatio,
+      moving: snapshot.moving,
+      globalMotionActive: snapshot.globalMotionActive,
+      counts: snapshot.counts,
+      byDisableReason: snapshot.byDisableReason,
+      byLoadSkipReason: snapshot.byLoadSkipReason,
+      byDrawFallbackReason: snapshot.byDrawFallbackReason,
+      byCacheState: snapshot.byCacheState,
+      resolvedBudget: snapshot.resolvedBudget,
+    })
   }
 
   private drawAvatarCircle({

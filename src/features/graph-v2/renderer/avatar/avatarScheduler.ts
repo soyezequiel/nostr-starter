@@ -1,4 +1,10 @@
 import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
+import {
+  summarizeAvatarUrl,
+  summarizeAvatarUrlKey,
+  traceAvatarFlow,
+  truncateAvatarPubkey,
+} from '@/features/graph-runtime/debug/avatarTrace'
 
 import {
   AvatarBitmapCache,
@@ -203,8 +209,16 @@ export class AvatarScheduler {
     }
 
     this.nextUrgentRetryAt.set(candidate.urlKey, now + URGENT_RETRY_TTL_MS)
-    this.cache.delete(candidate.urlKey)
+    this.cache.delete(candidate.urlKey, 'urgent_retry')
     this.loader.unblock(candidate.urlKey)
+    traceAvatarFlow('renderer.avatarScheduler.urgentRetry', () => ({
+      pubkey: candidate.pubkey,
+      pubkeyShort: truncateAvatarPubkey(candidate.pubkey),
+      urlKey: summarizeAvatarUrlKey(candidate.urlKey),
+      bucket: candidate.bucket,
+      priority: candidate.priority,
+      retryAt: now + URGENT_RETRY_TTL_MS,
+    }))
     return true
   }
 
@@ -272,7 +286,7 @@ export class AvatarScheduler {
         }
 
         if (isAbortError(err)) {
-          this.cache.delete(candidate.urlKey)
+          this.cache.delete(candidate.urlKey, 'load_abort_error')
           return
         }
 
@@ -406,7 +420,7 @@ export class AvatarScheduler {
     })
     entry.controller.abort(reason)
     this.inflight.delete(urlKey)
-    this.cache.delete(urlKey)
+    this.cache.delete(urlKey, `inflight_${reason}`)
   }
 
   private recordEvent(event: AvatarSchedulerEventDebugSnapshot) {
@@ -417,6 +431,20 @@ export class AvatarScheduler {
         this.recentEvents.length - MAX_RECENT_DEBUG_EVENTS,
       )
     }
+    traceAvatarFlow(`renderer.avatarScheduler.${event.type}`, () => ({
+      at: event.at,
+      type: event.type,
+      pubkey: event.pubkey,
+      pubkeyShort: truncateAvatarPubkey(event.pubkey),
+      url: summarizeAvatarUrl(event.url),
+      urlKey: summarizeAvatarUrlKey(event.urlKey),
+      host: event.host,
+      bucket: event.bucket,
+      priority: event.priority,
+      urgent: event.urgent,
+      reason: event.reason,
+      inflightCount: this.inflight.size,
+    }))
   }
 }
 

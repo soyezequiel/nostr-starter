@@ -7,6 +7,12 @@
   NodeStructurePreviewState,
   GraphSlice,
 } from '@/features/graph-runtime/app/store/types'
+import {
+  summarizeAvatarPictureTransition,
+  summarizeAvatarPubkeys,
+  traceAvatarFlow,
+  truncateAvatarPubkey,
+} from '@/features/graph-runtime/debug/avatarTrace'
 
 export const DEFAULT_MAX_GRAPH_NODES = 3000
 
@@ -130,6 +136,26 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
           ...node,
         }
         if (hasGraphNodeChanged(existingNode, nextNode)) {
+          if ((existingNode.picture ?? null) !== (nextNode.picture ?? null)) {
+            traceAvatarFlow('graphStore.upsertNode.pictureChanged', {
+              pubkey: node.pubkey,
+              pubkeyShort: truncateAvatarPubkey(node.pubkey),
+              patchHasPicture: Object.prototype.hasOwnProperty.call(
+                node,
+                'picture',
+              ),
+              previousProfileState: existingNode.profileState,
+              nextProfileState: nextNode.profileState,
+              previousProfileSource: existingNode.profileSource,
+              nextProfileSource: nextNode.profileSource,
+              previousNodeSource: existingNode.source,
+              nextNodeSource: nextNode.source,
+              ...summarizeAvatarPictureTransition(
+                existingNode.picture,
+                nextNode.picture,
+              ),
+            })
+          }
           nextNodes[node.pubkey] = nextNode
           changed = true
         }
@@ -142,10 +168,29 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
           capReached = true
           capsChanged = true
         }
+        if (node.picture) {
+          traceAvatarFlow('graphStore.upsertNode.rejectedWithPicture', {
+            pubkey: node.pubkey,
+            pubkeyShort: truncateAvatarPubkey(node.pubkey),
+            maxNodes: state.graphCaps.maxNodes,
+            currentNodeCount: getNodeCount(nextNodes),
+            ...summarizeAvatarPictureTransition(null, node.picture),
+          })
+        }
         rejectedPubkeys.push(node.pubkey)
         continue
       }
 
+      if (node.picture) {
+        traceAvatarFlow('graphStore.upsertNode.createdWithPicture', {
+          pubkey: node.pubkey,
+          pubkeyShort: truncateAvatarPubkey(node.pubkey),
+          profileState: node.profileState,
+          profileSource: node.profileSource,
+          nodeSource: node.source,
+          ...summarizeAvatarPictureTransition(null, node.picture),
+        })
+      }
       nextNodes[node.pubkey] = node
       acceptedPubkeys.push(node.pubkey)
       changed = true
@@ -180,6 +225,15 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
 
     if (!hasNodesToRemove) {
       return
+    }
+
+    const removedPicturePubkeys = Array.from(removeSet).filter(
+      (pubkey) => Boolean(state.nodes[pubkey]?.picture),
+    )
+    if (removedPicturePubkeys.length > 0) {
+      traceAvatarFlow('graphStore.removeNodes.removedPictures', {
+        removed: summarizeAvatarPubkeys(removedPicturePubkeys),
+      })
     }
 
     const nextNodes = { ...state.nodes }
@@ -377,6 +431,14 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
   },
   resetGraph: () => {
     const state = get()
+    const picturePubkeys = Object.values(state.nodes)
+      .filter((node) => Boolean(node.picture))
+      .map((node) => node.pubkey)
+    if (picturePubkeys.length > 0) {
+      traceAvatarFlow('graphStore.resetGraph.clearedPictures', {
+        cleared: summarizeAvatarPubkeys(picturePubkeys),
+      })
+    }
     set({
       ...createInitialGraphSliceState(),
       graphCaps: {
