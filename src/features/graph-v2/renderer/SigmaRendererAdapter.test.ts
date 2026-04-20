@@ -371,6 +371,98 @@ test('social capture uses an isolated avatar cache', async () => {
   }
 })
 
+test('avatar runtime debug snapshot combines cache, loader, scheduler, and overlay state', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => {
+        getState: () => { x: number; y: number; ratio: number; angle: number }
+      }
+    }
+    container: { clientWidth: number; clientHeight: number } | null
+    forceRuntime: { isRunning: () => boolean } | null
+    motionActive: boolean
+    hideAvatarsOnMove: boolean
+    avatarRuntimeOptions: Record<string, unknown>
+    avatarBudget: { snapshot: () => { tier: string } }
+    avatarCache: { getDebugSnapshot: () => { byState: { ready: number; loading: number; failed: number } } }
+    avatarLoader: { getDebugSnapshot: () => { blockedCount: number } }
+    avatarScheduler: { getDebugSnapshot: () => { inflightCount: number } }
+    avatarOverlay: { getDebugSnapshot: () => { counts: { drawnImages: number } } }
+    scene: {
+      render: {
+        cameraHint: { rootPubkey: string | null }
+        selection: { selectedNodePubkey: string | null }
+      }
+    }
+    getAvatarRuntimeDebugSnapshot: () => {
+      rootPubkey: string | null
+      selectedNodePubkey: string | null
+      cache: { byState: { ready: number; loading: number; failed: number } } | null
+      loader: { blockedCount: number } | null
+      scheduler: { inflightCount: number } | null
+      overlay: { counts: { drawnImages: number } } | null
+      motionActive: boolean
+      hideAvatarsOnMove: boolean
+      physicsRunning: boolean
+    } | null
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({
+      getState: () => ({ x: 1, y: 2, ratio: 1.5, angle: 0 }),
+    }),
+  }
+  adapter.container = {
+    clientWidth: 1440,
+    clientHeight: 900,
+  }
+  adapter.forceRuntime = {
+    isRunning: () => true,
+  }
+  adapter.motionActive = true
+  adapter.hideAvatarsOnMove = false
+  adapter.avatarRuntimeOptions = {
+    showAllVisibleImages: true,
+  }
+  adapter.avatarBudget = {
+    snapshot: () => ({ tier: 'high' }),
+  }
+  adapter.avatarCache = {
+    getDebugSnapshot: () => ({
+      byState: { ready: 5, loading: 2, failed: 1 },
+    }),
+  }
+  adapter.avatarLoader = {
+    getDebugSnapshot: () => ({ blockedCount: 1 }),
+  }
+  adapter.avatarScheduler = {
+    getDebugSnapshot: () => ({ inflightCount: 2 }),
+  }
+  adapter.avatarOverlay = {
+    getDebugSnapshot: () => ({ counts: { drawnImages: 5 } }),
+  }
+  adapter.scene = {
+    render: {
+      cameraHint: { rootPubkey: 'root' },
+      selection: { selectedNodePubkey: 'selected' },
+    },
+  }
+
+  const snapshot = adapter.getAvatarRuntimeDebugSnapshot()
+  assert.equal(snapshot?.rootPubkey, 'root')
+  assert.equal(snapshot?.selectedNodePubkey, 'selected')
+  assert.equal(snapshot?.cache?.byState.ready, 5)
+  assert.equal(snapshot?.loader?.blockedCount, 1)
+  assert.equal(snapshot?.scheduler?.inflightCount, 2)
+  assert.equal(snapshot?.overlay?.counts.drawnImages, 5)
+  assert.equal(snapshot?.motionActive, true)
+  assert.equal(snapshot?.physicsRunning, true)
+})
+
 const installCaptureDocumentStub = () => {
   const originalDocument = globalThis.document
   const ctx = {

@@ -177,3 +177,23 @@ test('AvatarBitmapCache regenerates monograms when monogram parts change', () =>
     restoreDocument()
   }
 })
+
+test('AvatarBitmapCache stores failed reasons in its debug snapshot', () => {
+  const restoreDocument = installDocumentStub()
+  try {
+    const cache = new AvatarBitmapCache(16)
+    const monogram = cache.getMonogram('broken', {
+      label: 'Broken',
+      color: '#7dd3a7',
+    })
+
+    cache.markFailed('broken::https://example.com/avatar.png', monogram, 'http_404')
+
+    const snapshot = cache.getDebugSnapshot()
+    assert.equal(snapshot.byState.failed, 1)
+    assert.equal(snapshot.entries[0]?.reason, 'http_404')
+    assert.equal(snapshot.entries[0]?.state, 'failed')
+  } finally {
+    restoreDocument()
+  }
+})

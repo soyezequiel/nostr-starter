@@ -12,6 +12,12 @@ import type {
   MonogramInput,
 } from '@/features/graph-v2/renderer/avatar/avatarBitmapCache'
 import type {
+  AvatarLoaderBlockDebugEntry,
+  AvatarOverlayDebugSnapshot,
+  AvatarVisibleNodeDebugSnapshot,
+} from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import { readAvatarDebugHost } from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import type {
   AvatarCandidate,
   AvatarScheduler,
 } from '@/features/graph-v2/renderer/avatar/avatarScheduler'
@@ -20,6 +26,7 @@ import {
   DEFAULT_AVATAR_RUNTIME_OPTIONS,
   type AvatarBudget,
   type AvatarRuntimeOptions,
+  type AvatarUrlKey,
 } from '@/features/graph-v2/renderer/avatar/types'
 import type {
   RenderEdgeAttributes,
@@ -82,6 +89,13 @@ interface AvatarDrawItem {
   monogramCanvas: HTMLCanvasElement
 }
 
+interface AvatarDrawResult {
+  kind: 'image' | 'monogram' | 'skipped'
+  cacheState: AvatarVisibleNodeDebugSnapshot['cacheState']
+  cacheFailureReason: string | null
+  fallbackReason: string | null
+}
+
 export interface AvatarOverlayRendererDeps {
   sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>
   cache: AvatarBitmapCache
@@ -92,6 +106,7 @@ export interface AvatarOverlayRendererDeps {
   getHoveredNeighborPubkeys?: () => ReadonlySet<string>
   getAvatarRevealPointer?: () => AvatarRevealPointer | null
   getRuntimeOptions?: () => AvatarRuntimeOptions
+  getBlockedAvatar?: (urlKey: AvatarUrlKey) => AvatarLoaderBlockDebugEntry | null
 }
 
 interface AvatarImageSelectionItem {
@@ -255,7 +270,7 @@ export const selectAvatarDrawContext = <T>(
     ? forcedContext
     : baseContext
 
-export const shouldDisableAvatarImage = ({
+export const resolveAvatarImageDisableReason = ({
   selectedForImage,
   globalMotionActive,
   monogramOnly,
@@ -269,12 +284,33 @@ export const shouldDisableAvatarImage = ({
   fastMoving: boolean
   imageDrawCount: number
   maxImageDrawsPerFrame: number
-}) =>
-  !selectedForImage ||
-  globalMotionActive ||
-  monogramOnly ||
-  fastMoving ||
-  imageDrawCount >= maxImageDrawsPerFrame
+}) => {
+  if (!selectedForImage) {
+    return 'not_selected_for_image'
+  }
+  if (globalMotionActive) {
+    return 'global_motion_active'
+  }
+  if (monogramOnly) {
+    return 'monogram_only'
+  }
+  if (fastMoving) {
+    return 'fast_moving'
+  }
+  if (imageDrawCount >= maxImageDrawsPerFrame) {
+    return 'image_draw_cap'
+  }
+  return null
+}
+
+export const shouldDisableAvatarImage = (args: {
+  selectedForImage: boolean
+  globalMotionActive: boolean
+  monogramOnly: boolean
+  fastMoving: boolean
+  imageDrawCount: number
+  maxImageDrawsPerFrame: number
+}) => resolveAvatarImageDisableReason(args) !== null
 
 export const resolveAvatarFrameDrawCap = ({
   baseCap,
@@ -302,6 +338,13 @@ export const resolveAvatarCacheCap = ({
     ? Math.max(Math.max(16, Math.floor(baseCap)), Math.max(0, Math.floor(visiblePhotoCount)))
     : Math.max(16, Math.floor(baseCap))
 
+const incrementCountMap = (map: Record<string, number>, key: string | null) => {
+  if (!key) {
+    return
+  }
+  map[key] = (map[key] ?? 0) + 1
+}
+
 export class AvatarOverlayRenderer {
   private readonly sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>
   private readonly cache: AvatarBitmapCache
@@ -312,10 +355,12 @@ export class AvatarOverlayRenderer {
   private readonly getHoveredNeighborPubkeys: () => ReadonlySet<string>
   private readonly getAvatarRevealPointer: () => AvatarRevealPointer | null
   private readonly getRuntimeOptions: () => AvatarRuntimeOptions | null
+  private readonly getBlockedAvatar: (urlKey: AvatarUrlKey) => AvatarLoaderBlockDebugEntry | null
   private readonly lastBucketByUrl = new Map<string, ImageLodBucket>()
   private readonly lastMotionByNode = new Map<string, AvatarNodeMotionSample>()
   private lastFrameTs = 0
   private lastCameraSignature: string | null = null
+  private lastDebugSnapshot: AvatarOverlayDebugSnapshot | null = null
   private readonly boundAfterRender: () => void
   private disposed = false
 
@@ -329,6 +374,7 @@ export class AvatarOverlayRenderer {
     this.getHoveredNeighborPubkeys = deps.getHoveredNeighborPubkeys ?? (() => EMPTY_SET)
     this.getAvatarRevealPointer = deps.getAvatarRevealPointer ?? (() => null)
     this.getRuntimeOptions = deps.getRuntimeOptions ?? (() => null)
+    this.getBlockedAvatar = deps.getBlockedAvatar ?? (() => null)
     this.boundAfterRender = () => this.onAfterRender()
     this.sigma.on('afterRender', this.boundAfterRender)
   }
@@ -337,6 +383,10 @@ export class AvatarOverlayRenderer {
     if (this.disposed) return
     this.disposed = true
     this.sigma.off('afterRender', this.boundAfterRender)
+  }
+
+  public getDebugSnapshot(): AvatarOverlayDebugSnapshot | null {
+    return this.lastDebugSnapshot
   }
 
   private onAfterRender() {
@@ -356,6 +406,7 @@ export class AvatarOverlayRenderer {
     }
     const ctx = this.getOverlayContext()
     if (!ctx) {
+      this.lastDebugSnapshot = null
       return
     }
 
@@ -504,6 +555,42 @@ export class AvatarOverlayRenderer {
 
     this.drawFocusAuras(ctx, focusAuraItems)
     if (!budget.drawAvatars) {
+      this.lastDebugSnapshot = {
+        generatedAtMs: nowMs,
+        cameraRatio,
+        moving,
+        globalMotionActive: moving && !budget.showAllVisibleImages,
+        resolvedBudget: {
+          sizeThreshold: budget.sizeThreshold,
+          zoomThreshold: budget.zoomThreshold,
+          maxAvatarDrawsPerFrame: budget.maxAvatarDrawsPerFrame,
+          maxImageDrawsPerFrame: budget.maxImageDrawsPerFrame,
+          lruCap: budget.lruCap,
+          concurrency: budget.concurrency,
+          maxBucket: budget.maxBucket,
+          maxInteractiveBucket: budget.maxInteractiveBucket,
+          showAllVisibleImages: budget.showAllVisibleImages,
+          allowZoomedOutImages: allowZoomedOutImages,
+          showZoomedOutMonograms: budget.showZoomedOutMonograms,
+          hideImagesOnFastNodes: budget.hideImagesOnFastNodes,
+          fastNodeVelocityThreshold: budget.fastNodeVelocityThreshold,
+        },
+        counts: {
+          visibleNodes: 0,
+          nodesWithPictureUrl: 0,
+          nodesWithSafePictureUrl: 0,
+          selectedForImage: 0,
+          loadCandidates: 0,
+          drawnImages: 0,
+          monogramDraws: 0,
+          withPictureMonogramDraws: 0,
+        },
+        byDisableReason: {},
+        byLoadSkipReason: {},
+        byDrawFallbackReason: {},
+        byCacheState: {},
+        nodes: [],
+      }
       this.pruneMotionSamples(seenNodes)
       return
     }
@@ -516,7 +603,16 @@ export class AvatarOverlayRenderer {
     }
 
     const candidates: AvatarCandidate[] = []
+    const debugNodes: AvatarVisibleNodeDebugSnapshot[] = []
+    const byDisableReason: Record<string, number> = {}
+    const byLoadSkipReason: Record<string, number> = {}
+    const byDrawFallbackReason: Record<string, number> = {}
+    const byCacheState: Record<string, number> = {}
+    const globalMotionActive = moving && !budget.showAllVisibleImages
     let imageDrawCount = 0
+    let drawnImageCount = 0
+    let monogramDrawCount = 0
+    let withPictureMonogramDrawCount = 0
     const resolvedDrawItems = drawItems
       .map((item) => {
         const isPersistentAvatar =
@@ -585,6 +681,11 @@ export class AvatarOverlayRenderer {
           return b.priority - a.priority
         })
       : selectedDrawItems
+    const maxImageDrawsPerFrame = resolveAvatarFrameDrawCap({
+      baseCap: budget.maxImageDrawsPerFrame,
+      visibleCount: visiblePhotoCount,
+      showAllVisibleImages: budget.showAllVisibleImages,
+    })
 
     for (const item of orderedDrawItems) {
       const isPersistentAvatar = item.isPersistentAvatar
@@ -592,19 +693,24 @@ export class AvatarOverlayRenderer {
       const hasVisibleMonogramPart =
         item.monogramInput.showBackground !== false ||
         item.monogramInput.showText !== false
-      const disableImage = shouldDisableAvatarImage({
-        selectedForImage,
-        globalMotionActive: moving && !budget.showAllVisibleImages,
-        monogramOnly: item.monogramOnly,
-        fastMoving: item.fastMoving,
-        imageDrawCount,
-        maxImageDrawsPerFrame: resolveAvatarFrameDrawCap({
-          baseCap: budget.maxImageDrawsPerFrame,
-          visibleCount: visiblePhotoCount,
-          showAllVisibleImages: budget.showAllVisibleImages,
-        }),
-      })
-      const drewImage = this.drawAvatarCircle({
+      const hasPictureUrl = Boolean(item.url)
+      const hasSafePictureUrl = Boolean(item.url && isSafeAvatarUrl(item.url))
+      const urlKey =
+        item.url !== null ? buildAvatarUrlKey(item.pubkey, item.url) : null
+      const blockEntry =
+        urlKey !== null ? this.getBlockedAvatar(urlKey) : null
+      const disableImageReason =
+        hasPictureUrl && !hasSafePictureUrl
+          ? 'unsafe_url'
+          : resolveAvatarImageDisableReason({
+              selectedForImage,
+              globalMotionActive,
+              monogramOnly: item.monogramOnly,
+              fastMoving: item.fastMoving,
+              imageDrawCount,
+              maxImageDrawsPerFrame,
+            })
+      const drawResult = this.drawAvatarCircle({
         ctx: selectAvatarDrawContext(
           item.pubkey,
           forcedAvatarPubkeys,
@@ -617,45 +723,131 @@ export class AvatarOverlayRenderer {
         monogram: item.monogramCanvas,
         pubkey: item.pubkey,
         url: item.url,
-        disableImage,
+        disableImageReason,
         hasVisibleMonogramPart,
       })
-      if (drewImage) {
+
+      if (drawResult.kind === 'image') {
         imageDrawCount += 1
+        drawnImageCount += 1
+      } else if (drawResult.kind === 'monogram') {
+        monogramDrawCount += 1
+        if (hasPictureUrl) {
+          withPictureMonogramDrawCount += 1
+        }
       }
 
-      if (item.fastMoving && !budget.showAllVisibleImages) {
-        continue
+      let loadSkipReason: string | null = null
+      let requestedBucket: ImageLodBucket | null = null
+      if (!hasPictureUrl) {
+        loadSkipReason = 'missing_url'
+      } else if (item.fastMoving && !budget.showAllVisibleImages) {
+        loadSkipReason = 'fast_moving'
+      } else if (!selectedForImage) {
+        loadSkipReason = 'not_selected_for_image'
+      } else if (item.monogramOnly) {
+        loadSkipReason = 'monogram_only'
+      } else if (!allowZoomedOutImages && cameraRatio > budget.zoomThreshold) {
+        loadSkipReason = 'zoom_threshold'
+      } else if (!hasSafePictureUrl) {
+        loadSkipReason = 'unsafe_url'
+      } else if (!urlKey) {
+        loadSkipReason = 'missing_url'
+      } else {
+        requestedBucket = this.resolveBucket(
+          urlKey,
+          item.r * 2,
+          Math.min(
+            budget.maxBucket,
+            budget.maxInteractiveBucket,
+          ) as ImageLodBucket,
+        )
+        candidates.push({
+          pubkey: item.pubkey,
+          urlKey,
+          url: item.url!,
+          bucket: requestedBucket,
+          priority: item.priority,
+          urgent: isPersistentAvatar,
+          monogram: item.monogramInput,
+        })
       }
-      if (!selectedForImage) {
-        continue
-      }
-      if (item.monogramOnly) {
-        continue
-      }
-      if (!allowZoomedOutImages && cameraRatio > budget.zoomThreshold) {
-        continue
-      }
-      if (!item.url || !isSafeAvatarUrl(item.url)) {
-        continue
-      }
-      const url = item.url
-      const urlKey = buildAvatarUrlKey(item.pubkey, url)
-      const bucket = this.resolveBucket(
-        urlKey,
-        item.r * 2,
-        Math.min(budget.maxBucket, budget.maxInteractiveBucket) as ImageLodBucket,
-      )
 
-      candidates.push({
+      const cacheState = drawResult.cacheState
+      incrementCountMap(byCacheState, cacheState)
+      incrementCountMap(byDisableReason, disableImageReason)
+      incrementCountMap(byLoadSkipReason, loadSkipReason)
+      incrementCountMap(byDrawFallbackReason, drawResult.fallbackReason)
+
+      debugNodes.push({
         pubkey: item.pubkey,
+        label: item.monogramInput.label,
+        url: item.url,
+        host: readAvatarDebugHost(item.url),
         urlKey,
-        url,
-        bucket,
+        radiusPx: item.r,
         priority: item.priority,
-        urgent: isPersistentAvatar,
-        monogram: item.monogramInput,
+        selectedForImage,
+        isPersistentAvatar,
+        zoomedOutMonogram: item.zoomedOutMonogram,
+        monogramOnly: item.monogramOnly,
+        fastMoving: item.fastMoving,
+        globalMotionActive,
+        disableImageReason,
+        drawResult: drawResult.kind,
+        drawFallbackReason: drawResult.fallbackReason,
+        loadDecision: !hasPictureUrl
+          ? 'not_applicable'
+          : loadSkipReason === null
+            ? 'candidate'
+            : 'skipped',
+        loadSkipReason,
+        cacheState,
+        cacheFailureReason: drawResult.cacheFailureReason,
+        blocked: blockEntry !== null,
+        blockReason: blockEntry?.reason ?? null,
+        inflight: urlKey !== null && this.scheduler.hasInflight(urlKey),
+        requestedBucket,
+        hasPictureUrl,
+        hasSafePictureUrl,
       })
+    }
+
+    this.lastDebugSnapshot = {
+      generatedAtMs: nowMs,
+      cameraRatio,
+      moving,
+      globalMotionActive,
+      resolvedBudget: {
+        sizeThreshold: budget.sizeThreshold,
+        zoomThreshold: budget.zoomThreshold,
+        maxAvatarDrawsPerFrame: budget.maxAvatarDrawsPerFrame,
+        maxImageDrawsPerFrame,
+        lruCap: budget.lruCap,
+        concurrency: budget.concurrency,
+        maxBucket: budget.maxBucket,
+        maxInteractiveBucket: budget.maxInteractiveBucket,
+        showAllVisibleImages: budget.showAllVisibleImages,
+        allowZoomedOutImages,
+        showZoomedOutMonograms: budget.showZoomedOutMonograms,
+        hideImagesOnFastNodes: budget.hideImagesOnFastNodes,
+        fastNodeVelocityThreshold: budget.fastNodeVelocityThreshold,
+      },
+      counts: {
+        visibleNodes: orderedDrawItems.length,
+        nodesWithPictureUrl: orderedDrawItems.filter((item) => Boolean(item.url)).length,
+        nodesWithSafePictureUrl: visiblePhotoCount,
+        selectedForImage: debugNodes.filter((item) => item.selectedForImage).length,
+        loadCandidates: candidates.length,
+        drawnImages: drawnImageCount,
+        monogramDraws: monogramDrawCount,
+        withPictureMonogramDraws: withPictureMonogramDrawCount,
+      },
+      byDisableReason,
+      byLoadSkipReason,
+      byDrawFallbackReason,
+      byCacheState,
+      nodes: debugNodes,
     }
 
     this.pruneMotionSamples(seenNodes)
@@ -674,7 +866,7 @@ export class AvatarOverlayRenderer {
     monogram,
     pubkey,
     url,
-    disableImage,
+    disableImageReason,
     hasVisibleMonogramPart,
   }: {
     ctx: CanvasRenderingContext2D
@@ -684,26 +876,55 @@ export class AvatarOverlayRenderer {
     monogram: HTMLCanvasElement
     pubkey: string
     url: string | null
-    disableImage?: boolean
+    disableImageReason?: string | null
     hasVisibleMonogramPart: boolean
-  }): boolean {
+  }): AvatarDrawResult {
     let drawable: CanvasImageSource = monogram
     let isImage = false
-    if (url && !disableImage) {
+    let cacheState: AvatarVisibleNodeDebugSnapshot['cacheState'] = null
+    let cacheFailureReason: string | null = null
+    let fallbackReason = disableImageReason ?? null
+
+    if (url) {
       const urlKey = buildAvatarUrlKey(pubkey, url)
       const entry = this.cache.get(urlKey)
-      if (entry && entry.state === 'ready') {
+      if (entry) {
+        cacheState = entry.state
+        if (entry.state === 'failed') {
+          cacheFailureReason = entry.reason
+        }
+      } else {
+        cacheState = 'missing'
+      }
+      if (!disableImageReason && entry && entry.state === 'ready') {
         drawable = entry.bitmap
         isImage = true
+      } else if (fallbackReason === null) {
+        fallbackReason =
+          entry?.state === 'failed'
+            ? entry.reason ?? 'cache_failed'
+            : entry?.state === 'loading'
+              ? 'cache_loading'
+              : 'cache_miss'
       }
     }
     if (!isImage && !hasVisibleMonogramPart) {
-      return false
+      return {
+        kind: 'skipped',
+        cacheState,
+        cacheFailureReason,
+        fallbackReason,
+      }
     }
     const size = r * 2
     try {
       ctx.drawImage(drawable, x - r, y - r, size, size)
-      return isImage
+      return {
+        kind: isImage ? 'image' : 'monogram',
+        cacheState,
+        cacheFailureReason,
+        fallbackReason: isImage ? null : fallbackReason,
+      }
     } catch {
       if (isImage && hasVisibleMonogramPart) {
         try {
@@ -711,8 +932,19 @@ export class AvatarOverlayRenderer {
         } catch {
           // canvas source may be invalidated; fall back silently
         }
+        return {
+          kind: 'monogram',
+          cacheState,
+          cacheFailureReason,
+          fallbackReason: 'draw_error',
+        }
       }
-      return false
+      return {
+        kind: 'skipped',
+        cacheState,
+        cacheFailureReason,
+        fallbackReason,
+      }
     }
   }
 

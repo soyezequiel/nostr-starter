@@ -32,6 +32,10 @@ export function createNodeDetailModule(
   },
 ) {
   const activeNodeStructurePreviewRequests = new Map<string, Promise<void>>()
+  const activeNodeDetailRequests = new Map<
+    string,
+    Promise<NodeDetailProfile | null>
+  >()
 
   async function findPath(
     sourcePubkey: string,
@@ -84,12 +88,32 @@ export function createNodeDetailModule(
 
     if (pubkey !== null) {
       prefetchNodeStructurePreview(pubkey)
+      prefetchNodeProfile(pubkey)
     }
 
     return { previousPubkey, selectedPubkey: pubkey }
   }
 
   async function getNodeDetail(pubkey: string): Promise<NodeDetailProfile | null> {
+    return queueNodeDetailRequest(pubkey)
+  }
+
+  function queueNodeDetailRequest(pubkey: string): Promise<NodeDetailProfile | null> {
+    const activeRequest = activeNodeDetailRequests.get(pubkey)
+    if (activeRequest) {
+      return activeRequest
+    }
+
+    const request = loadNodeDetail(pubkey).finally(() => {
+      if (activeNodeDetailRequests.get(pubkey) === request) {
+        activeNodeDetailRequests.delete(pubkey)
+      }
+    })
+    activeNodeDetailRequests.set(pubkey, request)
+    return request
+  }
+
+  async function loadNodeDetail(pubkey: string): Promise<NodeDetailProfile | null> {
     const state = ctx.store.getState()
     const existingNode = state.nodes[pubkey]
 
@@ -115,12 +139,62 @@ export function createNodeDetailModule(
       return profile
     }
 
+    const relayUrls =
+      state.relayUrls.length > 0
+        ? state.relayUrls.slice()
+        : ctx.defaultRelayUrls.slice()
+
+    if (existingNode.profileState !== 'loading') {
+      state.upsertNodes([
+        {
+          ...existingNode,
+          profileState: 'loading',
+        },
+      ])
+    }
+
+    await collaborators.profileHydration.hydrateNodeProfiles(
+      [pubkey],
+      relayUrls,
+      () => !ctx.store.getState().nodes[pubkey],
+      {
+        persistProfileEvent: collaborators.persistence.persistProfileEvent,
+      },
+    )
+
+    const refreshedNode = ctx.store.getState().nodes[pubkey]
+    if (!refreshedNode) {
+      return null
+    }
+
+    const refreshedProfile =
+      refreshedNode.profileState === 'ready'
+        ? buildNodeProfileFromNode(refreshedNode)
+        : refreshedNode.profileState === 'missing'
+          ? null
+          : undefined
+
+    if (refreshedProfile !== undefined) {
+      return refreshedProfile
+    }
+
+    const hydratedProfileRecord = await ctx.repositories.profiles.get(pubkey)
+    if (hydratedProfileRecord) {
+      const profile = mapProfileRecordToNodeProfile(hydratedProfileRecord)
+      collaborators.profileHydration.syncNodeProfile(pubkey, profile)
+      return profile
+    }
+
     collaborators.profileHydration.markNodeProfileMissing(pubkey)
     return null
   }
 
   function getActivePreviewRequest(pubkey: string): Promise<void> | undefined {
     return activeNodeStructurePreviewRequests.get(pubkey)
+  }
+
+  function prefetchNodeProfile(pubkey: string): void {
+    void queueNodeDetailRequest(pubkey)
   }
 
   function prefetchNodeStructurePreview(pubkey: string): void {

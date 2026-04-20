@@ -7,6 +7,7 @@ import type {
   GraphSceneSnapshot,
 } from '@/features/graph-v2/renderer/contracts'
 import type { AvatarRuntimeOptions } from '@/features/graph-v2/renderer/avatar/types'
+import type { AvatarRuntimeStateDebugSnapshot } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
 import type { SocialGraphCaptureOptions } from '@/features/graph-v2/renderer/socialGraphCapture'
 import { SigmaRendererAdapter } from '@/features/graph-v2/renderer/SigmaRendererAdapter'
@@ -50,6 +51,7 @@ export interface SigmaCanvasHostHandle {
   subscribeToCameraTicks: (listener: () => void) => () => void
   subscribeToRenderTicks: (listener: () => void) => () => void
   captureSocialGraph: (options?: SocialGraphCaptureOptions) => Promise<Blob>
+  getAvatarRuntimeDebugSnapshot: () => AvatarRuntimeStateDebugSnapshot | null
 }
 
 const BACKDROP_GRID_WORLD_STEP = 80
@@ -216,6 +218,8 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
         }
         return adapter.captureSocialGraph(options)
       },
+      getAvatarRuntimeDebugSnapshot: () =>
+        adapterRef.current?.getAvatarRuntimeDebugSnapshot() ?? null,
     }),
     [],
   )

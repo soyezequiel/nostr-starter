@@ -34,6 +34,7 @@ import {
   type DragNeighborhoodInfluenceTuning,
 } from '@/features/graph-v2/renderer/dragInfluence'
 import { AvatarBitmapCache } from '@/features/graph-v2/renderer/avatar/avatarBitmapCache'
+import type { AvatarRuntimeStateDebugSnapshot } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import { AvatarLoader } from '@/features/graph-v2/renderer/avatar/avatarLoader'
 import { AvatarOverlayRenderer } from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
 import { AvatarScheduler } from '@/features/graph-v2/renderer/avatar/avatarScheduler'
@@ -890,6 +891,41 @@ export class SigmaRendererAdapter implements RendererAdapter {
     return this.avatarBudget?.snapshot() ?? null
   }
 
+  public getAvatarRuntimeDebugSnapshot(): AvatarRuntimeStateDebugSnapshot | null {
+    if (!this.sigma) {
+      return null
+    }
+
+    const container = this.container
+    const cameraState = this.sigma.getCamera().getState()
+    return {
+      rootPubkey: this.scene?.render.cameraHint.rootPubkey ?? null,
+      selectedNodePubkey: this.scene?.render.selection.selectedNodePubkey ?? null,
+      viewport:
+        container !== null
+          ? {
+              width: container.clientWidth,
+              height: container.clientHeight,
+            }
+          : null,
+      camera: {
+        x: cameraState.x,
+        y: cameraState.y,
+        ratio: cameraState.ratio,
+        angle: cameraState.angle,
+      },
+      physicsRunning: this.forceRuntime?.isRunning() ?? false,
+      motionActive: this.motionActive,
+      hideAvatarsOnMove: this.hideAvatarsOnMove,
+      runtimeOptions: this.avatarRuntimeOptions,
+      perfBudget: this.avatarBudget?.snapshot() ?? null,
+      cache: this.avatarCache?.getDebugSnapshot() ?? null,
+      loader: this.avatarLoader?.getDebugSnapshot() ?? null,
+      scheduler: this.avatarScheduler?.getDebugSnapshot() ?? null,
+      overlay: this.avatarOverlay?.getDebugSnapshot() ?? null,
+    }
+  }
+
   public async captureSocialGraph(
     options: SocialGraphCaptureOptions = {},
   ): Promise<Blob> {
@@ -1378,6 +1414,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         scheduler: this.avatarScheduler,
         budget: this.avatarBudget,
         isMoving: () => this.hideAvatarsOnMove && this.motionActive,
+        getBlockedAvatar: (urlKey) => this.avatarLoader?.getBlockedEntry(urlKey) ?? null,
         getForcedAvatarPubkey: () =>
           this.draggedNodePubkey ?? this.hoveredNodePubkey,
         getHoveredNeighborPubkeys: () => this.currentHoverFocus.neighbors,

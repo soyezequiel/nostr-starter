@@ -23,7 +23,9 @@ export interface AvatarReadyEntry {
 export interface AvatarFailedEntry {
   state: 'failed'
   monogram: HTMLCanvasElement
+  failedAt: number
   expiresAt: number
+  reason: string | null
 }
 
 export type AvatarEntry = AvatarLoadingEntry | AvatarReadyEntry | AvatarFailedEntry

@@ -8,6 +8,7 @@ import {
   resolveAvatarCacheCap,
   resolveAvatarFrameDrawCap,
   resolveAvatarDrawRadiusPx,
+  resolveAvatarImageDisableReason,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
   selectAvatarDrawItemsForFrame,
@@ -180,6 +181,31 @@ test('image draw cap degrades remaining avatars to monograms', () => {
       maxImageDrawsPerFrame: 12,
     }),
     true,
+  )
+})
+
+test('avatar image disable reason reports the first blocking condition', () => {
+  assert.equal(
+    resolveAvatarImageDisableReason({
+      selectedForImage: false,
+      globalMotionActive: true,
+      monogramOnly: false,
+      fastMoving: false,
+      imageDrawCount: 0,
+      maxImageDrawsPerFrame: 12,
+    }),
+    'not_selected_for_image',
+  )
+  assert.equal(
+    resolveAvatarImageDisableReason({
+      selectedForImage: true,
+      globalMotionActive: false,
+      monogramOnly: false,
+      fastMoving: false,
+      imageDrawCount: 0,
+      maxImageDrawsPerFrame: 12,
+    }),
+    null,
   )
 })
 

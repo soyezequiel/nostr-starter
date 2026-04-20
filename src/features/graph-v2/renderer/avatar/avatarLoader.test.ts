@@ -39,6 +39,17 @@ test('AvatarLoader.unblock removes block', () => {
   assert.equal(loader.isBlocked('u'), false)
 })
 
+test('AvatarLoader exposes blocked reasons in the debug snapshot', () => {
+  const nowRef = { t: 1000 }
+  const loader = makeLoader(nowRef)
+  loader.block('u', 5000, 'http_502')
+
+  const snapshot = loader.getDebugSnapshot()
+  assert.equal(snapshot.blockedCount, 1)
+  assert.equal(snapshot.blocked[0]?.reason, 'http_502')
+  assert.equal(snapshot.blocked[0]?.ttlMsRemaining, 5000)
+})
+
 test('AvatarLoader.load rejects unsafe URL', async () => {
   const loader = makeLoader({ t: 0 })
   await assert.rejects(

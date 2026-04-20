@@ -249,6 +249,52 @@ test('failed avatar loads stay on monogram fallback', async () => {
   }
 })
 
+test('scheduler debug snapshot records failure reasons and recent events', async () => {
+  const restoreDocument = installDocumentStub()
+  const cache = new AvatarBitmapCache(16)
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    unblock: () => undefined,
+    load: () => Promise.reject(Object.assign(new Error('http_404'), { reason: 'http_404' })),
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache,
+      loader: loader as never,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'broken',
+          urlKey: 'broken::https://example.com/broken.png',
+          url: 'https://example.com/broken.png',
+          bucket: 64,
+          priority: 1,
+          monogram: { label: 'Broken', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const snapshot = scheduler.getDebugSnapshot()
+    assert.equal(snapshot.recentEvents[0]?.type, 'started')
+    assert.equal(snapshot.recentEvents[1]?.type, 'failed')
+    assert.equal(snapshot.recentEvents[1]?.reason, 'http_404')
+    assert.equal(
+      cache.getDebugSnapshot().entries[0]?.reason,
+      'http_404',
+    )
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
 test('short viewport churn does not abort an inflight avatar load', () => {
   const restoreDocument = installDocumentStub()
   let now = 1_000

@@ -2,7 +2,10 @@
   isSafeAvatarUrl,
   type ImageLodBucket,
 } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
-
+import type {
+  AvatarLoaderBlockDebugEntry,
+  AvatarLoaderDebugSnapshot,
+} from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import type { AvatarBitmap, AvatarUrlKey } from '@/features/graph-v2/renderer/avatar/types'
 
 const FETCH_TIMEOUT_MS = 8000
@@ -84,7 +87,10 @@ const composeCircularBitmap = async (
 }
 
 export class AvatarLoader {
-  private readonly blocklist = new Map<AvatarUrlKey, number>()
+  private readonly blocklist = new Map<
+    AvatarUrlKey,
+    { expiresAt: number; reason: string | null }
+  >()
   private readonly fetchImpl: typeof fetch
   private readonly createImageBitmapImpl: typeof createImageBitmap
   private readonly now: () => number
@@ -108,23 +114,60 @@ export class AvatarLoader {
   }
 
   public isBlocked(urlKey: AvatarUrlKey): boolean {
-    const expiresAt = this.blocklist.get(urlKey)
-    if (expiresAt === undefined) {
-      return false
-    }
-    if (expiresAt <= this.now()) {
-      this.blocklist.delete(urlKey)
-      return false
-    }
-    return true
+    return this.getBlockedEntry(urlKey) !== null
   }
 
-  public block(urlKey: AvatarUrlKey, ttlMs: number) {
-    this.blocklist.set(urlKey, this.now() + ttlMs)
+  public block(urlKey: AvatarUrlKey, ttlMs: number, reason: string | null = null) {
+    this.blocklist.set(urlKey, {
+      expiresAt: this.now() + ttlMs,
+      reason,
+    })
   }
 
   public unblock(urlKey: AvatarUrlKey) {
     this.blocklist.delete(urlKey)
+  }
+
+  public getBlockedEntry(urlKey: AvatarUrlKey): AvatarLoaderBlockDebugEntry | null {
+    const entry = this.blocklist.get(urlKey)
+    if (!entry) {
+      return null
+    }
+
+    const ttlMsRemaining = entry.expiresAt - this.now()
+    if (ttlMsRemaining <= 0) {
+      this.blocklist.delete(urlKey)
+      return null
+    }
+
+    return {
+      urlKey,
+      expiresAt: entry.expiresAt,
+      ttlMsRemaining,
+      reason: entry.reason,
+    }
+  }
+
+  public getDebugSnapshot(): AvatarLoaderDebugSnapshot {
+    const blocked: AvatarLoaderBlockDebugEntry[] = []
+
+    for (const urlKey of this.blocklist.keys()) {
+      const entry = this.getBlockedEntry(urlKey)
+      if (entry) {
+        blocked.push(entry)
+      }
+    }
+
+    blocked.sort(
+      (left, right) =>
+        right.ttlMsRemaining - left.ttlMsRemaining ||
+        left.urlKey.localeCompare(right.urlKey),
+    )
+
+    return {
+      blockedCount: blocked.length,
+      blocked,
+    }
   }
 
   public async load(

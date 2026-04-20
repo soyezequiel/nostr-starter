@@ -1,12 +1,21 @@
-﻿import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
+import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
 
-import { AvatarBitmapCache, type MonogramInput } from '@/features/graph-v2/renderer/avatar/avatarBitmapCache'
+import {
+  AvatarBitmapCache,
+  type MonogramInput,
+} from '@/features/graph-v2/renderer/avatar/avatarBitmapCache'
+import type {
+  AvatarSchedulerDebugSnapshot,
+  AvatarSchedulerEventDebugSnapshot,
+} from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import { readAvatarDebugHost } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import { AvatarLoader } from '@/features/graph-v2/renderer/avatar/avatarLoader'
 import type { AvatarBudget, AvatarUrlKey } from '@/features/graph-v2/renderer/avatar/types'
 
 const BLOCKLIST_TTL_MS = 10 * 60 * 1000
 const URGENT_RETRY_TTL_MS = 15 * 1000
 const OUT_OF_VIEWPORT_GRACE_MS = 1500
+const MAX_RECENT_DEBUG_EVENTS = 200
 
 export interface AvatarCandidate {
   pubkey: string
@@ -22,8 +31,11 @@ interface InflightEntry {
   urlKey: AvatarUrlKey
   controller: AbortController
   pubkey: string
+  url: string
+  bucket: ImageLodBucket
   priority: number
   urgent: boolean
+  startedAt: number
   lastWantedAt: number
 }
 
@@ -41,6 +53,7 @@ export class AvatarScheduler {
   private readonly now: () => number
   private readonly inflight = new Map<AvatarUrlKey, InflightEntry>()
   private readonly nextUrgentRetryAt = new Map<AvatarUrlKey, number>()
+  private readonly recentEvents: AvatarSchedulerEventDebugSnapshot[] = []
   private disposed = false
 
   constructor({ cache, loader, onSettled, now }: AvatarSchedulerDeps) {
@@ -72,6 +85,60 @@ export class AvatarScheduler {
     this.kickoffCandidates(candidates, budget, now)
   }
 
+  public dispose() {
+    this.disposed = true
+    this.abortAll()
+  }
+
+  public inflightSize() {
+    return this.inflight.size
+  }
+
+  public hasInflight(urlKey: AvatarUrlKey) {
+    return this.inflight.has(urlKey)
+  }
+
+  public getDebugSnapshot(): AvatarSchedulerDebugSnapshot {
+    const now = this.now()
+    const inflight = [...this.inflight.values()]
+      .map((entry) => ({
+        urlKey: entry.urlKey,
+        pubkey: entry.pubkey,
+        url: entry.url,
+        host: readAvatarDebugHost(entry.url),
+        bucket: entry.bucket,
+        priority: entry.priority,
+        urgent: entry.urgent,
+        startedAt: entry.startedAt,
+        lastWantedAt: entry.lastWantedAt,
+      }))
+      .sort(
+        (left, right) =>
+          left.priority - right.priority ||
+          left.pubkey.localeCompare(right.pubkey),
+      )
+
+    const urgentRetries = [...this.nextUrgentRetryAt.entries()]
+      .map(([urlKey, retryAt]) => ({
+        urlKey,
+        retryAt,
+        retryInMs: Math.max(0, retryAt - now),
+      }))
+      .filter((entry) => entry.retryInMs > 0)
+      .sort(
+        (left, right) =>
+          left.retryInMs - right.retryInMs ||
+          left.urlKey.localeCompare(right.urlKey),
+      )
+
+    return {
+      inflightCount: inflight.length,
+      inflight,
+      urgentRetries,
+      recentEvents: [...this.recentEvents],
+    }
+  }
+
   private kickoffCandidates(
     candidates: readonly AvatarCandidate[],
     budget: AvatarBudget,
@@ -87,6 +154,7 @@ export class AvatarScheduler {
         inflightEntry.urgent = inflightEntry.urgent || (candidate.urgent ?? false)
         continue
       }
+
       const existing = this.cache.get(candidate.urlKey)
       if (existing && (existing.state === 'ready' || existing.state === 'loading')) {
         continue
@@ -101,6 +169,7 @@ export class AvatarScheduler {
           continue
         }
       }
+
       while (
         this.inflight.size >= budget.concurrency &&
         (this.abortExpiredInflightEntry(now) ||
@@ -111,21 +180,9 @@ export class AvatarScheduler {
       if (this.inflight.size >= budget.concurrency) {
         break
       }
+
       this.kickoff(candidate, budget, now)
     }
-  }
-
-  public dispose() {
-    this.disposed = true
-    this.abortAll()
-  }
-
-  public inflightSize() {
-    return this.inflight.size
-  }
-
-  public hasInflight(urlKey: AvatarUrlKey) {
-    return this.inflight.has(urlKey)
   }
 
   private abortAll() {
@@ -158,9 +215,25 @@ export class AvatarScheduler {
       urlKey: candidate.urlKey,
       controller,
       pubkey: candidate.pubkey,
+      url: candidate.url,
+      bucket: targetBucket,
       priority: candidate.priority,
       urgent: candidate.urgent ?? false,
+      startedAt: now,
       lastWantedAt: now,
+    })
+
+    this.recordEvent({
+      at: now,
+      type: 'started',
+      urlKey: candidate.urlKey,
+      pubkey: candidate.pubkey,
+      url: candidate.url,
+      host: readAvatarDebugHost(candidate.url),
+      bucket: targetBucket,
+      priority: candidate.priority,
+      urgent: candidate.urgent ?? false,
+      reason: null,
     })
 
     const monogram = this.cache.getMonogram(candidate.pubkey, candidate.monogram)
@@ -169,12 +242,10 @@ export class AvatarScheduler {
     this.loader
       .load(candidate.url, targetBucket, controller.signal)
       .then((loaded) => {
-        if (this.disposed) {
+        if (this.disposed || controller.signal.aborted) {
           return
         }
-        if (controller.signal.aborted) {
-          return
-        }
+
         this.cache.markReady(
           candidate.urlKey,
           targetBucket,
@@ -182,18 +253,44 @@ export class AvatarScheduler {
           monogram,
           loaded.bytes,
         )
+        this.recordEvent({
+          at: this.now(),
+          type: 'ready',
+          urlKey: candidate.urlKey,
+          pubkey: candidate.pubkey,
+          url: candidate.url,
+          host: readAvatarDebugHost(candidate.url),
+          bucket: targetBucket,
+          priority: candidate.priority,
+          urgent: candidate.urgent ?? false,
+          reason: null,
+        })
       })
       .catch((err: unknown) => {
         if (this.disposed) {
           return
         }
-        const reason = (err as { name?: string; message?: string } | null)?.name ?? ''
-        if (reason === 'AbortError') {
+
+        if (isAbortError(err)) {
           this.cache.delete(candidate.urlKey)
           return
         }
-        this.cache.markFailed(candidate.urlKey, monogram)
-        this.loader.block(candidate.urlKey, BLOCKLIST_TTL_MS)
+
+        const reason = extractAvatarLoadFailureReason(err)
+        this.cache.markFailed(candidate.urlKey, monogram, reason)
+        this.loader.block(candidate.urlKey, BLOCKLIST_TTL_MS, reason)
+        this.recordEvent({
+          at: this.now(),
+          type: 'failed',
+          urlKey: candidate.urlKey,
+          pubkey: candidate.pubkey,
+          url: candidate.url,
+          host: readAvatarDebugHost(candidate.url),
+          bucket: targetBucket,
+          priority: candidate.priority,
+          urgent: candidate.urgent ?? false,
+          reason,
+        })
       })
       .finally(() => {
         const current = this.inflight.get(candidate.urlKey)
@@ -295,8 +392,46 @@ export class AvatarScheduler {
     entry: InflightEntry,
     reason: string,
   ) {
+    this.recordEvent({
+      at: this.now(),
+      type: 'aborted',
+      urlKey,
+      pubkey: entry.pubkey,
+      url: entry.url,
+      host: readAvatarDebugHost(entry.url),
+      bucket: entry.bucket,
+      priority: entry.priority,
+      urgent: entry.urgent,
+      reason,
+    })
     entry.controller.abort(reason)
     this.inflight.delete(urlKey)
     this.cache.delete(urlKey)
   }
+
+  private recordEvent(event: AvatarSchedulerEventDebugSnapshot) {
+    this.recentEvents.push(event)
+    if (this.recentEvents.length > MAX_RECENT_DEBUG_EVENTS) {
+      this.recentEvents.splice(
+        0,
+        this.recentEvents.length - MAX_RECENT_DEBUG_EVENTS,
+      )
+    }
+  }
+}
+
+const isAbortError = (err: unknown) =>
+  (err as { name?: string } | null)?.name === 'AbortError'
+
+const extractAvatarLoadFailureReason = (err: unknown) => {
+  const candidate = err as
+    | { reason?: string; message?: string; name?: string }
+    | null
+    | undefined
+  return (
+    candidate?.reason ??
+    candidate?.message ??
+    candidate?.name ??
+    'avatar_load_failed'
+  )
 }

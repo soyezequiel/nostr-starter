@@ -1,5 +1,9 @@
 import { getAvatarMonogram, getAvatarMonogramPalette } from '@/lib/avatarMonogram'
 import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
+import type {
+  AvatarCacheDebugSnapshot,
+  AvatarCacheEntryDebugSnapshot,
+} from '@/features/graph-v2/renderer/avatar/avatarDebug'
 
 import type {
   AvatarBitmap,
@@ -204,16 +208,11 @@ export class AvatarBitmapCache {
   }
 
   public get(urlKey: AvatarUrlKey): AvatarEntry | undefined {
-    const entry = this.entries.get(urlKey)
-    if (!entry) {
-      return undefined
-    }
-    if (entry.state === 'failed' && entry.expiresAt <= Date.now()) {
-      this.entries.delete(urlKey)
-      return undefined
-    }
-    this.touch(urlKey, entry)
-    return entry
+    return this.resolveEntry(urlKey, true)
+  }
+
+  public peek(urlKey: AvatarUrlKey): AvatarEntry | undefined {
+    return this.resolveEntry(urlKey, false)
   }
 
   public markLoading(
@@ -257,16 +256,23 @@ export class AvatarBitmapCache {
     return entry
   }
 
-  public markFailed(urlKey: AvatarUrlKey, monogram: HTMLCanvasElement): AvatarFailedEntry {
+  public markFailed(
+    urlKey: AvatarUrlKey,
+    monogram: HTMLCanvasElement,
+    reason: string | null = null,
+  ): AvatarFailedEntry {
     const previous = this.entries.get(urlKey)
     if (previous && previous.state === 'ready') {
       this.totalBytes -= previous.bytes
       closeBitmap(previous.bitmap)
     }
+    const failedAt = Date.now()
     const entry: AvatarFailedEntry = {
       state: 'failed',
       monogram,
-      expiresAt: Date.now() + FAILED_TTL_MS,
+      failedAt,
+      expiresAt: failedAt + FAILED_TTL_MS,
+      reason,
     }
     this.entries.set(urlKey, entry)
     return entry
@@ -303,9 +309,66 @@ export class AvatarBitmapCache {
     return this.totalBytes
   }
 
+  public getDebugSnapshot(): AvatarCacheDebugSnapshot {
+    this.pruneExpiredFailedEntries(Date.now())
+    const byState: AvatarCacheDebugSnapshot['byState'] = {
+      loading: 0,
+      ready: 0,
+      failed: 0,
+    }
+    const entries: AvatarCacheEntryDebugSnapshot[] = []
+
+    for (const [urlKey, entry] of this.entries) {
+      byState[entry.state] += 1
+      entries.push({
+        urlKey,
+        state: entry.state,
+        bucket: 'bucket' in entry ? entry.bucket : null,
+        startedAt: entry.state === 'loading' ? entry.startedAt : null,
+        readyAt: entry.state === 'ready' ? entry.readyAt : null,
+        failedAt: entry.state === 'failed' ? entry.failedAt : null,
+        expiresAt: entry.state === 'failed' ? entry.expiresAt : null,
+        bytes: entry.state === 'ready' ? entry.bytes : null,
+        reason: entry.state === 'failed' ? entry.reason : null,
+      })
+    }
+
+    return {
+      capacity: this.cap,
+      size: this.entries.size,
+      totalBytes: this.totalBytes,
+      monogramCount: this.monograms.size,
+      byState,
+      entries,
+    }
+  }
+
   private touch(urlKey: AvatarUrlKey, entry: AvatarEntry) {
     this.entries.delete(urlKey)
     this.entries.set(urlKey, entry)
+  }
+
+  private resolveEntry(urlKey: AvatarUrlKey, touch: boolean): AvatarEntry | undefined {
+    const entry = this.entries.get(urlKey)
+    if (!entry) {
+      return undefined
+    }
+    if (entry.state === 'failed' && entry.expiresAt <= Date.now()) {
+      this.entries.delete(urlKey)
+      return undefined
+    }
+    if (touch) {
+      this.touch(urlKey, entry)
+    }
+    return entry
+  }
+
+  private pruneExpiredFailedEntries(now: number) {
+    for (const [urlKey, entry] of this.entries) {
+      if (entry.state === 'failed' && entry.expiresAt <= now) {
+        this.entries.delete(urlKey)
+      }
+    }
   }
 
   private evictIfNeeded() {

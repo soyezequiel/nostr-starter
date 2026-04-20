@@ -92,6 +92,13 @@ import { SigmaRootInput } from '@/features/graph-v2/ui/SigmaRootInput'
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
 import {
+  buildAvatarRuntimeDebugFilename,
+  buildAvatarRuntimeDebugPayload,
+  isAvatarRuntimeDebugDownloadEnabled,
+  readAvatarRuntimeDebugBrowserSnapshot,
+  readAvatarRuntimeDebugLocationSnapshot,
+} from '@/features/graph-v2/ui/avatarRuntimeDebug'
+import {
   buildSocialCaptureDebugFilename,
   buildSocialCaptureDebugPayload,
   isSocialCaptureDebugDownloadEnabled,
@@ -1536,6 +1543,51 @@ export default function GraphAppV2() {
       .catch(() => setActionFeedback('No se pudo copiar el npub.'))
   }, [])
 
+  const handleDownloadAvatarRuntimeDebug = useCallback(() => {
+    if (!isAvatarRuntimeDebugDownloadEnabled()) {
+      setActionFeedback('El debug runtime de avatares sólo se descarga en dev.')
+      return
+    }
+
+    const host = sigmaHostRef.current
+    if (!host) {
+      setActionFeedback('El grafo todavía no está listo para debug de avatares.')
+      return
+    }
+
+    const state = host.getAvatarRuntimeDebugSnapshot()
+    if (!state) {
+      setActionFeedback('No hay snapshot runtime de avatares disponible todavía.')
+      return
+    }
+
+    const generatedAt = new Date().toISOString()
+    const stamp = generatedAt.replace(/[:.]/g, '-')
+    const debugFileName = buildAvatarRuntimeDebugFilename(stamp)
+    const payload = buildAvatarRuntimeDebugPayload({
+      generatedAt,
+      debugFileName,
+      state,
+      browser: readAvatarRuntimeDebugBrowserSnapshot(),
+      location: readAvatarRuntimeDebugLocationSnapshot(),
+    })
+
+    downloadBlob(
+      new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json',
+      }),
+      debugFileName,
+    )
+
+    const visibleNodes = payload.counts.visibleNodes ?? 0
+    const withPicture = payload.counts.nodesWithPictureUrl ?? 0
+    const drawnImages = payload.counts.drawnImages ?? 0
+    const loadCandidates = payload.counts.loadCandidates ?? 0
+    setActionFeedback(
+      `Debug de avatares descargado. ${drawnImages}/${withPicture} fotos dibujadas; ${loadCandidates}/${visibleNodes} nodos visibles en cola útil.`,
+    )
+  }, [])
+
   const handleShareImage = useCallback(() => {
     if (isSocialCaptureBusy) {
       return
@@ -1888,6 +1940,22 @@ export default function GraphAppV2() {
                 </div>
               ))}
             </div>
+            {isDev ? (
+              <div className="sg-settings-section">
+                <h4>Debug de avatares</h4>
+                <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '0 0 10px' }}>
+                  Descarga el frame visible, la caché, los bloqueos y los eventos recientes del scheduler.
+                </p>
+                <button
+                  className="sg-btn sg-btn--primary"
+                  onClick={handleDownloadAvatarRuntimeDebug}
+                  style={{ width: '100%' }}
+                  type="button"
+                >
+                  Descargar debug de avatares
+                </button>
+              </div>
+            ) : null}
             {isDev ? (
               <div className="sg-settings-section">
                 <h4>Zaps dev</h4>
