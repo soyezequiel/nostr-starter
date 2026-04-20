@@ -1151,6 +1151,27 @@ export default function GraphAppV2() {
     isFixtureMode,
   ])
 
+  // Pre-calcular la capa completa (graph) en segundo plano para que el
+  // usuario no tenga penalidad de tiempo al alternar desde "mutuos"
+  useEffect(() => {
+    if (isFixtureMode || sceneState.activeLayer === 'graph' || !sceneState.rootPubkey) {
+      return
+    }
+
+    const timeoutId = setTimeout(() => {
+      const warmupState = withClientSceneSignature({
+        ...sceneState,
+        activeLayer: 'graph',
+      })
+      // Ejecutar la proyección almacena la salida en snapshotCache
+      buildGraphSceneSnapshot(warmupState)
+    }, 200)
+
+    return () => {
+      clearTimeout(timeoutId)
+    }
+  }, [isFixtureMode, sceneState])
+
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
     : null

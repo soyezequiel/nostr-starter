@@ -12,7 +12,7 @@ export const GRAPH_V2_LAYERS = [
 
 export type GraphV2Layer = (typeof GRAPH_V2_LAYERS)[number]
 
-export const DEFAULT_GRAPH_V2_LAYER: GraphV2Layer = 'graph'
+export const DEFAULT_GRAPH_V2_LAYER: GraphV2Layer = 'mutuals'
 
 export const isGraphV2Layer = (layer: UiLayer): layer is GraphV2Layer =>
   GRAPH_V2_LAYERS.includes(layer as GraphV2Layer)
