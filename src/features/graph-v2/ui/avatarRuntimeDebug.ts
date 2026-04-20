@@ -90,9 +90,19 @@ export const buildAvatarRuntimeDebugPayload = ({
       nodesWithSafePictureUrl: overlay?.counts.nodesWithSafePictureUrl ?? null,
       selectedForImage: overlay?.counts.selectedForImage ?? null,
       loadCandidates: overlay?.counts.loadCandidates ?? null,
+      pendingCacheMiss: overlay?.counts.pendingCacheMiss ?? null,
+      pendingCandidates: overlay?.counts.pendingCandidates ?? null,
+      blockedCandidates: overlay?.counts.blockedCandidates ?? null,
+      inflightCandidates: overlay?.counts.inflightCandidates ?? null,
       drawnImages: overlay?.counts.drawnImages ?? null,
       monogramDraws: overlay?.counts.monogramDraws ?? null,
       withPictureMonogramDraws: overlay?.counts.withPictureMonogramDraws ?? null,
+      visualConcurrency:
+        overlay?.resolvedBudget.visualConcurrency ??
+        overlay?.resolvedBudget.concurrency ??
+        null,
+      effectiveLoadConcurrency:
+        overlay?.resolvedBudget.effectiveLoadConcurrency ?? null,
       cacheReady: cache?.byState.ready ?? null,
       cacheLoading: cache?.byState.loading ?? null,
       cacheFailed: cache?.byState.failed ?? null,

@@ -129,7 +129,9 @@ test('avatar runtime debug payload separates draw, cache, scheduler, and blocked
           maxAvatarDrawsPerFrame: 280,
           maxImageDrawsPerFrame: 120,
           lruCap: 256,
-          concurrency: 6,
+          visualConcurrency: 1,
+          effectiveLoadConcurrency: 6,
+          concurrency: 1,
           maxBucket: 256,
           maxInteractiveBucket: 256,
           showAllVisibleImages: true,
@@ -144,6 +146,10 @@ test('avatar runtime debug payload separates draw, cache, scheduler, and blocked
           nodesWithSafePictureUrl: 9,
           selectedForImage: 9,
           loadCandidates: 7,
+          pendingCacheMiss: 3,
+          pendingCandidates: 4,
+          blockedCandidates: 1,
+          inflightCandidates: 1,
           drawnImages: 6,
           monogramDraws: 6,
           withPictureMonogramDraws: 3,
@@ -186,6 +192,12 @@ test('avatar runtime debug payload separates draw, cache, scheduler, and blocked
   assert.equal(payload.counts.drawnImages, 6)
   assert.equal(payload.counts.cacheFailed, 1)
   assert.equal(payload.counts.loaderBlocked, 2)
+  assert.equal(payload.counts.visualConcurrency, 1)
+  assert.equal(payload.counts.effectiveLoadConcurrency, 6)
+  assert.equal(payload.counts.pendingCacheMiss, 3)
+  assert.equal(payload.counts.pendingCandidates, 4)
+  assert.equal(payload.counts.blockedCandidates, 1)
+  assert.equal(payload.counts.inflightCandidates, 1)
   assert.deepEqual(Object.keys(payload.reasons.drawFallback), [
     'cache_loading',
     'http_404',

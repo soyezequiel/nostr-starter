@@ -121,15 +121,11 @@ export function createNodeDetailModule(
       return null
     }
 
-    const storedProfile =
-      existingNode.profileState === 'ready'
-        ? buildNodeProfileFromNode(existingNode)
-        : existingNode.profileState === 'missing'
-          ? null
-          : undefined
-
-    if (storedProfile !== undefined) {
-      return storedProfile
+    if (
+      existingNode.profileState === 'ready' &&
+      hasUsableNodeProfile(existingNode)
+    ) {
+      return buildNodeProfileFromNode(existingNode)
     }
 
     const profileRecord = await ctx.repositories.profiles.get(pubkey)
@@ -168,7 +164,7 @@ export function createNodeDetailModule(
     }
 
     const refreshedProfile =
-      refreshedNode.profileState === 'ready'
+      refreshedNode.profileState === 'ready' && hasUsableNodeProfile(refreshedNode)
         ? buildNodeProfileFromNode(refreshedNode)
         : refreshedNode.profileState === 'missing'
           ? null
@@ -329,3 +325,18 @@ export function createNodeDetailModule(
 }
 
 export type NodeDetailModule = ReturnType<typeof createNodeDetailModule>
+
+const hasUsableNodeProfile = (node: {
+  label?: string | null
+  picture?: string | null
+  about?: string | null
+  nip05?: string | null
+  lud16?: string | null
+}) =>
+  Boolean(
+    node.label?.trim() ||
+      node.picture?.trim() ||
+      node.about?.trim() ||
+      node.nip05?.trim() ||
+      node.lud16?.trim(),
+  )

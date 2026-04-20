@@ -342,11 +342,20 @@ export function createProfileHydrationModule(ctx: KernelContext) {
   ): boolean {
     const latestEnvelope = latestEnvelopesByPubkey.get(pubkey)
     if (latestEnvelope) {
-      return Boolean(safeParseProfile(latestEnvelope.event.content)?.picture)
+      const parsedProfile = safeParseProfile(latestEnvelope.event.content)
+      return (
+        !parsedProfile ||
+        Boolean(parsedProfile.picture) ||
+        !hasUsefulProfileFields(parsedProfile)
+      )
     }
 
     const cachedProfile = cachedProfilesByPubkey.get(pubkey)
-    return !cachedProfile || Boolean(cachedProfile.picture)
+    return (
+      !cachedProfile ||
+      Boolean(cachedProfile.picture) ||
+      !hasUsefulProfileFields(cachedProfile)
+    )
   }
 
   function isSameReplaceableEnvelope(
@@ -431,3 +440,18 @@ export function createProfileHydrationModule(ctx: KernelContext) {
 export type ProfileHydrationModule = ReturnType<
   typeof createProfileHydrationModule
 >
+
+const hasUsefulProfileFields = (profile: {
+  name?: string | null
+  about?: string | null
+  picture?: string | null
+  nip05?: string | null
+  lud16?: string | null
+}) =>
+  Boolean(
+    profile.name?.trim() ||
+      profile.about?.trim() ||
+      profile.picture?.trim() ||
+      profile.nip05?.trim() ||
+      profile.lud16?.trim(),
+  )

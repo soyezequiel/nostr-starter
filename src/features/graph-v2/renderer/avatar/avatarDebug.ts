@@ -116,6 +116,8 @@ export interface AvatarOverlayDebugSnapshot {
     maxAvatarDrawsPerFrame: number
     maxImageDrawsPerFrame: number
     lruCap: number
+    visualConcurrency: number
+    effectiveLoadConcurrency: number
     concurrency: number
     maxBucket: ImageLodBucket
     maxInteractiveBucket: ImageLodBucket
@@ -131,6 +133,10 @@ export interface AvatarOverlayDebugSnapshot {
     nodesWithSafePictureUrl: number
     selectedForImage: number
     loadCandidates: number
+    pendingCacheMiss: number
+    pendingCandidates: number
+    blockedCandidates: number
+    inflightCandidates: number
     drawnImages: number
     monogramDraws: number
     withPictureMonogramDraws: number

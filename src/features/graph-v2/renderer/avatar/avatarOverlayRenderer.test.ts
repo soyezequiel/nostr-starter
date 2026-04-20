@@ -9,6 +9,7 @@ import {
   resolveAvatarFrameDrawCap,
   resolveAvatarDrawRadiusPx,
   resolveAvatarImageDisableReason,
+  resolveAvatarLoadConcurrency,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
   selectAvatarDrawItemsForFrame,
@@ -244,6 +245,58 @@ test('all visible photos mode expands cache cap to the visible photo count', () 
       showAllVisibleImages: false,
     }),
     128,
+  )
+})
+
+test('all visible photos mode preserves degraded load concurrency when disabled', () => {
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 1,
+      visiblePhotoCount: 505,
+      showAllVisibleImages: false,
+    }),
+    1,
+  )
+})
+
+test('all visible photos mode raises effective load concurrency to the floor', () => {
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 1,
+      visiblePhotoCount: 505,
+      showAllVisibleImages: true,
+    }),
+    6,
+  )
+})
+
+test('all visible photos mode caps effective load concurrency', () => {
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 12,
+      visiblePhotoCount: 505,
+      showAllVisibleImages: true,
+    }),
+    8,
+  )
+})
+
+test('all visible photos mode does not invent load slots beyond visible photos', () => {
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 1,
+      visiblePhotoCount: 3,
+      showAllVisibleImages: true,
+    }),
+    3,
+  )
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 1,
+      visiblePhotoCount: 0,
+      showAllVisibleImages: true,
+    }),
+    0,
   )
 })
 

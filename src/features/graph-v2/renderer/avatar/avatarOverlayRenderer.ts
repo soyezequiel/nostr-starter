@@ -43,6 +43,8 @@ const FOCUS_AURA_OUTER_LINE_WIDTH_FACTOR = 0.42
 const FOCUS_AURA_INNER_LINE_WIDTH_FACTOR = 0.14
 const FOCUS_AURA_OUTER_ALPHA = 0.22
 const FOCUS_AURA_INNER_ALPHA = 0.52
+const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_FLOOR = 6
+const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_CEILING = 8
 const EMPTY_SET = new Set<string>()
 interface AvatarDrawSelectionItem {
   pubkey: string
@@ -338,6 +340,32 @@ export const resolveAvatarCacheCap = ({
     ? Math.max(Math.max(16, Math.floor(baseCap)), Math.max(0, Math.floor(visiblePhotoCount)))
     : Math.max(16, Math.floor(baseCap))
 
+export const resolveAvatarLoadConcurrency = ({
+  baseConcurrency,
+  visiblePhotoCount,
+  showAllVisibleImages,
+}: {
+  baseConcurrency: number
+  visiblePhotoCount: number
+  showAllVisibleImages: boolean
+}) => {
+  const normalizedBase = Math.max(0, Math.floor(baseConcurrency))
+  const normalizedVisiblePhotoCount = Math.max(0, Math.floor(visiblePhotoCount))
+
+  if (!showAllVisibleImages) {
+    return normalizedBase
+  }
+  if (normalizedVisiblePhotoCount === 0) {
+    return 0
+  }
+
+  return Math.min(
+    ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_CEILING,
+    Math.max(normalizedBase, ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_FLOOR),
+    normalizedVisiblePhotoCount,
+  )
+}
+
 const incrementCountMap = (map: Record<string, number>, key: string | null) => {
   if (!key) {
     return
@@ -566,6 +594,8 @@ export class AvatarOverlayRenderer {
           maxAvatarDrawsPerFrame: budget.maxAvatarDrawsPerFrame,
           maxImageDrawsPerFrame: budget.maxImageDrawsPerFrame,
           lruCap: budget.lruCap,
+          visualConcurrency: budget.concurrency,
+          effectiveLoadConcurrency: 0,
           concurrency: budget.concurrency,
           maxBucket: budget.maxBucket,
           maxInteractiveBucket: budget.maxInteractiveBucket,
@@ -581,6 +611,10 @@ export class AvatarOverlayRenderer {
           nodesWithSafePictureUrl: 0,
           selectedForImage: 0,
           loadCandidates: 0,
+          pendingCacheMiss: 0,
+          pendingCandidates: 0,
+          blockedCandidates: 0,
+          inflightCandidates: 0,
           drawnImages: 0,
           monogramDraws: 0,
           withPictureMonogramDraws: 0,
@@ -636,6 +670,15 @@ export class AvatarOverlayRenderer {
     const visiblePhotoCount = resolvedDrawItems.filter(
       (item) => item.url && isSafeAvatarUrl(item.url),
     ).length
+    const effectiveLoadConcurrency = resolveAvatarLoadConcurrency({
+      baseConcurrency: budget.concurrency,
+      visiblePhotoCount,
+      showAllVisibleImages: budget.showAllVisibleImages,
+    })
+    const schedulerBudget = {
+      ...budget,
+      concurrency: effectiveLoadConcurrency,
+    }
     this.cache.setCap(
       resolveAvatarCacheCap({
         baseCap: budget.lruCap,
@@ -813,6 +856,21 @@ export class AvatarOverlayRenderer {
       })
     }
 
+    const pendingCacheMissCount = debugNodes.filter(
+      (item) => item.hasSafePictureUrl && item.cacheState === 'missing',
+    ).length
+    const pendingCandidateCount = debugNodes.filter(
+      (item) =>
+        item.loadDecision === 'candidate' &&
+        (item.cacheState === 'missing' || item.cacheState === 'loading'),
+    ).length
+    const blockedCandidateCount = debugNodes.filter(
+      (item) => item.loadDecision === 'candidate' && item.blocked,
+    ).length
+    const inflightCandidateCount = debugNodes.filter(
+      (item) => item.loadDecision === 'candidate' && item.inflight,
+    ).length
+
     this.lastDebugSnapshot = {
       generatedAtMs: nowMs,
       cameraRatio,
@@ -824,6 +882,8 @@ export class AvatarOverlayRenderer {
         maxAvatarDrawsPerFrame: budget.maxAvatarDrawsPerFrame,
         maxImageDrawsPerFrame,
         lruCap: budget.lruCap,
+        visualConcurrency: budget.concurrency,
+        effectiveLoadConcurrency,
         concurrency: budget.concurrency,
         maxBucket: budget.maxBucket,
         maxInteractiveBucket: budget.maxInteractiveBucket,
@@ -839,6 +899,10 @@ export class AvatarOverlayRenderer {
         nodesWithSafePictureUrl: visiblePhotoCount,
         selectedForImage: debugNodes.filter((item) => item.selectedForImage).length,
         loadCandidates: candidates.length,
+        pendingCacheMiss: pendingCacheMissCount,
+        pendingCandidates: pendingCandidateCount,
+        blockedCandidates: blockedCandidateCount,
+        inflightCandidates: inflightCandidateCount,
         drawnImages: drawnImageCount,
         monogramDraws: monogramDrawCount,
         withPictureMonogramDraws: withPictureMonogramDrawCount,
@@ -852,10 +916,10 @@ export class AvatarOverlayRenderer {
 
     this.pruneMotionSamples(seenNodes)
     if (moving && !budget.showAllVisibleImages) {
-      this.scheduler.prime(candidates, budget)
+      this.scheduler.prime(candidates, schedulerBudget)
       return
     }
-    this.scheduler.reconcile(candidates, budget)
+    this.scheduler.reconcile(candidates, schedulerBudget)
   }
 
   private drawAvatarCircle({

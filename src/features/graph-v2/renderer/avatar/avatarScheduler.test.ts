@@ -55,6 +55,46 @@ const budget: AvatarBudget = {
   drawAvatars: true,
 }
 
+test('scheduler starts up to the effective load concurrency', () => {
+  const restoreDocument = installDocumentStub()
+  const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (url: string, _bucket: number, signal: AbortSignal) => {
+      loadCalls.push({ url, signal })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache: new AvatarBitmapCache(16),
+      loader: loader as never,
+    })
+    const candidates = Array.from({ length: 10 }, (_, index) => ({
+      pubkey: `node-${index}`,
+      urlKey: `node-${index}::https://example.com/node-${index}.png`,
+      url: `https://example.com/node-${index}.png`,
+      bucket: 64,
+      priority: index,
+      monogram: { label: `Node ${index}`, color: '#7dd3a7' },
+    }))
+
+    scheduler.reconcile(candidates, { ...budget, concurrency: 6 })
+
+    assert.equal(loadCalls.length, 6)
+    assert.equal(scheduler.inflightSize(), 6)
+    assert.deepEqual(
+      loadCalls.map((call) => call.url),
+      candidates.slice(0, 6).map((candidate) => candidate.url),
+    )
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
 test('urgent avatars preempt lower-priority inflight loads', () => {
   const restoreDocument = installDocumentStub()
   const loadCalls: Array<{ url: string; signal: AbortSignal }> = []

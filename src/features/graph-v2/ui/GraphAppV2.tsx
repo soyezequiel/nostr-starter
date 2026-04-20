@@ -2000,6 +2000,18 @@ export default function GraphAppV2() {
     const pinActionLabel = detail.isPinned ? 'Desanclar perfil' : 'Anclar perfil'
     const exploreActionLabel = detail.isExpanded ? 'Conexiones exploradas' : 'Explorar conexiones'
     const shouldShowIdentityHelp = !isIdentityHelpDismissed
+    const isProfileLoading = detail.node.profileState === 'loading'
+    const hasProfileName = Boolean(detail.node.label?.trim())
+    const detailTitle = hasProfileName
+      ? detail.displayName
+      : isProfileLoading
+        ? 'Cargando perfil...'
+        : detail.displayName
+    const bioCopy = detail.about?.trim()
+      ? detail.about.trim()
+      : isProfileLoading
+        ? 'Cargando perfil desde relays y cache...'
+        : 'Sin bio conocida.'
 
     return (
       <div>
@@ -2022,7 +2034,7 @@ export default function GraphAppV2() {
           </div>
           <div className="sg-node-hero__content">
             <div className="sg-node-hero__title-row">
-              <h2>{detail.displayName ?? '—'}</h2>
+              <h2>{detailTitle ?? '—'}</h2>
               {detail.pubkey ? (
                 <button
                   aria-label={pinActionLabel}
@@ -2069,7 +2081,7 @@ export default function GraphAppV2() {
         ) : null}
 
         <p className={`sg-bio${detail.about?.trim() ? '' : ' sg-bio--empty'}`}>
-          {detail.about?.trim() || 'Sin bio conocida.'}
+          {bioCopy}
         </p>
 
         <div className="sg-metric-grid">
@@ -2145,13 +2157,13 @@ export default function GraphAppV2() {
         <div className="sg-field">
           <span className="sg-field__k">nip05</span>
           <span className={`sg-field__v${detail.nip05 ? '' : ' sg-field__v--missing'}`}>
-            {detail.nip05?.trim() || '—'}
+            {detail.nip05?.trim() || (isProfileLoading ? 'cargando...' : '—')}
           </span>
         </div>
         <div className="sg-field">
           <span className="sg-field__k">lud16</span>
           <span className={`sg-field__v${detail.lud16 ? '' : ' sg-field__v--missing'}`}>
-            {detail.lud16?.trim() || '—'}
+            {detail.lud16?.trim() || (isProfileLoading ? 'cargando...' : '—')}
           </span>
         </div>
         <div className="sg-field">
