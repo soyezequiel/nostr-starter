@@ -1,4 +1,4 @@
-﻿import type Sigma from 'sigma'
+import type Sigma from 'sigma'
 
 import {
   applyImageBucketHysteresis,
@@ -578,6 +578,7 @@ export class AvatarOverlayRenderer {
           nowMs,
           budget,
           cameraChanged,
+          directForcedAvatarPubkey,
         )
 
       const monogramInput: MonogramInput = {
@@ -1187,11 +1188,14 @@ export class AvatarOverlayRenderer {
     nowMs: number,
     budget: EffectiveAvatarBudget,
     cameraChanged: boolean,
+    directDraggedPubkey: string | null = null,
   ): boolean {
     const previous = this.lastMotionByNode.get(pubkey)
     this.lastMotionByNode.set(pubkey, { x, y, t: nowMs })
 
-    if (!budget.hideImagesOnFastNodes || !previous || cameraChanged) {
+    // El nodo arrastrado directamente conserva su foto; solo los que se mueven
+    // por física indirecta (propagación de fuerza) pasan a monograma.
+    if (!budget.hideImagesOnFastNodes || !previous || cameraChanged || pubkey === directDraggedPubkey) {
       return false
     }
 

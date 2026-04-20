@@ -1,4 +1,4 @@
-﻿import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
+import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
 
 export type AvatarUrlKey = string
 
@@ -67,7 +67,7 @@ export const DEFAULT_AVATAR_RUNTIME_OPTIONS: AvatarRuntimeOptions = {
   showZoomedOutMonograms: true,
   showMonogramBackgrounds: false,
   showMonogramText: false,
-  hideImagesOnFastNodes: false,
+  hideImagesOnFastNodes: true,
   fastNodeVelocityThreshold: 240,
   allowZoomedOutImages: true,
   showAllVisibleImages: true,
