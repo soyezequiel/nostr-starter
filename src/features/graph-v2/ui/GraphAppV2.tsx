@@ -124,7 +124,7 @@ import {
   traceZapFlow,
 } from '@/features/graph-runtime/debug/zapTrace'
 import { downloadBlob } from '@/features/graph-runtime/export/download'
-import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
+import type { NostrProfile } from '@/lib/nostr'
 
 type SigmaSettingsTab = 'renderer' | 'relays' | 'dev'
 
@@ -166,9 +166,7 @@ const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
   label: 'Dev',
 }
 
-const SAVED_ROOT_PROFILE_STALE_MS = 6 * 60 * 60 * 1000
 const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
-const MAX_SAVED_ROOT_REFRESHES = 6
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
 const VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS = 1500
@@ -1286,26 +1284,6 @@ export default function GraphAppV2() {
     if (typeof window === 'undefined') return
     window.sessionStorage.setItem(IDENTITY_FIRST_RUN_HELP_KEY, '1')
   }, [])
-
-  useEffect(() => {
-    if (!savedRootsHydrated || savedRoots.length === 0) return
-    const rootsNeedingRefresh = savedRoots
-      .filter((savedRoot) =>
-        savedRoot.profileFetchedAt === null ||
-        Date.now() - savedRoot.profileFetchedAt > SAVED_ROOT_PROFILE_STALE_MS,
-      )
-      .slice(0, MAX_SAVED_ROOT_REFRESHES)
-    if (rootsNeedingRefresh.length === 0) return
-    let cancelled = false
-    void Promise.allSettled(
-      rootsNeedingRefresh.map(async (savedRoot) => {
-        const profile = await fetchProfileByPubkey(savedRoot.pubkey)
-        if (cancelled) return
-        setSavedRootProfile(savedRoot.pubkey, mapNostrProfileToSavedRootProfile(profile), Date.now())
-      }),
-    )
-    return () => { cancelled = true }
-  }, [savedRoots, savedRootsHydrated, setSavedRootProfile])
 
   useEffect(() => {
     if (!sceneState.rootPubkey || !currentRootNode) return

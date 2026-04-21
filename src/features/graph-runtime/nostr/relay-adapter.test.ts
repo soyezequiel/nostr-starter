@@ -36,3 +36,38 @@ test('shares circuit breaker state across adapter instances', async () => {
   assert.equal(first[0]?.relayUrl, 'wss://relay.damus.io')
   assert.match(second[0]?.errorMessage ?? '', /temporarily skipped due to offline status/i)
 })
+
+test('skips subscription attempts for relays recently marked offline', async () => {
+  const relayUrl = 'wss://relay-subscription.example'
+  const transport = new FailingTransport()
+  const adapterA = createRelayPoolAdapter({
+    relayUrls: [relayUrl],
+    retryCount: 0,
+    transport,
+  })
+
+  const firstOutcome = await new Promise<string>((resolve) => {
+    adapterA.subscribe([{ authors: ['a'], kinds: [3] }]).subscribe({
+      error: (error) => resolve(error.message),
+      complete: () => resolve('complete'),
+    })
+  })
+
+  assert.match(firstOutcome, /cannot connect/)
+
+  const adapterB = createRelayPoolAdapter({
+    relayUrls: [relayUrl],
+    retryCount: 0,
+    transport,
+  })
+
+  const secondOutcome = await new Promise<string>((resolve) => {
+    adapterB.subscribe([{ authors: ['a'], kinds: [3] }]).subscribe({
+      error: (error) => resolve(error.message),
+      complete: () => resolve('complete'),
+    })
+  })
+
+  assert.equal(transport.connectCalls, 1)
+  assert.equal(secondOutcome, 'complete')
+})

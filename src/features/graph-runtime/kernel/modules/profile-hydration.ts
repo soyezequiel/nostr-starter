@@ -140,7 +140,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
       )
     }
 
-    const adapter = ctx.createRelayAdapter({ relayUrls })
+    const adapter = ctx.createRelayAdapter({ relayUrls, retryCount: 0 })
     const primalCacheClient = new PrimalCacheClient()
 
     try {

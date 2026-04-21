@@ -356,13 +356,16 @@ export class RelayPoolAdapter {
       })
     }
 
-    const finishRelay = (url: string) => {
-      if (!activeAttempts.has(url)) {
+    const finishRelay = (
+      url: string,
+      options: { requireActiveAttempt?: boolean } = {},
+    ) => {
+      const hadActiveAttempt = activeAttempts.delete(url)
+      if (!hadActiveAttempt && options.requireActiveAttempt !== false) {
         return
       }
 
-      activeAttempts.delete(url)
-      pendingRelays -= 1
+      pendingRelays = Math.max(0, pendingRelays - 1)
       finalize()
     }
 
@@ -454,12 +457,12 @@ export class RelayPoolAdapter {
         const timeSinceChange = this.clock.now() - health.lastChangeMs
         // Circuit breaker: hold off retrying dead relays for 60s
         if (health.status === 'offline' && timeSinceChange < 60_000) {
-          finishRelay(url)
+          finishRelay(url, { requireActiveAttempt: false })
           return
         }
         // Circuit breaker: prevent new subscriptions from hammering a degraded relay
         if (attemptNumber === 1 && health.status === 'degraded' && timeSinceChange < 5_000) {
-          finishRelay(url)
+          finishRelay(url, { requireActiveAttempt: false })
           return
         }
       }
