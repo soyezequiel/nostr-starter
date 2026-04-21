@@ -387,6 +387,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private motionClearTimer: ReturnType<typeof setTimeout> | null = null
 
+  private cameraMotionActive = false
+
+  private cameraMotionClearTimer: ReturnType<typeof setTimeout> | null = null
+
   private readonly MOTION_RESUME_MS = 140
 
   private hideAvatarsOnMove = false
@@ -963,7 +967,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     this.forceRuntime?.suspend()
     this.cancelPhysicsPositionBridge()
+    if (this.motionClearTimer !== null) {
+      clearTimeout(this.motionClearTimer)
+      this.motionClearTimer = null
+    }
+    if (this.cameraMotionClearTimer !== null) {
+      clearTimeout(this.cameraMotionClearTimer)
+      this.cameraMotionClearTimer = null
+    }
     this.motionActive = false
+    this.cameraMotionActive = false
 
     try {
       return await captureSocialGraphImage({
@@ -1417,10 +1430,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
         cache: this.avatarCache,
         scheduler: this.avatarScheduler,
         budget: this.avatarBudget,
-        isMoving: () => this.hideAvatarsOnMove && this.motionActive,
+        isMoving: () => this.hideAvatarsOnMove && this.cameraMotionActive,
         getBlockedAvatar: (urlKey) => this.avatarLoader?.getBlockedEntry(urlKey) ?? null,
+        getSelectedNodePubkey: () =>
+          this.scene?.render.selection.selectedNodePubkey ?? null,
+        getHoveredNodePubkey: () => this.currentHoverFocus.pubkey,
         getForcedAvatarPubkey: () =>
           this.draggedNodePubkey ?? this.hoveredNodePubkey,
+        getDraggedAvatarPubkey: () => this.draggedNodePubkey,
         getHoveredNeighborPubkeys: () => this.currentHoverFocus.neighbors,
         getAvatarRevealPointer: () => this.avatarRevealPointer,
         getRuntimeOptions: () => this.avatarRuntimeOptions,
@@ -1428,6 +1445,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
       sigma.getCamera().on('updated', () => {
         this.markMotion()
+        this.markCameraMotion()
       })
     } catch (err) {
       console.warn('[graph-v2] avatar pipeline init failed', err)
@@ -1440,7 +1458,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
       clearTimeout(this.motionClearTimer)
       this.motionClearTimer = null
     }
+    if (this.cameraMotionClearTimer !== null) {
+      clearTimeout(this.cameraMotionClearTimer)
+      this.cameraMotionClearTimer = null
+    }
     this.motionActive = false
+    this.cameraMotionActive = false
     this.avatarOverlay?.dispose()
     this.avatarOverlay = null
     this.avatarScheduler?.dispose()
@@ -1462,6 +1485,21 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.motionClearTimer = setTimeout(() => {
       this.motionActive = false
       this.motionClearTimer = null
+      this.safeRefresh()
+    }, this.MOTION_RESUME_MS)
+  }
+
+  private markCameraMotion() {
+    if (!this.avatarOverlay) {
+      return
+    }
+    this.cameraMotionActive = true
+    if (this.cameraMotionClearTimer !== null) {
+      clearTimeout(this.cameraMotionClearTimer)
+    }
+    this.cameraMotionClearTimer = setTimeout(() => {
+      this.cameraMotionActive = false
+      this.cameraMotionClearTimer = null
       this.safeRefresh()
     }, this.MOTION_RESUME_MS)
   }

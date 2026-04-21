@@ -7,14 +7,19 @@ import {
 import {
   resolveAvatarCacheCap,
   resolveAvatarFrameDrawCap,
+  resolveAvatarGlobalMotionActive,
   resolveAvatarDrawRadiusPx,
   resolveAvatarImageDisableReason,
+  resolveAvatarItemGlobalMotionActive,
   resolveAvatarLoadConcurrency,
+  resolveFastNodeVelocityThresholdPx,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
   selectAvatarDrawItemsForFrame,
   selectClosestAvatarRevealPubkeys,
+  shouldDrawAvatarForSelectionFocus,
   shouldDisableAvatarImage,
+  shouldHideAvatarImageForDragNeighbor,
 } from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
 
 test('keeps the forced dragged avatar even when the frame cap is zero', () => {
@@ -143,7 +148,134 @@ test('draws the forced avatar on the forced context when available', () => {
   )
 })
 
-test('global graph or camera motion degrades image avatars to monograms', () => {
+test('keeps all avatars eligible when no node is selected', () => {
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: null,
+      pubkey: 'far',
+      isSelected: false,
+      isNeighbor: false,
+    }),
+    true,
+  )
+})
+
+test('limits avatars to the selected node and its neighbors while selected', () => {
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: 'selected',
+      pubkey: 'selected',
+      isSelected: true,
+      isNeighbor: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: 'selected',
+      pubkey: 'neighbor',
+      isSelected: false,
+      isNeighbor: true,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: 'selected',
+      pubkey: 'far',
+      isSelected: false,
+      isNeighbor: false,
+    }),
+    false,
+  )
+})
+
+test('hover focus limits avatars to the hovered node and its neighbors', () => {
+  const hoveredNeighborPubkeys = new Set(['hover-neighbor'])
+
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: null,
+      hoveredNodePubkey: 'hovered',
+      hoveredNeighborPubkeys,
+      pubkey: 'hovered',
+      isSelected: false,
+      isNeighbor: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: null,
+      hoveredNodePubkey: 'hovered',
+      hoveredNeighborPubkeys,
+      pubkey: 'hover-neighbor',
+      isSelected: false,
+      isNeighbor: false,
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: null,
+      hoveredNodePubkey: 'hovered',
+      hoveredNeighborPubkeys,
+      pubkey: 'far',
+      isSelected: false,
+      isNeighbor: false,
+    }),
+    false,
+  )
+})
+
+test('hover focus overrides the selected node avatar neighborhood', () => {
+  assert.equal(
+    shouldDrawAvatarForSelectionFocus({
+      selectedNodePubkey: 'selected',
+      hoveredNodePubkey: 'hovered',
+      hoveredNeighborPubkeys: new Set(['hover-neighbor']),
+      pubkey: 'selected-neighbor',
+      isSelected: false,
+      isNeighbor: true,
+    }),
+    false,
+  )
+})
+
+test('hides direct neighbor photos while a node is dragged', () => {
+  assert.equal(
+    shouldHideAvatarImageForDragNeighbor({
+      draggedNodePubkey: 'dragged',
+      pubkey: 'neighbor',
+      draggedNeighborPubkeys: new Set(['neighbor']),
+    }),
+    true,
+  )
+})
+
+test('does not apply drag-neighbor hiding to hover-only focus', () => {
+  assert.equal(
+    shouldHideAvatarImageForDragNeighbor({
+      draggedNodePubkey: null,
+      pubkey: 'neighbor',
+      draggedNeighborPubkeys: new Set(['neighbor']),
+    }),
+    false,
+  )
+})
+
+test('does not hide the directly dragged node through the neighbor rule', () => {
+  assert.equal(
+    shouldHideAvatarImageForDragNeighbor({
+      draggedNodePubkey: 'dragged',
+      pubkey: 'dragged',
+      draggedNeighborPubkeys: new Set(['dragged']),
+    }),
+    false,
+  )
+})
+
+test('global camera motion degrades image avatars to monograms', () => {
   assert.equal(
     shouldDisableAvatarImage({
       selectedForImage: true,
@@ -152,6 +284,38 @@ test('global graph or camera motion degrades image avatars to monograms', () => 
       fastMoving: false,
       imageDrawCount: 0,
       maxImageDrawsPerFrame: 12,
+    }),
+    true,
+  )
+})
+
+test('motion hiding remains active when all visible photos mode is enabled', () => {
+  assert.equal(
+    resolveAvatarGlobalMotionActive({
+      moving: true,
+      hideImagesOnFastNodes: true,
+    }),
+    true,
+  )
+  assert.equal(
+    resolveAvatarGlobalMotionActive({
+      moving: true,
+      hideImagesOnFastNodes: false,
+    }),
+    false,
+  )
+})
+
+test('global motion hides the directly dragged avatar image too', () => {
+  assert.equal(
+    resolveAvatarItemGlobalMotionActive({
+      globalMotionActive: true,
+    }),
+    true,
+  )
+  assert.equal(
+    resolveAvatarItemGlobalMotionActive({
+      globalMotionActive: true,
     }),
     true,
   )
@@ -168,6 +332,30 @@ test('fast node motion degrades image avatars to monograms', () => {
       maxImageDrawsPerFrame: 12,
     }),
     true,
+  )
+})
+
+test('fast node threshold gets more sensitive when zoomed out to the full network', () => {
+  assert.equal(
+    resolveFastNodeVelocityThresholdPx({
+      baseThreshold: 240,
+      cameraRatio: 1,
+    }),
+    240,
+  )
+  assert.equal(
+    resolveFastNodeVelocityThresholdPx({
+      baseThreshold: 240,
+      cameraRatio: 4,
+    }),
+    120,
+  )
+  assert.equal(
+    resolveFastNodeVelocityThresholdPx({
+      baseThreshold: 240,
+      cameraRatio: 20,
+    }),
+    80,
   )
 })
 
@@ -300,7 +488,7 @@ test('all visible photos mode does not invent load slots beyond visible photos',
   )
 })
 
-test('avatar runtime defaults keep all visible photos on and saver modes off', () => {
+test('avatar runtime defaults keep all visible photos on and motion hiding enabled', () => {
   assert.equal(DEFAULT_AVATAR_RUNTIME_OPTIONS.showAllVisibleImages, true)
-  assert.equal(DEFAULT_AVATAR_RUNTIME_OPTIONS.hideImagesOnFastNodes, false)
+  assert.equal(DEFAULT_AVATAR_RUNTIME_OPTIONS.hideImagesOnFastNodes, true)
 })

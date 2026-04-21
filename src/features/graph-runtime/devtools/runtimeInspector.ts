@@ -262,6 +262,33 @@ const translateAvatarReason = (reason: string | null | undefined) => {
 
   const normalized = reason.toLowerCase()
 
+  if (normalized === 'cache_miss') {
+    return 'Todavia no hay bitmap en cache'
+  }
+  if (normalized === 'cache_loading') {
+    return 'La foto esta cargando'
+  }
+  if (normalized === 'cache_warmup') {
+    return 'La foto espera warmup de cache'
+  }
+  if (normalized === 'cache_failed') {
+    return 'La cache marco una falla reutilizable'
+  }
+  if (normalized === 'not_selected_for_image') {
+    return 'No fue seleccionada por presupuesto visual'
+  }
+  if (normalized === 'global_motion_active') {
+    return 'Se degrado por movimiento global'
+  }
+  if (normalized === 'fast_moving') {
+    return 'Se degrado por movimiento del nodo'
+  }
+  if (normalized === 'monogram_only') {
+    return 'Monograma intencional por zoom'
+  }
+  if (normalized === 'image_draw_cap') {
+    return 'Se alcanzo el limite de fotos por frame'
+  }
   if (normalized === 'missing_url') {
     return 'El perfil no trae URL de foto'
   }
@@ -310,11 +337,16 @@ const translateAvatarReason = (reason: string | null | undefined) => {
 const toneForAvatarReason = (label: string): RuntimeInspectorTone => {
   const normalized = label.toLowerCase()
   if (
+    normalized.includes('todavia no hay bitmap') ||
+    normalized.includes('esta cargando') ||
+    normalized.includes('espera warmup') ||
+    normalized.includes('presupuesto visual') ||
     normalized.includes('no trae url') ||
     normalized.includes('no hay foto') ||
     normalized.includes('fuera por zoom') ||
     normalized.includes('fuera por tamano') ||
-    normalized.includes('movimiento')
+    normalized.includes('movimiento') ||
+    normalized.includes('monograma intencional')
   ) {
     return 'neutral'
   }
@@ -376,6 +408,48 @@ const rankReasons = (map: Map<string, number>): RuntimeInspectorMetric[] =>
       value: formatInteger(value),
       tone: toneForAvatarReason(label),
     }))
+
+const BENIGN_AVATAR_SAMPLE_REASONS = new Set([
+  'cache_miss',
+  'cache_loading',
+  'cache_warmup',
+  'not_selected_for_image',
+  'global_motion_active',
+  'fast_moving',
+  'monogram_only',
+  'zoom_threshold',
+  'image_draw_cap',
+])
+
+const isBenignAvatarSampleReason = (reason: string | null | undefined) => {
+  if (!reason) {
+    return true
+  }
+  return BENIGN_AVATAR_SAMPLE_REASONS.has(reason.toLowerCase())
+}
+
+type RuntimeAvatarNodeSnapshot = NonNullable<
+  AvatarRuntimeStateDebugSnapshot['overlay']
+>['nodes'][number]
+
+const selectProblematicAvatarReason = (node: RuntimeAvatarNodeSnapshot) =>
+  node.blockReason ??
+  node.cacheFailureReason ??
+  (!isBenignAvatarSampleReason(node.drawFallbackReason)
+    ? node.drawFallbackReason
+    : null) ??
+  (!isBenignAvatarSampleReason(node.disableImageReason)
+    ? node.disableImageReason
+    : null) ??
+  (!isBenignAvatarSampleReason(node.loadSkipReason)
+    ? node.loadSkipReason
+    : null)
+
+const isVisibleAvatarNodeAffected = (node: RuntimeAvatarNodeSnapshot) =>
+  node.hasPictureUrl &&
+  (node.blocked ||
+    node.cacheState === 'failed' ||
+    selectProblematicAvatarReason(node) !== null)
 
 const toneRank = (tone: RuntimeInspectorTone) => {
   switch (tone) {
@@ -638,25 +712,20 @@ const collectAvatarSamples = (
   snapshot: AvatarRuntimeStateDebugSnapshot | null,
 ) => {
   const nodes = snapshot?.overlay?.nodes ?? []
-  const problematicNodes = nodes.filter(
-    (node) =>
-      node.hasPictureUrl &&
-      (node.blockReason ||
-        node.cacheFailureReason ||
-        node.drawFallbackReason ||
-        node.disableImageReason ||
-        node.loadSkipReason),
-  )
+  const problematicNodes = nodes
+    .map((node) => {
+      if (!node.hasPictureUrl) {
+        return null
+      }
+      const reason = selectProblematicAvatarReason(node)
 
-  return problematicNodes.slice(0, 6).map((node) => ({
+      return reason ? { node, reason } : null
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+
+  return problematicNodes.slice(0, 6).map(({ node, reason }) => ({
     nodo: node.label?.trim() || compactPubkey(node.pubkey),
-    causa: translateAvatarReason(
-      node.blockReason ??
-        node.cacheFailureReason ??
-        node.drawFallbackReason ??
-        node.disableImageReason ??
-        node.loadSkipReason,
-    ),
+    causa: translateAvatarReason(reason),
   }))
 }
 
@@ -676,7 +745,7 @@ const buildAvatarSection = (
   const visibleBlockedCount =
     overlay?.nodes.filter((node) => node.hasPictureUrl && node.blocked).length ?? 0
   const visibleAffectedCount =
-    visibleFailedCount + visibleBlockedCount + withPictureMonograms
+    overlay?.nodes.filter(isVisibleAvatarNodeAffected).length ?? 0
   const cacheEntryCount =
     (cache?.byState.ready ?? 0) +
     (cache?.byState.loading ?? 0) +

@@ -382,7 +382,7 @@ test('avatar runtime debug snapshot combines cache, loader, scheduler, and overl
         getState: () => { x: number; y: number; ratio: number; angle: number }
       }
     }
-    container: { clientWidth: number; clientHeight: number } | null
+    container: { offsetWidth: number; offsetHeight: number } | null
     forceRuntime: { isRunning: () => boolean } | null
     motionActive: boolean
     hideAvatarsOnMove: boolean
@@ -417,8 +417,8 @@ test('avatar runtime debug snapshot combines cache, loader, scheduler, and overl
     }),
   }
   adapter.container = {
-    clientWidth: 1440,
-    clientHeight: 900,
+    offsetWidth: 1440,
+    offsetHeight: 900,
   }
   adapter.forceRuntime = {
     isRunning: () => true,
@@ -463,6 +463,42 @@ test('avatar runtime debug snapshot combines cache, loader, scheduler, and overl
   assert.equal(snapshot?.physicsRunning, true)
 })
 
+test('avatar global motion is separate from graph or drag motion', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    avatarOverlay: Record<string, never> | null
+    motionActive: boolean
+    cameraMotionActive: boolean
+    motionClearTimer: ReturnType<typeof setTimeout> | null
+    cameraMotionClearTimer: ReturnType<typeof setTimeout> | null
+    markMotion: () => void
+    markCameraMotion: () => void
+    safeRefresh: () => void
+  }
+  adapter.avatarOverlay = {}
+  adapter.safeRefresh = () => {}
+
+  adapter.markMotion()
+  assert.equal(adapter.motionActive, true)
+  assert.equal(adapter.cameraMotionActive, false)
+
+  adapter.markCameraMotion()
+  assert.equal(adapter.motionActive, true)
+  assert.equal(adapter.cameraMotionActive, true)
+
+  if (adapter.motionClearTimer !== null) {
+    clearTimeout(adapter.motionClearTimer)
+    adapter.motionClearTimer = null
+  }
+  if (adapter.cameraMotionClearTimer !== null) {
+    clearTimeout(adapter.cameraMotionClearTimer)
+    adapter.cameraMotionClearTimer = null
+  }
+})
+
 test('avatar-settled refresh is coalesced by Sigma without forcing a synchronous refresh', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
@@ -473,7 +509,7 @@ test('avatar-settled refresh is coalesced by Sigma without forcing a synchronous
       scheduleRefresh: () => void
       refresh: () => void
     } | null
-    container: { clientWidth: number; clientHeight: number } | null
+    container: { offsetWidth: number; offsetHeight: number } | null
     pendingContainerRefresh: boolean
     scheduleAvatarSettledRefresh: () => void
   }
@@ -489,8 +525,8 @@ test('avatar-settled refresh is coalesced by Sigma without forcing a synchronous
     },
   }
   adapter.container = {
-    clientWidth: 1440,
-    clientHeight: 900,
+    offsetWidth: 1440,
+    offsetHeight: 900,
   }
   adapter.pendingContainerRefresh = false
 
@@ -510,7 +546,7 @@ test('avatar-settled refresh defers while the container is not renderable', asyn
     sigma: {
       scheduleRefresh: () => void
     } | null
-    container: { clientWidth: number; clientHeight: number } | null
+    container: { offsetWidth: number; offsetHeight: number } | null
     pendingContainerRefresh: boolean
     scheduleAvatarSettledRefresh: () => void
   }
@@ -522,8 +558,8 @@ test('avatar-settled refresh defers while the container is not renderable', asyn
     },
   }
   adapter.container = {
-    clientWidth: 0,
-    clientHeight: 0,
+    offsetWidth: 0,
+    offsetHeight: 0,
   }
   adapter.pendingContainerRefresh = false
 

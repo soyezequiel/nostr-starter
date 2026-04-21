@@ -41,6 +41,7 @@ const AVATAR_NODE_INSET_PX = 1
 const FORCED_AVATAR_MIN_RADIUS_PX = 18
 const ZOOMED_OUT_MONOGRAM_MIN_RADIUS_PX = 11
 const MAX_VELOCITY_DELTA_MS = 250
+const MIN_FAST_NODE_VELOCITY_THRESHOLD_PX = 80
 const FULL_CIRCLE_RADIANS = Math.PI * 2
 const FOCUS_AURA_RING_GAP_PX = 3
 const FOCUS_AURA_OUTER_LINE_WIDTH_FACTOR = 0.42
@@ -108,7 +109,10 @@ export interface AvatarOverlayRendererDeps {
   scheduler: AvatarScheduler
   budget: PerfBudget
   isMoving: () => boolean
+  getSelectedNodePubkey?: () => string | null
+  getHoveredNodePubkey?: () => string | null
   getForcedAvatarPubkey?: () => string | null
+  getDraggedAvatarPubkey?: () => string | null
   getHoveredNeighborPubkeys?: () => ReadonlySet<string>
   getAvatarRevealPointer?: () => AvatarRevealPointer | null
   getRuntimeOptions?: () => AvatarRuntimeOptions
@@ -276,6 +280,60 @@ export const selectAvatarDrawContext = <T>(
     ? forcedContext
     : baseContext
 
+export const shouldDrawAvatarForSelectionFocus = ({
+  selectedNodePubkey,
+  hoveredNodePubkey = null,
+  hoveredNeighborPubkeys = EMPTY_SET,
+  pubkey,
+  isSelected,
+  isNeighbor,
+}: {
+  selectedNodePubkey: string | null
+  hoveredNodePubkey?: string | null
+  hoveredNeighborPubkeys?: ReadonlySet<string>
+  pubkey: string
+  isSelected: boolean
+  isNeighbor: boolean
+}) => {
+  if (hoveredNodePubkey !== null) {
+    return pubkey === hoveredNodePubkey || hoveredNeighborPubkeys.has(pubkey)
+  }
+
+  return (
+    selectedNodePubkey === null ||
+    isSelected ||
+    isNeighbor ||
+    pubkey === selectedNodePubkey
+  )
+}
+
+export const shouldHideAvatarImageForDragNeighbor = ({
+  draggedNodePubkey,
+  pubkey,
+  draggedNeighborPubkeys,
+}: {
+  draggedNodePubkey: string | null
+  pubkey: string
+  draggedNeighborPubkeys: ReadonlySet<string>
+}) =>
+  draggedNodePubkey !== null &&
+  pubkey !== draggedNodePubkey &&
+  draggedNeighborPubkeys.has(pubkey)
+
+export const resolveAvatarGlobalMotionActive = ({
+  moving,
+  hideImagesOnFastNodes,
+}: {
+  moving: boolean
+  hideImagesOnFastNodes: boolean
+}) => moving && hideImagesOnFastNodes
+
+export const resolveAvatarItemGlobalMotionActive = ({
+  globalMotionActive,
+}: {
+  globalMotionActive: boolean
+}) => globalMotionActive
+
 export const resolveAvatarImageDisableReason = ({
   selectedForImage,
   globalMotionActive,
@@ -317,6 +375,25 @@ export const shouldDisableAvatarImage = (args: {
   imageDrawCount: number
   maxImageDrawsPerFrame: number
 }) => resolveAvatarImageDisableReason(args) !== null
+
+export const resolveFastNodeVelocityThresholdPx = ({
+  baseThreshold,
+  cameraRatio,
+}: {
+  baseThreshold: number
+  cameraRatio: number
+}) => {
+  const normalizedBase = Number.isFinite(baseThreshold)
+    ? Math.max(0, baseThreshold)
+    : Number.POSITIVE_INFINITY
+  if (!Number.isFinite(normalizedBase)) {
+    return normalizedBase
+  }
+  return Math.max(
+    MIN_FAST_NODE_VELOCITY_THRESHOLD_PX,
+    normalizedBase / Math.sqrt(Math.max(1, cameraRatio)),
+  )
+}
 
 export const resolveAvatarFrameDrawCap = ({
   baseCap,
@@ -397,7 +474,10 @@ export class AvatarOverlayRenderer {
   private readonly scheduler: AvatarScheduler
   private readonly budget: PerfBudget
   private readonly isMoving: () => boolean
+  private readonly getSelectedNodePubkey: () => string | null
+  private readonly getHoveredNodePubkey: () => string | null
   private readonly getForcedAvatarPubkey: () => string | null
+  private readonly getDraggedAvatarPubkey: () => string | null
   private readonly getHoveredNeighborPubkeys: () => ReadonlySet<string>
   private readonly getAvatarRevealPointer: () => AvatarRevealPointer | null
   private readonly getRuntimeOptions: () => AvatarRuntimeOptions | null
@@ -419,7 +499,10 @@ export class AvatarOverlayRenderer {
     this.scheduler = deps.scheduler
     this.budget = deps.budget
     this.isMoving = deps.isMoving
+    this.getSelectedNodePubkey = deps.getSelectedNodePubkey ?? (() => null)
+    this.getHoveredNodePubkey = deps.getHoveredNodePubkey ?? (() => null)
     this.getForcedAvatarPubkey = deps.getForcedAvatarPubkey ?? (() => null)
+    this.getDraggedAvatarPubkey = deps.getDraggedAvatarPubkey ?? (() => null)
     this.getHoveredNeighborPubkeys = deps.getHoveredNeighborPubkeys ?? (() => EMPTY_SET)
     this.getAvatarRevealPointer = deps.getAvatarRevealPointer ?? (() => null)
     this.getRuntimeOptions = deps.getRuntimeOptions ?? (() => null)
@@ -490,6 +573,16 @@ export class AvatarOverlayRenderer {
       this.lastCameraSignature !== cameraSignature
     this.lastCameraSignature = cameraSignature
     const graph = this.sigma.getGraph()
+    const rawSelectedNodePubkey = this.getSelectedNodePubkey()
+    const selectedNodePubkey =
+      rawSelectedNodePubkey !== null && graph.hasNode(rawSelectedNodePubkey)
+        ? rawSelectedNodePubkey
+        : null
+    const rawHoveredNodePubkey = this.getHoveredNodePubkey()
+    const hoveredNodePubkey =
+      rawHoveredNodePubkey !== null && graph.hasNode(rawHoveredNodePubkey)
+        ? rawHoveredNodePubkey
+        : null
     const drawItems: AvatarDrawItem[] = []
     const focusAuraItems: FocusAuraItem[] = []
     const revealCandidates: AvatarRevealSelectionItem[] = []
@@ -507,9 +600,18 @@ export class AvatarOverlayRenderer {
       const nodeRadiusPx = this.sigma.scaleSize(display.size, cameraRatio)
       const avatarRadiusPx = Math.max(0, nodeRadiusPx - AVATAR_NODE_INSET_PX)
       const viewport = this.sigma.framedGraphToViewport(display)
+      const avatarAllowedByFocus = shouldDrawAvatarForSelectionFocus({
+        selectedNodePubkey,
+        hoveredNodePubkey,
+        hoveredNeighborPubkeys,
+        pubkey,
+        isSelected: nodeAttrs.isSelected,
+        isNeighbor: nodeAttrs.isNeighbor,
+      })
       let isRevealCandidate = false
       let revealDistanceSquared: number | null = null
       if (
+        avatarAllowedByFocus &&
         revealPointer &&
         revealRadiusPx > 0 &&
         pubkey !== directForcedAvatarPubkey
@@ -558,6 +660,9 @@ export class AvatarOverlayRenderer {
       if (!budget.drawAvatars) {
         return
       }
+      if (!avatarAllowedByFocus) {
+        return
+      }
       if (
         !budget.showZoomedOutMonograms &&
         !allowZoomedOutImages &&
@@ -578,7 +683,7 @@ export class AvatarOverlayRenderer {
           nowMs,
           budget,
           cameraChanged,
-          directForcedAvatarPubkey,
+          cameraRatio,
         )
 
       const monogramInput: MonogramInput = {
@@ -615,7 +720,10 @@ export class AvatarOverlayRenderer {
         generatedAtMs: nowMs,
         cameraRatio,
         moving,
-        globalMotionActive: moving && !budget.showAllVisibleImages,
+        globalMotionActive: resolveAvatarGlobalMotionActive({
+          moving,
+          hideImagesOnFastNodes: budget.hideImagesOnFastNodes,
+        }),
         resolvedBudget: {
           sizeThreshold: budget.sizeThreshold,
           zoomThreshold: budget.zoomThreshold,
@@ -671,7 +779,11 @@ export class AvatarOverlayRenderer {
     const byLoadSkipReason: Record<string, number> = {}
     const byDrawFallbackReason: Record<string, number> = {}
     const byCacheState: Record<string, number> = {}
-    const globalMotionActive = moving && !budget.showAllVisibleImages
+    const globalMotionActive = resolveAvatarGlobalMotionActive({
+      moving,
+      hideImagesOnFastNodes: budget.hideImagesOnFastNodes,
+    })
+    const draggedNodePubkey = this.getDraggedAvatarPubkey()
     let imageDrawCount = 0
     let drawnImageCount = 0
     let monogramDrawCount = 0
@@ -771,12 +883,22 @@ export class AvatarOverlayRenderer {
         item.url !== null ? buildAvatarUrlKey(item.pubkey, item.url) : null
       const blockEntry =
         urlKey !== null ? this.getBlockedAvatar(urlKey) : null
+      const itemGlobalMotionActive = resolveAvatarItemGlobalMotionActive({
+        globalMotionActive,
+      })
+      const dragNeighborImageHidden = shouldHideAvatarImageForDragNeighbor({
+        draggedNodePubkey,
+        pubkey: item.pubkey,
+        draggedNeighborPubkeys: hoveredNeighborPubkeys,
+      })
       const disableImageReason =
         hasPictureUrl && !hasSafePictureUrl
           ? 'unsafe_url'
+          : dragNeighborImageHidden
+            ? 'drag_neighbor'
           : resolveAvatarImageDisableReason({
               selectedForImage,
-              globalMotionActive,
+              globalMotionActive: itemGlobalMotionActive,
               monogramOnly: item.monogramOnly,
               fastMoving: item.fastMoving,
               imageDrawCount,
@@ -813,7 +935,9 @@ export class AvatarOverlayRenderer {
       let requestedBucket: ImageLodBucket | null = null
       if (!hasPictureUrl) {
         loadSkipReason = 'missing_url'
-      } else if (item.fastMoving && !budget.showAllVisibleImages) {
+      } else if (dragNeighborImageHidden) {
+        loadSkipReason = 'drag_neighbor'
+      } else if (item.fastMoving) {
         loadSkipReason = 'fast_moving'
       } else if (!selectedForImage) {
         loadSkipReason = 'not_selected_for_image'
@@ -864,7 +988,7 @@ export class AvatarOverlayRenderer {
         zoomedOutMonogram: item.zoomedOutMonogram,
         monogramOnly: item.monogramOnly,
         fastMoving: item.fastMoving,
-        globalMotionActive,
+        globalMotionActive: itemGlobalMotionActive,
         disableImageReason,
         drawResult: drawResult.kind,
         drawFallbackReason: drawResult.fallbackReason,
@@ -945,7 +1069,7 @@ export class AvatarOverlayRenderer {
     this.traceFrameSummary(nowMs, this.lastDebugSnapshot)
 
     this.pruneMotionSamples(seenNodes)
-    if (moving && !budget.showAllVisibleImages) {
+    if (globalMotionActive) {
       this.scheduler.prime(candidates, schedulerBudget)
       return
     }
@@ -1188,14 +1312,12 @@ export class AvatarOverlayRenderer {
     nowMs: number,
     budget: EffectiveAvatarBudget,
     cameraChanged: boolean,
-    directDraggedPubkey: string | null = null,
+    cameraRatio: number,
   ): boolean {
     const previous = this.lastMotionByNode.get(pubkey)
     this.lastMotionByNode.set(pubkey, { x, y, t: nowMs })
 
-    // El nodo arrastrado directamente conserva su foto; solo los que se mueven
-    // por física indirecta (propagación de fuerza) pasan a monograma.
-    if (!budget.hideImagesOnFastNodes || !previous || cameraChanged || pubkey === directDraggedPubkey) {
+    if (!budget.hideImagesOnFastNodes || !previous || cameraChanged) {
       return false
     }
 
@@ -1207,7 +1329,10 @@ export class AvatarOverlayRenderer {
     const dx = x - previous.x
     const dy = y - previous.y
     const velocityPxPerSecond = Math.sqrt(dx * dx + dy * dy) / (deltaMs / 1000)
-    return velocityPxPerSecond > budget.fastNodeVelocityThreshold
+    return velocityPxPerSecond > resolveFastNodeVelocityThresholdPx({
+      baseThreshold: budget.fastNodeVelocityThreshold,
+      cameraRatio,
+    })
   }
 
   private pruneMotionSamples(seenNodes: ReadonlySet<string>) {
