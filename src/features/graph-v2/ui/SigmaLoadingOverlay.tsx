@@ -2,10 +2,16 @@
 
 import { memo, useEffect, useMemo, useRef } from 'react'
 
+import type { RootLoadState } from '@/features/graph-runtime/app/store/types'
+import type { CanonicalRelayState } from '@/features/graph-v2/domain/types'
+import { buildRootLoadProgressViewModel } from '@/features/graph-v2/ui/rootLoadProgressViewModel'
+
 interface Props {
   identityLabel?: string | null
   message: string | null
   nodeCount: number
+  relayState: CanonicalRelayState
+  rootLoad: RootLoadState
 }
 
 interface GraphLoaderNode {
@@ -18,9 +24,16 @@ interface GraphLoaderNode {
 
 type GraphLoaderEdge = [source: number, target: number, length: number]
 
-interface LogLine {
-  msg: string
-  level?: 'good' | 'warn'
+interface LoadProgressProps {
+  identityLabel?: string | null
+  message?: string | null
+  nodeCount: number
+  rootLoad: RootLoadState
+}
+
+interface TerminalLine {
+  text: string
+  tone?: 'dim' | 'good' | 'warn'
 }
 
 function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number }) {
@@ -171,48 +184,197 @@ function GraphLoader({ size = 190, seed = 1 }: { size?: number; seed?: number })
   return <canvas ref={canvasRef} className="sg-graph-loader" width={size} height={size} />
 }
 
+const compactRelayUrl = (relayUrl: string) => {
+  try {
+    return new URL(relayUrl).host || relayUrl.replace(/^wss?:\/\//, '')
+  } catch {
+    return relayUrl.replace(/^wss?:\/\//, '')
+  }
+}
+
+const buildTerminalLines = (
+  rootLoad: RootLoadState,
+  relayState: CanonicalRelayState,
+  progressLabel: string,
+): TerminalLine[] => {
+  const lines: TerminalLine[] = [
+    { text: 'resolviendo profile -> relays', tone: 'dim' },
+  ]
+  const progress = rootLoad.visibleLinkProgress
+  const preferredRelayUrls = new Set<string>()
+
+  if (progress?.lastRelayUrl) {
+    preferredRelayUrls.add(progress.lastRelayUrl)
+  }
+
+  for (const relayUrl of relayState.urls) {
+    preferredRelayUrls.add(relayUrl)
+    if (preferredRelayUrls.size >= 4) break
+  }
+
+  for (const relayUrl of preferredRelayUrls) {
+    const status = relayState.endpoints[relayUrl]?.status ?? 'unknown'
+    const statusLabel =
+      status === 'connected'
+        ? 'conectado'
+        : status === 'partial'
+          ? 'parcial'
+          : status === 'degraded'
+            ? 'lento'
+            : status === 'offline'
+              ? 'sin respuesta'
+              : 'pendiente'
+    lines.push({
+      text: `wss://${compactRelayUrl(relayUrl)} - ${statusLabel}`,
+      tone:
+        status === 'connected' || status === 'partial'
+          ? 'good'
+          : status === 'degraded' || status === 'offline'
+            ? 'warn'
+            : 'dim',
+    })
+  }
+
+  if (progress) {
+    lines.push(
+      { text: `eventos kind:3 recibidos - ${progress.contactListEventCount}`, tone: 'dim' },
+      {
+        text: `inbound #p candidatos - ${progress.inboundCandidateEventCount}`,
+        tone: 'dim',
+      },
+      { text: `links visibles - ${progressLabel}`, tone: 'dim' },
+    )
+  } else if (rootLoad.message) {
+    lines.push({ text: rootLoad.message, tone: 'dim' })
+  }
+
+  return lines.slice(0, 8)
+}
+
 export const SigmaLoadingOverlay = memo(function SigmaLoadingOverlay({
   identityLabel,
   message,
   nodeCount,
+  relayState,
+  rootLoad,
 }: Props) {
-  const progress = nodeCount > 0 ? Math.min(0.88, 0.24 + nodeCount * 0.00012) : 0.19
-  const displayName = identityLabel?.trim() || 'identidad'
-  const label = message ?? 'resolviendo nprofile -> relays'
-  const log = useMemo<LogLine[]>(() => {
-    const entries: LogLine[] = [
-      { msg: label },
-      { msg: 'wss://relay.damus.io - conectado', level: 'good' },
-      { msg: 'wss://nos.lol - conectado', level: 'good' },
-      { msg: 'wss://relay.primal.net - conectado', level: 'good' },
-    ]
-    if (nodeCount > 0) {
-      entries.push({ msg: `${nodeCount} nodos recibidos` })
-    }
-    return entries
-  }, [label, nodeCount])
+  const progress = useMemo(
+    () =>
+      buildRootLoadProgressViewModel({
+        fallbackMessage: message,
+        identityLabel,
+        nodeCount,
+        rootLoad,
+      }),
+    [identityLabel, message, nodeCount, rootLoad],
+  )
+  const progressBarClassName = `sg-load-bar__fill${
+    progress.isIndeterminate ? ' sg-load-bar__fill--indeterminate' : ''
+  }`
+  const terminalLines = useMemo(
+    () => buildTerminalLines(rootLoad, relayState, progress.progressLabel),
+    [progress.progressLabel, relayState, rootLoad],
+  )
 
   return (
-    <div className="sg-loading-overlay" aria-live="polite">
-      <div className="sg-loader-grid" aria-hidden="true">
-        <GraphLoader size={190} seed={7} />
-        <GraphLoader size={190} seed={19} />
-        <GraphLoader size={190} seed={41} />
-        <GraphLoader size={190} seed={73} />
+    <div className="sg-loading-overlay" aria-label={progress.ariaLabel} aria-live="polite">
+      <div className="sg-loading-loop-pill" aria-hidden="true">
+        relay loop activo - sincronizando grafo
       </div>
-      <div className="sg-loading-status">
-        <div className="sg-loading-percent">{Math.round(progress * 100)}%</div>
-        <div className="sg-loading-title">Mapeando {displayName}</div>
-        <div className="sg-loading-log">
-          {log.map((line, index) => (
+      <div className="sg-loader-grid" aria-hidden="true">
+        <GraphLoader size={170} seed={7} />
+        <GraphLoader size={170} seed={19} />
+        <GraphLoader size={170} seed={41} />
+        <GraphLoader size={170} seed={73} />
+      </div>
+
+      <section className={`sg-loading-console sg-loading-console--${progress.tone}`}>
+        <div className="sg-loading-statusline">
+          <div className="sg-loading-percent">{progress.percent}%</div>
+          <h2>{progress.title}</h2>
+        </div>
+
+        <div className="sg-loading-phase">
+          Paso {progress.stepIndex} de {progress.stepCount} - {progress.phaseLabel}
+        </div>
+
+        <div className="sg-loading-total" aria-hidden="true">
+          <span>{progress.progressLabel}</span>
+          {progress.isEstimatedTotal ? <em>estimado</em> : null}
+        </div>
+        <div
+          aria-hidden="true"
+          className={`sg-load-bar${progress.isIndeterminate ? ' sg-load-bar--indeterminate' : ''}`}
+        >
+          <div
+            className={progressBarClassName}
+            style={{ width: progress.isIndeterminate ? '100%' : `${progress.percent}%` }}
+          />
+        </div>
+
+        <div className="sg-loading-terminal">
+          {terminalLines.map((line, index) => (
             <div
-              className={`sg-loading-log__line${line.level ? ` sg-loading-log__line--${line.level}` : ''}`}
-              key={`${line.msg}-${index}`}
+              className={`sg-loading-terminal__line${
+                line.tone ? ` sg-loading-terminal__line--${line.tone}` : ''
+              }`}
+              key={`${line.text}-${index}`}
             >
-              {line.msg}
+              {line.text}
             </div>
           ))}
+          <div className="sg-loading-terminal__fade" aria-hidden="true" />
         </div>
+      </section>
+    </div>
+  )
+})
+
+export const SigmaLoadProgressHud = memo(function SigmaLoadProgressHud({
+  identityLabel,
+  message,
+  nodeCount,
+  rootLoad,
+}: LoadProgressProps) {
+  const progress = useMemo(
+    () =>
+      buildRootLoadProgressViewModel({
+        fallbackMessage: message,
+        identityLabel,
+        nodeCount,
+        rootLoad,
+      }),
+    [identityLabel, message, nodeCount, rootLoad],
+  )
+
+  if (progress.tone === 'idle' || progress.tone === 'ready') {
+    return null
+  }
+
+  return (
+    <div
+      aria-label={progress.ariaLabel}
+      aria-live="polite"
+      className={`sg-load-hud sg-load-hud--${progress.tone}`}
+    >
+      <div className="sg-load-hud__main">
+        <span>{progress.phaseLabel}</span>
+        <strong>{progress.progressLabel}</strong>
+      </div>
+      <div
+        aria-hidden="true"
+        className={`sg-load-hud__bar${
+          progress.isIndeterminate ? ' sg-load-hud__bar--indeterminate' : ''
+        }`}
+      >
+        <span style={{ width: progress.isIndeterminate ? '100%' : `${progress.percent}%` }} />
+      </div>
+      <div className="sg-load-hud__meta">
+        {progress.metrics.slice(0, 2).map((metric) => (
+          <span key={metric.label}>
+            {metric.label}: {metric.value}
+          </span>
+        ))}
       </div>
     </div>
   )

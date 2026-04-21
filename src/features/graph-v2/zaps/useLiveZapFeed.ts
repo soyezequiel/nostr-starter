@@ -56,7 +56,6 @@ export function useLiveZapFeed({
       traceZapFlow('liveFeed.disabled', {
         visiblePubkeyCount: visiblePubkeys.length,
       })
-      console.log(`[ZAP FEED] Suscripción evitada (enabled=false). Puede que estés en la tab Zaps o superaste el límite max de red.`)
       return
     }
     
@@ -76,7 +75,6 @@ export function useLiveZapFeed({
           ? `Zaps live pausados: ${visiblePubkeys.length} nodos visibles supera el limite ${MAX_ZAP_FILTER_PUBKEYS}.`
           : 'Zaps live pausados: no hay nodos visibles para filtrar.',
       )
-      console.log(`[ZAP FEED] Suscripción apagada temporalmente. Nodos en la signature: 0. (Límite: ${MAX_ZAP_FILTER_PUBKEYS})`)
       return
     }
     let disposed = false
@@ -101,7 +99,7 @@ export function useLiveZapFeed({
       try {
         ndk = await connectNDK()
       } catch {
-        console.warn('[ZAP FEED] Failed to connect NDK')
+        traceZapFlow('liveFeed.connectFailed')
         return
       }
       if (disposed) return
@@ -112,7 +110,6 @@ export function useLiveZapFeed({
           enabled,
           visiblePubkeyCount: visiblePubkeys.length,
         })
-        console.log(`[ZAP FEED] Suscripción apagada temporalmente. Enabled: ${enabled}. Nodos en Signature: 0`)
         return
       }
       
@@ -121,8 +118,6 @@ export function useLiveZapFeed({
         targetPubkeyCount: pubkeys.length,
         targetPubkeySample: pubkeys.slice(0, 12),
       })
-      console.log(`[ZAP FEED] Suscribiendo a Zaps para ${pubkeys.length} nodos.`)
-
       subscription = ndk.subscribe(
         { kinds: [9735], '#p': pubkeys },
         { closeOnEose: false },
@@ -143,8 +138,6 @@ export function useLiveZapFeed({
             hasBolt11: event.tags.some((tag) => tag[0] === 'bolt11'),
           })
         }
-        console.log('[LIVE ZAP - EVENTO RECIBIDO INDIVIDUO]', event)
-
         const parsed = parseZapReceiptEvent({
           id: event.id,
           kind: event.kind ?? 0,
@@ -162,7 +155,6 @@ export function useLiveZapFeed({
               tagNames: event.tags.map((tag) => tag[0]),
             })
           }
-          console.log('[LIVE ZAP - DESCARTADO] No se pudo parsear (puede ser anónimo o formato erróneo):', event)
           return
         }
 
@@ -182,7 +174,6 @@ export function useLiveZapFeed({
               createdAtMs: parsed.createdAt * 1_000,
             })
           }
-          console.log('[LIVE ZAP - DESCARTADO] Zapeo viejo/stale:', { ageMs, parsed })
           return
         }
 
@@ -195,7 +186,6 @@ export function useLiveZapFeed({
             ageMs,
           })
         }
-        console.log('[LIVE ZAP - ENVIANDO A LA UI]', parsed)
         onZapRef.current(parsed)
       })
     })()

@@ -87,7 +87,10 @@ import { SigmaMinimap } from '@/features/graph-v2/ui/SigmaMinimap'
 import { SigmaSidePanel } from '@/features/graph-v2/ui/SigmaSidePanel'
 import { SigmaRootLoader } from '@/features/graph-v2/ui/SigmaRootLoader'
 import { SigmaEmptyState } from '@/features/graph-v2/ui/SigmaEmptyState'
-import { SigmaLoadingOverlay } from '@/features/graph-v2/ui/SigmaLoadingOverlay'
+import {
+  SigmaLoadProgressHud,
+  SigmaLoadingOverlay,
+} from '@/features/graph-v2/ui/SigmaLoadingOverlay'
 import { SigmaRootInput } from '@/features/graph-v2/ui/SigmaRootInput'
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
@@ -1176,6 +1179,12 @@ export default function GraphAppV2() {
       (sceneState.rootPubkey !== null &&
         rootLoadStatus === 'loading' &&
         scene.render.nodes.length < 3))
+  const shouldShowLoadProgressHud =
+    !isGraphLoading &&
+    !isRootSheetOpen &&
+    sceneState.rootPubkey !== null &&
+    uiState.rootLoad.visibleLinkProgress !== null &&
+    (rootLoadStatus === 'loading' || rootLoadStatus === 'partial')
   const isDragFixtureLab = fixtureName === 'drag-local'
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
@@ -2444,6 +2453,8 @@ export default function GraphAppV2() {
           identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
           message={visibleLoadFeedback}
           nodeCount={displayScene.render.nodes.length}
+          relayState={uiState.relayState}
+          rootLoad={uiState.rootLoad}
         />
       )}
 
@@ -2471,6 +2482,14 @@ export default function GraphAppV2() {
           />
           <SigmaSideRail buttons={railButtons} />
           <SigmaHud stats={hudStats} />
+          {shouldShowLoadProgressHud && (
+            <SigmaLoadProgressHud
+              identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
+              message={visibleLoadFeedback}
+              nodeCount={displayScene.render.nodes.length}
+              rootLoad={uiState.rootLoad}
+            />
+          )}
           {!isIdentityPanelOpen && !isPersonSearchPanelOpen && (
             <SigmaMinimap
               getSnapshot={getMinimapSnapshot}
