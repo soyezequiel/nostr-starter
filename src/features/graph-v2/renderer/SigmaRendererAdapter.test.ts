@@ -13,6 +13,46 @@ import type {
   GraphSceneSnapshot,
 } from '@/features/graph-v2/renderer/contracts'
 
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+const installAnimationFrameStub = () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const frameHandles = new Map<number, ReturnType<typeof setTimeout>>()
+  let nextHandle = 1
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    const handle = nextHandle
+    nextHandle += 1
+    const timeout = setTimeout(() => {
+      frameHandles.delete(handle)
+      callback(performance.now())
+    }, 0)
+    frameHandles.set(handle, timeout)
+    return handle
+  }) as typeof requestAnimationFrame
+
+  globalThis.cancelAnimationFrame = ((handle: number) => {
+    const timeout = frameHandles.get(handle)
+    if (timeout !== undefined) {
+      clearTimeout(timeout)
+      frameHandles.delete(handle)
+    }
+  }) as typeof cancelAnimationFrame
+
+  return () => {
+    for (const timeout of frameHandles.values()) {
+      clearTimeout(timeout)
+    }
+    frameHandles.clear()
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+  }
+}
+
 const createScene = (): GraphSceneSnapshot => ({
   render: {
     nodes: [
@@ -496,6 +536,84 @@ test('avatar global motion is separate from graph or drag motion', async () => {
   if (adapter.cameraMotionClearTimer !== null) {
     clearTimeout(adapter.cameraMotionClearTimer)
     adapter.cameraMotionClearTimer = null
+  }
+})
+
+test('node hover focus waits for the dwell delay before applying highlight', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const hoverEvents: Array<string | null> = []
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      callbacks: GraphInteractionCallbacks | null
+      hoveredNodePubkey: string | null
+      currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+      scheduleHoveredNodeFocus: (pubkey: string) => void
+      clearHoveredNodeFocus: () => void
+      safeRefresh: () => void
+    }
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onNodeHover: (pubkey) => {
+        hoverEvents.push(pubkey)
+      },
+    }
+    adapter.safeRefresh = () => {}
+
+    adapter.scheduleHoveredNodeFocus('alice')
+
+    assert.equal(adapter.hoveredNodePubkey, null)
+    assert.equal(adapter.currentHoverFocus.pubkey, null)
+    assert.deepEqual(hoverEvents, [])
+
+    await wait(520)
+
+    assert.equal(adapter.hoveredNodePubkey, 'alice')
+    assert.equal(adapter.currentHoverFocus.pubkey, 'alice')
+    assert.deepEqual(hoverEvents, ['alice'])
+
+    adapter.clearHoveredNodeFocus()
+  } finally {
+    restoreAnimationFrame()
+  }
+})
+
+test('node hover focus cancels when the pointer leaves before dwell', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const hoverEvents: Array<string | null> = []
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      callbacks: GraphInteractionCallbacks | null
+      hoveredNodePubkey: string | null
+      currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+      scheduleHoveredNodeFocus: (pubkey: string) => void
+      clearHoveredNodeFocus: () => void
+      safeRefresh: () => void
+    }
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onNodeHover: (pubkey) => {
+        hoverEvents.push(pubkey)
+      },
+    }
+    adapter.safeRefresh = () => {}
+
+    adapter.scheduleHoveredNodeFocus('alice')
+    adapter.clearHoveredNodeFocus()
+    await wait(520)
+
+    assert.equal(adapter.hoveredNodePubkey, null)
+    assert.equal(adapter.currentHoverFocus.pubkey, null)
+    assert.deepEqual(hoverEvents, [])
+  } finally {
+    restoreAnimationFrame()
   }
 })
 

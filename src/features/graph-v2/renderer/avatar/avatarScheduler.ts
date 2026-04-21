@@ -495,7 +495,9 @@ export class AvatarScheduler {
           return
         }
 
-        if (isAbortError(err)) {
+        // AbortSignal.reason can be a plain string in current browsers; after
+        // this controller aborts it is still cancellation, not an image failure.
+        if (controller.signal.aborted || isAbortError(err)) {
           this.cache.delete(candidate.urlKey, 'load_abort_error')
           return
         }

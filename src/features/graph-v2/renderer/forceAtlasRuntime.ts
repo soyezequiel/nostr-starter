@@ -240,6 +240,11 @@ export interface ForceAtlasLayoutController {
 export interface ConvergingLayoutOptions {
   onSettled?: () => void
   autoFreezeEnabled?: boolean
+  createWorker?: () => Worker
+}
+
+export interface ForceAtlasSyncOptions {
+  topologyChanged?: boolean
 }
 
 // Convergence threshold expressed as a fraction of the current graph diameter.
@@ -263,7 +268,7 @@ const MAX_ITERATIONS = 900
  * max postMessage throughput and has no stop condition — causing the visible
  * "vibration" once the layout relaxes but keeps receiving residual updates.
  */
-class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
+export class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
   private worker: Worker | null = null
   private matrices: { nodes: Float32Array; edges: Float32Array } | null = null
   private previousPositions: Float32Array | null = null
@@ -274,11 +279,11 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
   private stableFrames = 0
   private iterationCount = 0
   private autoFreezeEnabled = true
+  private runToken = 0
+  private hasStartedOnce = false
   private readonly getEdgeWeight: unknown
   private readonly onSettled: (() => void) | undefined
-  private readonly handleGraphUpdate = () => {
-    this.respawnWorker()
-  }
+  private readonly createWorker: () => Worker
 
   public constructor(
     private readonly graph: Graph<PhysicsNodeAttributes, PhysicsEdgeAttributes>,
@@ -288,11 +293,8 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
     this.onSettled = options.onSettled
     this.autoFreezeEnabled = options.autoFreezeEnabled ?? true
     this.getEdgeWeight = createEdgeWeightGetter('weight').fromEntry
-
-    graph.on('nodeAdded', this.handleGraphUpdate)
-    graph.on('edgeAdded', this.handleGraphUpdate)
-    graph.on('nodeDropped', this.handleGraphUpdate)
-    graph.on('edgeDropped', this.handleGraphUpdate)
+    this.createWorker =
+      options.createWorker ?? (() => fa2Helpers.createWorker(fa2WebWorker))
 
     this.spawnWorker()
   }
@@ -306,6 +308,11 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
       throw new Error('ConvergingFA2Supervisor: layout was killed.')
     }
     if (this.running) return
+    this.runToken += 1
+    if (this.hasStartedOnce) {
+      this.spawnWorker()
+    }
+    this.hasStartedOnce = true
 
     this.matrices = fa2Helpers.graphToByteArrays(
       this.graph,
@@ -315,6 +322,7 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
     this.stableFrames = 0
     this.iterationCount = 0
     this.running = true
+    this.iterationsRequested = true
     this.askForIterations(true)
   }
 
@@ -341,32 +349,17 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
       this.worker.terminate()
       this.worker = null
     }
-    this.graph.removeListener('nodeAdded', this.handleGraphUpdate)
-    this.graph.removeListener('edgeAdded', this.handleGraphUpdate)
-    this.graph.removeListener('nodeDropped', this.handleGraphUpdate)
-    this.graph.removeListener('edgeDropped', this.handleGraphUpdate)
   }
 
   private spawnWorker() {
     if (this.worker) this.worker.terminate()
-    this.worker = fa2Helpers.createWorker(fa2WebWorker)
+    this.worker = this.createWorker()
     this.worker.addEventListener('message', this.handleMessage)
-  }
-
-  private respawnWorker() {
-    // The graph topology changed: rebuild matrices from scratch on next start.
-    const wasRunning = this.running
-    this.stop()
-    this.spawnWorker()
-    this.matrices = null
-    this.previousPositions = null
-    if (wasRunning) {
-      this.start()
-    }
   }
 
   private readonly handleMessage = (event: MessageEvent) => {
     if (!this.running || !this.worker || !this.matrices) return
+    if (event.currentTarget !== this.worker) return
 
     const matrix = new Float32Array(
       (event.data as { nodes: ArrayBuffer }).nodes,
@@ -408,9 +401,11 @@ class ConvergingFA2Supervisor implements ForceAtlasLayoutController {
 
   private scheduleNextIteration() {
     if (!this.running || this.iterationsRequested) return
+    const runToken = this.runToken
     this.iterationsRequested = true
     this.pendingFrame = requestAnimationFrame(() => {
       this.pendingFrame = null
+      if (this.runToken !== runToken) return
       if (!this.running) return
       this.askForIterations(false)
     })
@@ -637,17 +632,20 @@ export class ForceAtlasRuntime {
       .join('|')
   }
 
-  public sync(scene: GraphPhysicsSnapshot) {
+  public sync(
+    scene: GraphPhysicsSnapshot,
+    options: ForceAtlasSyncOptions = {},
+  ) {
     const shouldRun =
       scene.nodes.length >= MINIMUM_RUNNING_NODES && scene.edges.length > 0
     this.layoutEligible = shouldRun
 
     if (!shouldRun) {
       this.stop()
-      return
-    }
-
-    if (this.suspended) {
+      if (options.topologyChanged) {
+        this.kill()
+        this.settled = false
+      }
       return
     }
 
@@ -659,6 +657,15 @@ export class ForceAtlasRuntime {
     )
     const fixedNodeSignature = this.createFixedNodeSignature(scene)
 
+    if (this.suspended) {
+      if (options.topologyChanged) {
+        this.stop()
+        this.kill()
+        this.settled = false
+      }
+      return
+    }
+
     if (this.layout === null) {
       this.layout = this.createLayout()
       this.lastSettingsKey = settingsKey
@@ -667,23 +674,12 @@ export class ForceAtlasRuntime {
       return
     }
 
-    if (this.lastSettingsKey !== settingsKey) {
-      this.stop()
-      this.kill()
-      this.layout = this.createLayout()
-      this.lastSettingsKey = settingsKey
-      this.lastFixedNodeSignature = fixedNodeSignature
-      this.layout.start()
-      return
-    }
-
-    if (this.lastFixedNodeSignature !== fixedNodeSignature) {
-      this.stop()
-      this.kill()
-      this.layout = this.createLayout()
-      this.lastSettingsKey = settingsKey
-      this.lastFixedNodeSignature = fixedNodeSignature
-      this.layout.start()
+    if (
+      options.topologyChanged ||
+      this.lastSettingsKey !== settingsKey ||
+      this.lastFixedNodeSignature !== fixedNodeSignature
+    ) {
+      this.restartLayout(settingsKey, fixedNodeSignature)
       return
     }
 
@@ -694,6 +690,15 @@ export class ForceAtlasRuntime {
     if (!this.layout.isRunning() && !this.settled) {
       this.layout.start()
     }
+  }
+
+  private restartLayout(settingsKey: string, fixedNodeSignature: string) {
+    this.stop()
+    this.kill()
+    this.layout = this.createLayout()
+    this.lastSettingsKey = settingsKey
+    this.lastFixedNodeSignature = fixedNodeSignature
+    this.layout.start()
   }
 
   public reheat() {

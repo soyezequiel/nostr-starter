@@ -161,6 +161,64 @@ const createStores = () => {
   }
 }
 
+test('physics store reports no topology change when the same scene is reapplied', () => {
+  const { physicsStore } = createStores()
+  const scene = createScene('follow:A:B').physics
+
+  physicsStore.applyScene(scene)
+  const result = physicsStore.applyScene(scene)
+
+  assert.deepEqual(result, {
+    topologyChanged: false,
+    rebuilt: false,
+    addedNodeCount: 0,
+    droppedNodeCount: 0,
+    addedEdgeCount: 0,
+    droppedEdgeCount: 0,
+  })
+})
+
+test('physics store reports added topology when expanding to a larger scene', () => {
+  const { physicsStore } = createStores()
+
+  physicsStore.applyScene(createScene('follow:A:B').physics)
+  const result = physicsStore.applyScene(createDenseScene(3).physics)
+
+  assert.deepEqual(result, {
+    topologyChanged: true,
+    rebuilt: false,
+    addedNodeCount: 4,
+    droppedNodeCount: 0,
+    addedEdgeCount: 3,
+    droppedEdgeCount: 0,
+  })
+})
+
+test('physics store ignores non-topological physics attribute updates in apply result', () => {
+  const { physicsStore } = createStores()
+  const scene = createScene('follow:A:B').physics
+
+  physicsStore.applyScene(scene)
+  const result = physicsStore.applyScene({
+    ...scene,
+    nodes: scene.nodes.map((node) =>
+      node.pubkey === 'A'
+        ? { ...node, size: node.size + 5, fixed: !node.fixed }
+        : node,
+    ),
+    edges: scene.edges.map((edge) => ({ ...edge, weight: edge.weight + 1 })),
+  })
+
+  assert.deepEqual(result, {
+    topologyChanged: false,
+    rebuilt: false,
+    addedNodeCount: 0,
+    droppedNodeCount: 0,
+    addedEdgeCount: 0,
+    droppedEdgeCount: 0,
+  })
+})
+
 test('render store replaces an existing directed pair when the incoming edge key changes', () => {
   const { renderStore } = createStores()
 

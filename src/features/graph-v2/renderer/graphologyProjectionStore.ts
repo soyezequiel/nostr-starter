@@ -55,6 +55,15 @@ export interface PhysicsEdgeAttributes {
   weight: number
 }
 
+export interface GraphTopologyApplyResult {
+  topologyChanged: boolean
+  rebuilt: boolean
+  addedNodeCount: number
+  droppedNodeCount: number
+  addedEdgeCount: number
+  droppedEdgeCount: number
+}
+
 const hasRenderNodeAttributeChanges = (
   current: RenderNodeAttributes,
   next: RenderNodeAttributes,
@@ -383,14 +392,26 @@ export class PhysicsGraphStore {
     return this.graph.hasNode(pubkey)
   }
 
-  public applyScene(scene: GraphSceneSnapshot['physics']) {
+  public applyScene(scene: GraphSceneSnapshot['physics']): GraphTopologyApplyResult {
     const nextNodeIds = new Set(scene.nodes.map((node) => node.pubkey))
     const nextEdges = new Map(scene.edges.map((edge) => [edge.id, edge]))
     const nextEdgeIdsByPair = new Map<string, string>()
+    const currentNodeIdSet = new Set(this.graph.nodes())
+    const currentEdgeIdsByPair = new Map<string, string>()
     const currentNodeIds = this.graph.nodes()
     const currentEdgeIds = this.graph.edges()
     const droppedNodeIds: string[] = []
     const droppedEdgeIds: string[] = []
+
+    for (const edgeId of currentEdgeIds) {
+      currentEdgeIdsByPair.set(
+        createDirectedPairKey(
+          this.graph.source(edgeId),
+          this.graph.target(edgeId),
+        ),
+        edgeId,
+      )
+    }
 
     for (const edge of nextEdges.values()) {
       nextEdgeIdsByPair.set(
@@ -419,6 +440,25 @@ export class PhysicsGraphStore {
       }
     }
 
+    let addedNodeCount = 0
+    for (const node of scene.nodes) {
+      if (!currentNodeIdSet.has(node.pubkey)) {
+        addedNodeCount += 1
+      }
+    }
+
+    let addedEdgeCount = 0
+    for (const edge of nextEdges.values()) {
+      if (!nextNodeIds.has(edge.source) || !nextNodeIds.has(edge.target)) {
+        continue
+      }
+
+      const pairKey = createDirectedPairKey(edge.source, edge.target)
+      if (currentEdgeIdsByPair.get(pairKey) !== edge.id) {
+        addedEdgeCount += 1
+      }
+    }
+
     if (
       shouldRebuildForTopologyChange({
         currentEdgeCount: currentEdgeIds.length,
@@ -433,7 +473,18 @@ export class PhysicsGraphStore {
       this.graph.clear()
       this.applySceneNodes(scene)
       this.applySceneEdges(nextEdges)
-      return
+      return {
+        topologyChanged:
+          addedNodeCount > 0 ||
+          droppedNodeIds.length > 0 ||
+          addedEdgeCount > 0 ||
+          droppedEdgeIds.length > 0,
+        rebuilt: true,
+        addedNodeCount,
+        droppedNodeCount: droppedNodeIds.length,
+        addedEdgeCount,
+        droppedEdgeCount: droppedEdgeIds.length,
+      }
     }
 
     for (const edgeId of droppedEdgeIds) {
@@ -446,6 +497,19 @@ export class PhysicsGraphStore {
 
     this.applySceneNodes(scene)
     this.applySceneEdges(nextEdges)
+
+    return {
+      topologyChanged:
+        addedNodeCount > 0 ||
+        droppedNodeIds.length > 0 ||
+        addedEdgeCount > 0 ||
+        droppedEdgeIds.length > 0,
+      rebuilt: false,
+      addedNodeCount,
+      droppedNodeCount: droppedNodeIds.length,
+      addedEdgeCount,
+      droppedEdgeCount: droppedEdgeIds.length,
+    }
   }
 
   public setNodePosition(pubkey: string, x: number, y: number, fixed?: boolean) {

@@ -803,6 +803,62 @@ test('stale out-of-viewport inflight loads are aborted after the grace window', 
   }
 })
 
+test('load rejections caused by scheduler aborts do not block avatars', async () => {
+  const restoreDocument = installDocumentStub()
+  let now = 1_000
+  const cache = new AvatarBitmapCache(16)
+  const urlKey = 'alice::https://example.com/alice.png'
+  let blockCallCount = 0
+  const loader = {
+    isBlocked: () => false,
+    block: () => {
+      blockCallCount += 1
+    },
+    load: (_url: string, _bucket: number, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        })
+      }),
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache,
+      loader: loader as never,
+      now: () => now,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'alice',
+          urlKey,
+          url: 'https://example.com/alice.png',
+          bucket: 64,
+          priority: 1,
+          monogram: { label: 'Alice', color: '#7dd3a7' },
+        },
+      ],
+      budget,
+    )
+
+    now += 2_000
+    scheduler.reconcile([], budget)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(blockCallCount, 0)
+    assert.equal(cache.get(urlKey), undefined)
+    assert.equal(
+      scheduler.getDebugSnapshot().recentEvents.some((event) => event.type === 'failed'),
+      false,
+    )
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
 test('new visible avatars reclaim stale inflight slots instead of waiting for timeout', () => {
   const restoreDocument = installDocumentStub()
   let now = 1_000

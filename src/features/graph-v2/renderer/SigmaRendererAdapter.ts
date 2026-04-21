@@ -77,6 +77,7 @@ const HOVER_DIM_NODE_COLOR = '#121a22'
 const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
 const HOVER_DIM_EDGE_COLOR = '#10171f'
 const HIGHLIGHT_TRANSITION_MS = 180
+const HOVER_FOCUS_DWELL_MS = 500
 const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const NODE_ZOOM_OUT_MIN_SCALE = 0.42
@@ -355,6 +356,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private hoveredNodePubkey: string | null = null
 
   private hoveredNeighbors: Set<string> = new Set()
+
+  private pendingHoverFocusPubkey: string | null = null
+
+  private hoverFocusDwellTimer: ReturnType<typeof setTimeout> | null = null
 
   private currentHoverFocus: HoverFocusSnapshot = {
     pubkey: null,
@@ -1300,7 +1305,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.scene = scene
     this.renderStore.applyScene(scene.render)
     this.startSceneFocusTransition(previousVisualStyles)
-    this.physicsStore.applyScene(scene.physics)
+    const physicsApplyResult = this.physicsStore.applyScene(scene.physics)
     this.nodeHitTester?.markDirty()
 
     if (draggedNodePubkey) {
@@ -1336,7 +1341,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.nodeHitTester?.markDirty()
     }
 
-    this.forceRuntime.sync(scene.physics)
+    this.forceRuntime.sync(scene.physics, {
+      topologyChanged: physicsApplyResult.topologyChanged,
+    })
     this.ensurePhysicsPositionBridge()
 
     const previousRoot = previousScene?.render.cameraHint.rootPubkey ?? null
@@ -1367,6 +1374,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       cancelAnimationFrame(this.pendingHighlightTransitionFrame)
       this.pendingHighlightTransitionFrame = null
     }
+    this.cancelPendingHoverFocus()
     if (this.pendingContainerRefreshFrame !== null) {
       cancelAnimationFrame(this.pendingContainerRefreshFrame)
       this.pendingContainerRefreshFrame = null
@@ -1693,16 +1701,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     sigma.on('enterNode', ({ node }) => {
-      this.setHoveredNode(node)
-      callbacks.onNodeHover(node)
+      this.scheduleHoveredNodeFocus(node)
     })
 
     sigma.on('leaveNode', () => {
-      this.setHoveredNode(null)
-      callbacks.onNodeHover(null)
+      this.clearHoveredNodeFocus()
     })
 
     sigma.on('leaveStage', () => {
+      this.clearHoveredNodeFocus()
       this.avatarRevealPointer = null
       this.scheduleAvatarRevealRender()
     })
@@ -1959,6 +1966,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     pubkey: string | null,
     force = false,
   ) => {
+    if (force || pubkey === null) {
+      this.cancelPendingHoverFocus()
+    }
+
     // While dragging, external enterNode/leaveNode events must not change
     // the highlight — the dragged node stays highlighted until release.
     if (!force && this.draggedNodePubkey) {
@@ -1992,6 +2003,50 @@ export class SigmaRendererAdapter implements RendererAdapter {
       neighbors: new Set(nextNeighbors),
     })
     this.safeRefresh()
+  }
+
+  private cancelPendingHoverFocus() {
+    if (this.hoverFocusDwellTimer !== null) {
+      clearTimeout(this.hoverFocusDwellTimer)
+      this.hoverFocusDwellTimer = null
+    }
+    this.pendingHoverFocusPubkey = null
+  }
+
+  private readonly scheduleHoveredNodeFocus = (pubkey: string) => {
+    if (this.draggedNodePubkey || this.hoveredNodePubkey === pubkey) {
+      return
+    }
+
+    if (this.pendingHoverFocusPubkey === pubkey) {
+      return
+    }
+
+    this.cancelPendingHoverFocus()
+    this.pendingHoverFocusPubkey = pubkey
+    this.hoverFocusDwellTimer = setTimeout(() => {
+      const nextPubkey = this.pendingHoverFocusPubkey
+      this.pendingHoverFocusPubkey = null
+      this.hoverFocusDwellTimer = null
+      if (nextPubkey === null || this.draggedNodePubkey) {
+        return
+      }
+
+      const previousPubkey = this.hoveredNodePubkey
+      this.setHoveredNode(nextPubkey)
+      if (previousPubkey !== nextPubkey && this.hoveredNodePubkey === nextPubkey) {
+        this.callbacks?.onNodeHover(nextPubkey)
+      }
+    }, HOVER_FOCUS_DWELL_MS)
+  }
+
+  private readonly clearHoveredNodeFocus = () => {
+    this.cancelPendingHoverFocus()
+    const previousPubkey = this.hoveredNodePubkey
+    this.setHoveredNode(null)
+    if (previousPubkey !== null && this.hoveredNodePubkey === null) {
+      this.callbacks?.onNodeHover(null)
+    }
   }
 
   // After releasing a drag, check what node (if any) sits under the last

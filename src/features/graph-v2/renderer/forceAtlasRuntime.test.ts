@@ -5,6 +5,7 @@ import { DirectedGraph } from 'graphology'
 
 import type { GraphPhysicsSnapshot } from '@/features/graph-v2/renderer/contracts'
 import {
+  ConvergingFA2Supervisor,
   DEFAULT_FORCE_ATLAS_PHYSICS_TUNING,
   ForceAtlasRuntime,
   createForceAtlasPhysicsTuning,
@@ -87,6 +88,95 @@ class LayoutStub implements ForceAtlasLayoutController {
   public kill() {
     this.running = false
     this.killCalls += 1
+  }
+}
+
+const installAnimationFrameRaceStub = () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let nextHandle = 1
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    const handle = nextHandle
+    nextHandle += 1
+    callbacks.set(handle, callback)
+    return handle
+  }) as typeof requestAnimationFrame
+
+  // Simulate the browser timing window where a queued RAF callback can still
+  // run even though stop() already attempted to cancel it.
+  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+
+  return {
+    flushAll() {
+      const queued = [...callbacks.values()]
+      callbacks.clear()
+      for (const callback of queued) {
+        callback(performance.now())
+      }
+    },
+    restore() {
+      callbacks.clear()
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+    },
+  }
+}
+
+class WorkerStub {
+  public terminated = false
+
+  public postMessageCallCount = 0
+
+  private readonly transferredBuffers = new Set<ArrayBuffer>()
+
+  private readonly messageListeners: Array<(event: MessageEvent) => void> = []
+
+  public addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    if (type !== 'message') {
+      return
+    }
+    if (typeof listener === 'function') {
+      this.messageListeners.push(listener as (event: MessageEvent) => void)
+      return
+    }
+    this.messageListeners.push((event) => listener.handleEvent(event))
+  }
+
+  public postMessage(
+    payload: { nodes: ArrayBuffer },
+    transfer: Transferable[] = [],
+  ) {
+    this.postMessageCallCount += 1
+    for (const candidate of transfer) {
+      if (!(candidate instanceof ArrayBuffer)) {
+        continue
+      }
+      if (this.transferredBuffers.has(candidate)) {
+        throw new DOMException(
+          'ArrayBuffer at index 0 is already detached.',
+          'DataCloneError',
+        )
+      }
+      this.transferredBuffers.add(candidate)
+    }
+
+    void payload
+  }
+
+  public terminate() {
+    this.terminated = true
+  }
+
+  public emitMessage(nodeCount: number) {
+    const nodes = new Float32Array(nodeCount * 10).buffer
+    for (const listener of this.messageListeners) {
+      listener({
+        currentTarget: this,
+        data: { nodes },
+      } as MessageEvent)
+    }
   }
 }
 
@@ -234,6 +324,45 @@ test('reports ForceAtlas physics diagnostics for the sigma debug probe', () => {
   assert.equal(diagnostics.approximateOverlapCount, 0)
 })
 
+test('ConvergingFA2Supervisor ignores stale RAF callbacks after restart', () => {
+  const animationFrame = installAnimationFrameRaceStub()
+  const graph = createGraph(3, 2)
+  const workers: WorkerStub[] = []
+  const supervisor = new ConvergingFA2Supervisor(
+    graph,
+    resolveForceAtlasSettings(graph.order),
+    {
+      createWorker: () => {
+        const worker = new WorkerStub()
+        workers.push(worker)
+        return worker as unknown as Worker
+      },
+    },
+  )
+
+  try {
+    supervisor.start()
+    assert.equal(workers.length, 1)
+    assert.equal(workers[0]?.postMessageCallCount, 1)
+
+    workers[0]?.emitMessage(graph.order)
+    supervisor.stop()
+    supervisor.start()
+
+    assert.equal(workers.length, 2)
+    assert.equal(workers[0]?.terminated, true)
+    assert.equal(workers[1]?.postMessageCallCount, 1)
+
+    assert.doesNotThrow(() => {
+      animationFrame.flushAll()
+    })
+    assert.equal(workers[1]?.postMessageCallCount, 1)
+  } finally {
+    supervisor.kill()
+    animationFrame.restore()
+  }
+})
+
 test('sync does not reheat when only the topology signature changes', () => {
   const graph = createGraph(3, 2)
   const layouts: LayoutStub[] = []
@@ -255,6 +384,72 @@ test('sync does not reheat when only the topology signature changes', () => {
   assert.equal(layouts.length, 1)
   assert.equal(layouts[0]?.startCalls, 1)
   assert.equal(layouts[0]?.killCalls, 0)
+})
+
+test('sync recreates the layout once when topology changed is reported', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  const runtime = new ForceAtlasRuntime(graph, () => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    return layout
+  })
+  const scene = createScene(3, 2)
+
+  runtime.sync(scene)
+  runtime.sync(scene, { topologyChanged: true })
+
+  assert.equal(layouts.length, 2)
+  assert.equal(layouts[0]?.killCalls, 1)
+  assert.equal(layouts[1]?.startCalls, 1)
+})
+
+test('sync preserves the running layout when topology changed is false', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  const runtime = new ForceAtlasRuntime(graph, () => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    return layout
+  })
+  const scene = createScene(3, 2)
+
+  runtime.sync(scene)
+  runtime.sync(scene, { topologyChanged: false })
+
+  assert.equal(layouts.length, 1)
+  assert.equal(layouts[0]?.startCalls, 1)
+  assert.equal(layouts[0]?.killCalls, 0)
+})
+
+test('graph topology mutations do not recreate layouts until sync invalidates topology', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  const runtime = new ForceAtlasRuntime(graph, () => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    return layout
+  })
+
+  runtime.sync(createScene(3, 2))
+
+  for (let index = 3; index < 5_050; index += 1) {
+    graph.addNode(`node-${index}`, {
+      x: index,
+      y: index,
+      size: 1,
+      fixed: false,
+    })
+  }
+
+  assert.equal(layouts.length, 1)
+  assert.equal(layouts[0]?.killCalls, 0)
+
+  runtime.sync(createScene(graph.order, 2), { topologyChanged: true })
+
+  assert.equal(layouts.length, 2)
+  assert.equal(layouts[0]?.killCalls, 1)
+  assert.equal(layouts[1]?.startCalls, 1)
 })
 
 test('sync recreates the layout when the settings key changes', () => {
@@ -281,6 +476,35 @@ test('sync recreates the layout when the settings key changes', () => {
 
   assert.equal(layouts.length, 2)
   assert.equal(layouts[0]?.killCalls, 1)
+  assert.equal(layouts[1]?.startCalls, 1)
+})
+
+test('suspended topology invalidation recreates the layout only on resume', () => {
+  const graph = createGraph(3, 2)
+  const layouts: LayoutStub[] = []
+  const runtime = new ForceAtlasRuntime(graph, () => {
+    const layout = new LayoutStub()
+    layouts.push(layout)
+    return layout
+  })
+
+  runtime.sync(createScene(3, 2))
+  runtime.suspend()
+  graph.addNode('node-3', {
+    x: 3,
+    y: 3,
+    size: 1,
+    fixed: false,
+  })
+  graph.addDirectedEdgeWithKey('edge-2', 'node-2', 'node-3', { weight: 1 })
+  runtime.sync(createScene(4, 3), { topologyChanged: true })
+
+  assert.equal(layouts.length, 1)
+  assert.equal(layouts[0]?.killCalls, 1)
+
+  runtime.resume()
+
+  assert.equal(layouts.length, 2)
   assert.equal(layouts[1]?.startCalls, 1)
 })
 
