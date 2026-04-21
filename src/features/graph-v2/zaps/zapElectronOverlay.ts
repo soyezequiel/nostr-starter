@@ -81,11 +81,10 @@ export class ZapElectronOverlay {
 
   public play(zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>): boolean {
     if (this.disposed) return false
-    // Visibility/connection checks are the caller's responsibility, but we
-    // re-verify positions are resolvable: if either endpoint can't be projected
-    // there's nothing to animate.
-    if (!this.getCssViewportPosition(zap.fromPubkey)) return false
-    if (!this.getCssViewportPosition(zap.toPubkey)) return false
+    
+    const fromPos = this.getCssViewportPosition(zap.fromPubkey)
+    const toPos = this.getCssViewportPosition(zap.toPubkey)
+    if (!fromPos || !toPos) return false
 
     this.animations.push({
       fromPubkey: zap.fromPubkey,

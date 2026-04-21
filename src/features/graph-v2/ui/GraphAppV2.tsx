@@ -47,7 +47,6 @@ import {
 } from '@/features/graph-v2/projections/personSearchHighlight'
 import type {
   GraphInteractionCallbacks,
-  GraphRenderEdge,
   GraphViewportState,
 } from '@/features/graph-v2/renderer/contracts'
 import {
@@ -114,6 +113,10 @@ import {
 } from '@/features/graph-v2/ui/socialCaptureDebug'
 import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
+import {
+  shouldTraceZapPair,
+  traceZapFlow,
+} from '@/features/graph-runtime/debug/zapTrace'
 import { downloadBlob } from '@/features/graph-runtime/export/download'
 import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
 
@@ -145,24 +148,7 @@ interface LoadRootInput
 
 
 
-// Returns true when the two pubkeys are linked by a non-hidden visible edge
-// (checked in both directions, since edges may be stored as A→B or B→A).
-const hasVisibleEdgeBetween = (
-  edges: readonly GraphRenderEdge[],
-  pubkeyA: string,
-  pubkeyB: string,
-): boolean => {
-  for (const edge of edges) {
-    if (edge.hidden) continue
-    if (
-      (edge.source === pubkeyA && edge.target === pubkeyB) ||
-      (edge.source === pubkeyB && edge.target === pubkeyA)
-    ) {
-      return true
-    }
-  }
-  return false
-}
+
 
 const PUBLIC_SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Render' },
@@ -1290,15 +1276,84 @@ export default function GraphAppV2() {
   const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
-    if (!showZaps) return false
-    // Gate on edge existence so the animation travels along a visible edge.
-    // We intentionally do NOT require fromPubkey to be in visibleNodeSet:
-    // zaps sent by non-root nodes are valid as long as the edge between the
-    // two endpoints exists in the rendered scene. The overlay's play() will
-    // silently return false if a node has no viewport position.
-    if (!hasVisibleEdgeBetween(deferredScene.render.visibleEdges, zap.fromPubkey, zap.toPubkey)) return false
-    return sigmaHostRef.current?.playZap(zap) ?? false
-  }, [deferredScene.render.visibleEdges, showZaps])
+    const shouldTrace = shouldTraceZapPair(zap)
+
+    if (!showZaps) {
+      if (shouldTrace) {
+        traceZapFlow('uiZapGate.dropped', {
+          reason: 'zaps-hidden',
+          fromPubkey: zap.fromPubkey,
+          toPubkey: zap.toPubkey,
+          sats: zap.sats,
+        })
+      }
+      return false
+    }
+    
+    // Animar el zap sólo si ambos nodos están presentes en el renderizado
+    const hasVisibleFrom = visibleNodeSet.has(zap.fromPubkey)
+    const hasVisibleTo = visibleNodeSet.has(zap.toPubkey)
+    if (!hasVisibleFrom || !hasVisibleTo) {
+      if (shouldTrace) {
+        traceZapFlow('uiZapGate.dropped', {
+          reason: 'endpoint-not-visible',
+          fromPubkey: zap.fromPubkey,
+          toPubkey: zap.toPubkey,
+          sats: zap.sats,
+          hasVisibleFrom,
+          hasVisibleTo,
+          visibleNodeCount: visibleNodeSet.size,
+        })
+      }
+      return false
+    }
+    
+    // Verificar que exista una conexión estructurada, sin importar la dirección
+    let hasConnection = false
+    let matchedConnection: { source: string; target: string; relation: string; origin?: string } | null = null
+    for (const edge of Object.values(sceneState.edgesById)) {
+      if (
+        (edge.source === zap.fromPubkey && edge.target === zap.toPubkey) ||
+        (edge.source === zap.toPubkey && edge.target === zap.fromPubkey)
+      ) {
+        hasConnection = true
+        matchedConnection = {
+          source: edge.source,
+          target: edge.target,
+          relation: edge.relation,
+          origin: edge.origin,
+        }
+        break
+      }
+    }
+    
+    if (!hasConnection) {
+      if (shouldTrace) {
+        traceZapFlow('uiZapGate.dropped', {
+          reason: 'missing-scene-connection',
+          fromPubkey: zap.fromPubkey,
+          toPubkey: zap.toPubkey,
+          sats: zap.sats,
+          sceneEdgeCount: Object.keys(sceneState.edgesById).length,
+          visibleNodeCount: visibleNodeSet.size,
+        })
+      }
+      return false
+    }
+
+    const played = sigmaHostRef.current?.playZap(zap) ?? false
+    if (shouldTrace) {
+      traceZapFlow(played ? 'uiZapGate.played' : 'uiZapGate.dropped', {
+        reason: played ? 'accepted' : 'overlay-rejected',
+        fromPubkey: zap.fromPubkey,
+        toPubkey: zap.toPubkey,
+        sats: zap.sats,
+        matchedConnection,
+      })
+    }
+
+    return played
+  }, [sceneState.edgesById, showZaps, visibleNodeSet])
 
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {
@@ -1314,6 +1369,7 @@ export default function GraphAppV2() {
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
     onZap: handleLiveZap,
+    onDropped: (msg: string) => setZapFeedback(msg),
   })
 
   const isDev = process.env.NODE_ENV === 'development'

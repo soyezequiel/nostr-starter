@@ -12,6 +12,7 @@ import {
   serializeZapReceiptEvent,
 } from '@/features/graph-runtime/kernel/modules/helpers'
 import { buildZapLayerMessage } from '@/features/graph-runtime/kernel/modules/text-helpers'
+import { traceZapFlow } from '@/features/graph-runtime/debug/zapTrace'
 
 interface ActiveZapSession {
   requestId: number
@@ -42,7 +43,15 @@ export function createZapLayerModule(
       targetPubkeys.add(state.rootNodePubkey)
     }
 
-    return [...targetPubkeys].sort()
+    const normalizedTargetPubkeys = [...targetPubkeys].sort()
+    traceZapFlow('runtimeZapTargets.resolved', {
+      rootPubkey: state.rootNodePubkey,
+      expandedNodeCount: state.expandedNodePubkeys.size,
+      targetPubkeyCount: normalizedTargetPubkeys.length,
+      targetPubkeySample: normalizedTargetPubkeys.slice(0, 12),
+    })
+
+    return normalizedTargetPubkeys
   }
 
   function cancelActiveZapLoad(): void {
@@ -68,6 +77,9 @@ export function createZapLayerModule(
     const state = ctx.store.getState()
 
     if (normalizedTargetPubkeys.length === 0) {
+      traceZapFlow('runtimeZapLayer.reset', {
+        reason: 'empty-target-pubkeys',
+      })
       state.resetZapLayer()
       return
     }
@@ -89,6 +101,13 @@ export function createZapLayerModule(
       }),
       lastUpdatedAt: ctx.now(),
     })
+    traceZapFlow('runtimeZapLayer.prefetchStarted', {
+      requestId,
+      targetPubkeyCount: normalizedTargetPubkeys.length,
+      relayCount: relayUrls.length,
+      relayUrls,
+      filterLimit: Math.min(500, Math.max(50, normalizedTargetPubkeys.length * 20)),
+    })
 
     const cachedZaps = await ctx.repositories.zaps.findByTargetPubkeys(
       normalizedTargetPubkeys,
@@ -98,6 +117,17 @@ export function createZapLayerModule(
     }
 
     if (cachedZaps.length > 0) {
+      traceZapFlow('runtimeZapLayer.cacheHit', {
+        requestId,
+        cachedZapCount: cachedZaps.length,
+        cachedZapSample: cachedZaps.slice(0, 8).map((zap) => ({
+          eventId: zap.id,
+          fromPubkey: zap.fromPubkey,
+          toPubkey: zap.toPubkey,
+          sats: zap.sats,
+          createdAt: zap.createdAt,
+        })),
+      })
       promoteZapNodes(
         cachedZaps,
         relayUrls,
@@ -113,6 +143,11 @@ export function createZapLayerModule(
         cachedZaps,
         normalizedTargetPubkeys,
       )
+      traceZapFlow('runtimeZapLayer.cacheEdgesBuilt', {
+        requestId,
+        cachedZapCount: cachedZaps.length,
+        cachedEdgeCount: cachedEdges.length,
+      })
       state.replaceZapLayerEdges(cachedEdges)
       state.setZapLayerState({
         status: cachedEdges.length > 0 ? 'enabled' : 'loading',
@@ -147,6 +182,20 @@ export function createZapLayerModule(
 
       const liveErrorMessage = liveResult.error?.message ?? null
       const mergedReceipts = mergeRelayEventsById(liveResult.events)
+      traceZapFlow('runtimeZapLayer.liveResult', {
+        requestId,
+        rawEnvelopeCount: liveResult.events.length,
+        mergedReceiptCount: mergedReceipts.length,
+        relayHealth: liveResult.summary?.relayHealth ?? null,
+        liveErrorMessage,
+        receiptSample: mergedReceipts.slice(0, 8).map((receipt) => ({
+          eventId: receipt.event.id,
+          eventPubkey: receipt.event.pubkey,
+          createdAt: receipt.event.created_at,
+          relayUrls: receipt.relayUrls,
+          pTag: receipt.event.tags.find((tag) => tag[0] === 'p')?.[1] ?? null,
+        })),
+      })
       state.setZapLayerState({
         status: mergedReceipts.length > 0 ? 'loading' : state.zapLayer.status,
         loadedFrom: mergedReceipts.length > 0 ? 'live' : state.zapLayer.loadedFrom,
@@ -174,6 +223,13 @@ export function createZapLayerModule(
         }
 
         skippedReceipts = decodeResult.skippedReceipts.length
+        traceZapFlow('runtimeZapLayer.decodeResult', {
+          requestId,
+          decodedZapEdgeCount: decodeResult.zapEdges.length,
+          skippedReceiptCount: skippedReceipts,
+          skippedReceipts: decodeResult.skippedReceipts.slice(0, 12),
+          decodedZapSample: decodeResult.zapEdges.slice(0, 8),
+        })
         state.setZapLayerState({
           status: 'loading',
           loadedFrom: 'live',
@@ -185,6 +241,10 @@ export function createZapLayerModule(
           mergedReceipts,
           decodeResult.zapEdges,
         )
+        traceZapFlow('runtimeZapLayer.persistedDecodedEdges', {
+          requestId,
+          decodedZapEdgeCount: decodeResult.zapEdges.length,
+        })
       }
 
       if (isStaleZapRequest(requestId)) {
@@ -208,6 +268,13 @@ export function createZapLayerModule(
         allVisibleZaps,
         normalizedTargetPubkeys,
       )
+      traceZapFlow('runtimeZapLayer.finalEdgesBuilt', {
+        requestId,
+        allVisibleZapCount: allVisibleZaps.length,
+        visibleEdgeCount: visibleEdges.length,
+        skippedReceipts,
+        visibleEdgeSample: visibleEdges.slice(0, 8),
+      })
       state.replaceZapLayerEdges(visibleEdges)
 
       const status = visibleEdges.length > 0 ? 'enabled' : 'unavailable'
@@ -238,6 +305,12 @@ export function createZapLayerModule(
         cachedZaps,
         normalizedTargetPubkeys,
       )
+      traceZapFlow('runtimeZapLayer.failed', {
+        requestId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        cachedZapCount: cachedZaps.length,
+        fallbackEdgeCount: visibleEdges.length,
+      })
       state.replaceZapLayerEdges(visibleEdges)
       state.setZapLayerState({
         status: visibleEdges.length > 0 ? 'enabled' : 'unavailable',
@@ -283,8 +356,20 @@ export function createZapLayerModule(
     ).sort()
 
     if (candidatePubkeys.length === 0) {
+      traceZapFlow('runtimeZapLayer.promoteZapNodesSkipped', {
+        reason: 'no-new-candidate-pubkeys',
+        requestId,
+        zapCount: zaps.length,
+        targetPubkeyCount: targetPubkeys.length,
+        knownNodeCount: knownPubkeys.size,
+      })
       return
     }
+    traceZapFlow('runtimeZapLayer.promoteZapNodes', {
+      requestId,
+      candidatePubkeyCount: candidatePubkeys.length,
+      candidatePubkeySample: candidatePubkeys.slice(0, 12),
+    })
 
     const discoveredAt = ctx.now()
     const nodeResult = state.upsertNodes(
@@ -321,13 +406,17 @@ export function createZapLayerModule(
     const visibleNodes = new Set(Object.keys(ctx.store.getState().nodes))
     const allowedTargets = new Set(targetPubkeys)
     const aggregatedEdges = new Map<string, ZapLayerEdge>()
+    let skippedByTarget = 0
+    let skippedByVisibility = 0
 
     for (const record of zaps) {
       if (!allowedTargets.has(record.toPubkey)) {
+        skippedByTarget += 1
         continue
       }
 
       if (!visibleNodes.has(record.fromPubkey) || !visibleNodes.has(record.toPubkey)) {
+        skippedByVisibility += 1
         continue
       }
 
@@ -349,7 +438,17 @@ export function createZapLayerModule(
       })
     }
 
-    return Array.from(aggregatedEdges.values())
+    const edges = Array.from(aggregatedEdges.values())
+    traceZapFlow('runtimeZapLayer.buildEdges', {
+      inputZapCount: zaps.length,
+      targetPubkeyCount: targetPubkeys.length,
+      visibleNodeCount: visibleNodes.size,
+      edgeCount: edges.length,
+      skippedByTarget,
+      skippedByVisibility,
+    })
+
+    return edges
   }
 
   return {

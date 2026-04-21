@@ -9,6 +9,7 @@ import {
   isAccountTraceRoot,
   traceAccountFlow,
 } from '@/features/graph-runtime/debug/accountTrace'
+import { traceZapFlow } from '@/features/graph-runtime/debug/zapTrace'
 import type {
   CanonicalEdge,
   CanonicalGraphSceneState,
@@ -97,6 +98,8 @@ export class LegacyStoreSnapshotAdapter {
   private previousConnectionsLinks: AppStore['connectionsLinks'] | null = null
 
   private previousEdgesById: Record<string, CanonicalEdge> = {}
+
+  private previousObservedZapLayerRevision: number | null = null
 
   private previousNodes: AppStore['nodes'] | null = null
 
@@ -225,6 +228,17 @@ export class LegacyStoreSnapshotAdapter {
       this.previousSceneSnapshot.pinnedNodePubkeys === pinnedNodePubkeys &&
       this.previousSceneSnapshot.discoveryState === discoveryState
     ) {
+      if (this.previousObservedZapLayerRevision !== state.zapLayer.revision) {
+        traceZapFlow('legacySnapshotAdapter.zapLayerIgnoredBySceneCache', {
+          previousZapLayerRevision: this.previousObservedZapLayerRevision,
+          nextZapLayerRevision: state.zapLayer.revision,
+          zapLayerStatus: state.zapLayer.status,
+          zapLayerEdgeCount: state.zapLayer.edges.length,
+          canonicalEdgeCount: Object.keys(edgesById).length,
+          zapsIncludedInScene: false,
+        })
+        this.previousObservedZapLayerRevision = state.zapLayer.revision
+      }
       return this.previousSceneSnapshot
     }
 
@@ -243,6 +257,15 @@ export class LegacyStoreSnapshotAdapter {
     }
 
     this.previousSceneSnapshot = snapshot
+    this.previousObservedZapLayerRevision = state.zapLayer.revision
+    traceZapFlow('legacySnapshotAdapter.sceneAdapted', {
+      activeLayer,
+      zapLayerStatus: state.zapLayer.status,
+      zapLayerRevision: state.zapLayer.revision,
+      zapLayerEdgeCount: state.zapLayer.edges.length,
+      canonicalEdgeCount: Object.keys(edgesById).length,
+      zapsIncludedInScene: false,
+    })
     return snapshot
   }
 
@@ -293,6 +316,15 @@ export class LegacyStoreSnapshotAdapter {
         edgesById[canonicalEdge.id] = canonicalEdge
       }
     }
+
+    traceZapFlow('legacySnapshotAdapter.adaptEdges', {
+      followLinkCount: state.links.length,
+      inboundLinkCount: state.inboundLinks.length,
+      connectionsLinkCount: state.connectionsLinks.length,
+      zapLayerEdgeCount: state.zapLayer.edges.length,
+      canonicalEdgeCount: Object.keys(edgesById).length,
+      zapsIncludedInScene: false,
+    })
 
     if (isAccountTraceRoot(state.rootNodePubkey)) {
       const traceConfig = getAccountTraceConfig()
