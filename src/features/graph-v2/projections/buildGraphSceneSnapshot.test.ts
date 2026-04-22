@@ -190,6 +190,45 @@ test('keeps graph physics independent from loaded connection edges', () => {
   )
 })
 
+test('does not emit duplicate directed pairs when graph and inbound evidence overlap', () => {
+  const state = createState({
+    activeLayer: 'graph',
+  })
+  state.edgesById['alice->root:follow'] = {
+    id: 'alice->root:follow',
+    source: 'alice',
+    target: 'root',
+    relation: 'follow',
+    origin: 'graph',
+    weight: 1,
+  }
+  state.edgesById['alice->root:inbound'] = {
+    id: 'alice->root:inbound',
+    source: 'alice',
+    target: 'root',
+    relation: 'inbound',
+    origin: 'inbound',
+    weight: 1,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const renderPairKeys = scene.render.visibleEdges.map(
+    (edge) => `${edge.source}->${edge.target}`,
+  )
+  const physicsPairKeys = scene.physics.edges.map(
+    (edge) => `${edge.source}->${edge.target}`,
+  )
+
+  assert.equal(new Set(renderPairKeys).size, renderPairKeys.length)
+  assert.equal(new Set(physicsPairKeys).size, physicsPairKeys.length)
+  assert.ok(
+    scene.render.visibleEdges.some((edge) => edge.id === 'alice->root:follow'),
+  )
+  assert.ok(
+    !scene.render.visibleEdges.some((edge) => edge.id === 'alice->root:inbound'),
+  )
+})
+
 test('leaves every visible node with idle/root focus state when there is no selection', () => {
   const scene = buildGraphSceneSnapshot(createState())
 

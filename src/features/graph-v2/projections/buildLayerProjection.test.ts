@@ -114,6 +114,23 @@ test('emits at most one mutual edge per directed pair inside a snapshot', () => 
   assert.equal(new Set(pairKeys).size, pairKeys.length)
 })
 
+test('dedupes graph edges by directed pair before they reach Graphology', () => {
+  const state = createState({
+    activeLayer: 'graph',
+  })
+
+  const projection = buildLayerProjection(state, 'graph')
+  const pairKeys = projection.visibleEdges.map(
+    (edge) => `${edge.source}->${edge.target}`,
+  )
+
+  assert.equal(new Set(pairKeys).size, pairKeys.length)
+  assert.deepEqual(
+    projection.visibleEdges.map((edge) => edge.id),
+    ['alice->root:follow', 'root->alice:follow'],
+  )
+})
+
 test('keeps relationship layers anchored to the root and expanded nodes', () => {
   const state = createState()
   state.nodesByPubkey.bob = {

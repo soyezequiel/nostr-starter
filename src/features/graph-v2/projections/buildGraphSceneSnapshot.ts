@@ -4,6 +4,7 @@ import {
   isAccountTraceRoot,
   traceAccountFlow,
 } from '@/features/graph-runtime/debug/accountTrace'
+import { sortAndDedupeDirectedEdges } from '@/features/graph-v2/projections/dedupeEdges'
 import { buildLayerProjection } from '@/features/graph-v2/projections/buildLayerProjection'
 import type {
   GraphPhysicsEdge,
@@ -118,18 +119,6 @@ const getReciprocalFollowEdgeIds = (edges: readonly CanonicalEdge[]) => {
   }
 
   return reciprocalEdgeIds
-}
-
-const sortAndDedupeSceneEdges = (edges: readonly CanonicalEdge[]) => {
-  const edgesById = new Map<string, CanonicalEdge>()
-
-  for (const edge of edges) {
-    edgesById.set(edge.id, edge)
-  }
-
-  return Array.from(edgesById.values()).sort((left, right) =>
-    left.id.localeCompare(right.id),
-  )
 }
 
 const shouldIncludeFocusedContextEdge = ({
@@ -391,7 +380,7 @@ const computeGraphSceneSnapshot = (
   const forceEdges =
     state.activeLayer === 'graph'
       ? layerProjection.visibleEdges
-      : sortAndDedupeSceneEdges([
+      : sortAndDedupeDirectedEdges([
           ...layerProjection.visibleEdges,
           ...(hasVisualFocus
             ? Object.values(state.edgesById).filter(

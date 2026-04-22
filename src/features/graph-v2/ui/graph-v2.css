@@ -972,6 +972,20 @@
   word-break: break-all;
 }
 
+[data-graph-v2] .sg-field__v--stack {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  word-break: normal;
+}
+
+[data-graph-v2] .sg-field__detail {
+  color: var(--sg-fg-muted);
+  font-family: var(--sg-font-ui);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 [data-graph-v2] .sg-field__v--missing {
   color: var(--sg-fg-faint);
   font-family: var(--sg-font-ui);

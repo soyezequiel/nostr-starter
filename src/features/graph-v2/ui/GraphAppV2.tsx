@@ -141,6 +141,18 @@ const SOCIAL_CAPTURE_PHASE_LABELS: Record<SocialGraphCapturePhase, string> = {
   completed: 'finalizando',
 }
 
+const NODE_EXPANSION_STATUS_LABELS: Record<
+  NonNullable<CanonicalNode['nodeExpansionState']>['status'],
+  string
+> = {
+  idle: 'sin expandir',
+  loading: 'cargando',
+  ready: 'lista',
+  partial: 'parcial',
+  empty: 'sin conexiones nuevas',
+  error: 'error',
+}
+
 type ValidRootIdentity = Extract<RootIdentityResolution, { status: 'valid' }>
 
 interface LoadRootInput
@@ -151,10 +163,6 @@ interface LoadRootInput
   profile?: SavedRootProfileSnapshot | null
   profileFetchedAt?: number | null
 }
-
-
-
-
 
 const PUBLIC_SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'renderer', label: 'Render' },
@@ -1322,9 +1330,17 @@ export default function GraphAppV2() {
         setActionFeedback('El fixture no trae conexiones por relay.')
         return
       }
-      void bridge.expandNode(pubkey).then((result) => {
-        setActionFeedback(result.message)
-      })
+      void bridge.expandNode(pubkey)
+        .then((result) => {
+          setActionFeedback(result.message)
+        })
+        .catch((error) => {
+          setActionFeedback(
+            error instanceof Error
+              ? `No se pudo expandir: ${error.message}`
+              : 'No se pudo expandir el nodo seleccionado.',
+          )
+        })
     })
   }, [bridge, dismissIdentityHelp, isFixtureMode])
 
@@ -2315,6 +2331,11 @@ export default function GraphAppV2() {
     const jumbleProfileUrl = detailNpub ? `https://jumble.social/users/${detailNpub}` : null
     const pinActionLabel = detail.isPinned ? 'Desanclar perfil' : 'Anclar perfil'
     const exploreActionLabel = detail.isExpanded ? 'Conexiones exploradas' : 'Explorar conexiones'
+    const expansionState = detail.node.nodeExpansionState
+    const expansionStatusLabel = expansionState
+      ? NODE_EXPANSION_STATUS_LABELS[expansionState.status]
+      : NODE_EXPANSION_STATUS_LABELS.idle
+    const expansionMessage = expansionState?.message?.trim() || null
     const shouldShowIdentityHelp = !isIdentityHelpDismissed
     const isProfileLoading = detail.node.profileState === 'loading'
     const hasProfileName = Boolean(detail.node.label?.trim())
@@ -2484,8 +2505,13 @@ export default function GraphAppV2() {
         </div>
         <div className="sg-field">
           <span className="sg-field__k">Expansión</span>
-          <span className="sg-field__v">
-            {detail.node.nodeExpansionState?.status ?? 'idle'}
+          <span className="sg-field__v sg-field__v--stack">
+            <span>{expansionStatusLabel}</span>
+            {expansionMessage ? (
+              <span className="sg-field__detail">
+                {expansionMessage}
+              </span>
+            ) : null}
           </span>
         </div>
 

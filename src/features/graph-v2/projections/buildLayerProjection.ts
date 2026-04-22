@@ -4,6 +4,10 @@ import {
   createCanonicalEdgeId,
   isGraphV2Layer,
 } from '@/features/graph-v2/domain/invariants'
+import {
+  getDirectedPairKey,
+  sortAndDedupeDirectedEdges,
+} from '@/features/graph-v2/projections/dedupeEdges'
 
 interface LayerProjection {
   visibleNodePubkeys: ReadonlySet<string>
@@ -12,16 +16,6 @@ interface LayerProjection {
 
 const compareEdges = (left: CanonicalEdge, right: CanonicalEdge) =>
   left.id.localeCompare(right.id)
-
-const sortAndDedupeEdges = (edges: readonly CanonicalEdge[]) => {
-  const edgesById = new Map<string, CanonicalEdge>()
-
-  for (const edge of edges) {
-    edgesById.set(edge.id, edge)
-  }
-
-  return Array.from(edgesById.values()).sort(compareEdges)
-}
 
 const addMapSetValue = (
   map: Map<string, Set<string>>,
@@ -88,7 +82,7 @@ const buildFollowingEdges = (
   primaryEdges: readonly CanonicalEdge[],
   relationshipAnchorPubkeys: ReadonlySet<string>,
 ) =>
-  sortAndDedupeEdges(
+  sortAndDedupeDirectedEdges(
     primaryEdges.filter(
       (edge) =>
         edge.relation === 'follow' &&
@@ -100,7 +94,7 @@ const buildFollowerEdges = (
   primaryEdges: readonly CanonicalEdge[],
   relationshipAnchorPubkeys: ReadonlySet<string>,
 ) =>
-  sortAndDedupeEdges(
+  sortAndDedupeDirectedEdges(
     primaryEdges
       .filter(
         (edge) =>
@@ -121,7 +115,7 @@ const buildMutualEdges = (
   followingEdges: readonly CanonicalEdge[],
   adjacency: ReadonlyMap<string, ReadonlySet<string>>,
 ) =>
-  sortAndDedupeEdges(
+  sortAndDedupeDirectedEdges(
     followingEdges.flatMap((edge) =>
       adjacency.get(edge.target)?.has(edge.source)
         ? [
@@ -146,7 +140,7 @@ const buildNonReciprocalEdges = (
   edges: readonly CanonicalEdge[],
   adjacency: ReadonlyMap<string, ReadonlySet<string>>,
 ) =>
-  sortAndDedupeEdges(
+  sortAndDedupeDirectedEdges(
     edges.filter((edge) => !adjacency.get(edge.target)?.has(edge.source)),
   )
 
@@ -279,7 +273,7 @@ const computeLayerProjection = (
       }
 
       const normalizedEdge = normalizeConnectionEdge(edge)
-      const pairKey = `${normalizedEdge.source}->${normalizedEdge.target}`
+      const pairKey = getDirectedPairKey(normalizedEdge)
       const current = connectionEdgesByPair.get(pairKey)
 
       if (!current || normalizedEdge.relation === 'follow') {
@@ -300,7 +294,7 @@ const computeLayerProjection = (
   }
 
   if (layer === 'graph') {
-    return createProjectionFromEdges(sortAndDedupeEdges(primaryEdges), true)
+    return createProjectionFromEdges(sortAndDedupeDirectedEdges(primaryEdges), true)
   }
 
   if (layer === 'following') {
