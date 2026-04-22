@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { RootLoadState } from '@/features/graph-runtime/app/store/types'
-import { buildRootLoadProgressViewModel } from '@/features/graph-v2/ui/rootLoadProgressViewModel'
+import {
+  buildRootLoadProgressViewModel,
+  isRootLoadProgressActive,
+} from '@/features/graph-v2/ui/rootLoadProgressViewModel'
 
 const createRootLoad = (
   patch: Partial<RootLoadState> = {},
@@ -158,4 +161,66 @@ test('uses plus notation when an estimated total only proves a lower bound', () 
   assert.equal(viewModel.progressLabel, '620+ links')
   assert.equal(viewModel.metrics[1].value, '432+')
   assert.equal(viewModel.isEstimatedTotal, true)
+})
+
+test('keeps the load HUD active while partial collections are still in flight', () => {
+  assert.equal(
+    isRootLoadProgressActive(
+      createRootLoad({
+        status: 'partial',
+        loadedFrom: 'live',
+        visibleLinkProgress: {
+          visibleLinkCount: 188,
+          contactListEventCount: 3,
+          inboundCandidateEventCount: 432,
+          lastRelayUrl: 'wss://relay.primal.net',
+          updatedAt: 5,
+          following: {
+            status: 'complete',
+            loadedCount: 188,
+            totalCount: 188,
+            isTotalKnown: true,
+          },
+          followers: {
+            status: 'partial',
+            loadedCount: 139,
+            totalCount: 432,
+            isTotalKnown: false,
+          },
+        },
+      }),
+    ),
+    true,
+  )
+})
+
+test('does not keep the load HUD alive for terminal partial coverage', () => {
+  assert.equal(
+    isRootLoadProgressActive(
+      createRootLoad({
+        status: 'partial',
+        loadedFrom: 'live',
+        visibleLinkProgress: {
+          visibleLinkCount: 188,
+          contactListEventCount: 3,
+          inboundCandidateEventCount: 432,
+          lastRelayUrl: 'wss://relay.primal.net',
+          updatedAt: 6,
+          following: {
+            status: 'complete',
+            loadedCount: 188,
+            totalCount: 188,
+            isTotalKnown: true,
+          },
+          followers: {
+            status: 'complete',
+            loadedCount: 432,
+            totalCount: 432,
+            isTotalKnown: false,
+          },
+        },
+      }),
+    ),
+    false,
+  )
 })

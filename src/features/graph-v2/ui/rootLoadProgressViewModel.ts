@@ -110,6 +110,26 @@ const getCollectionRatio = (
   return Math.min(1, (following.loadedCount + followers.loadedCount) / total)
 }
 
+export const isRootLoadProgressActive = (rootLoad: RootLoadState): boolean => {
+  if (rootLoad.status === 'loading') {
+    return true
+  }
+
+  if (rootLoad.status !== 'partial') {
+    return false
+  }
+
+  const progress = rootLoad.visibleLinkProgress
+  if (!progress) {
+    return true
+  }
+
+  return (
+    progress.following.status !== 'complete' ||
+    progress.followers.status !== 'complete'
+  )
+}
+
 const detectActiveStepIndex = (
   rootLoad: RootLoadState,
   nodeCount: number,

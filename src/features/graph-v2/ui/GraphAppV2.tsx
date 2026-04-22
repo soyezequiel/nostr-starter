@@ -96,6 +96,7 @@ import {
   SigmaLoadProgressHud,
   SigmaLoadingOverlay,
 } from '@/features/graph-v2/ui/SigmaLoadingOverlay'
+import { isRootLoadProgressActive } from '@/features/graph-v2/ui/rootLoadProgressViewModel'
 import { SigmaRootInput } from '@/features/graph-v2/ui/SigmaRootInput'
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
@@ -1497,7 +1498,7 @@ export default function GraphAppV2() {
     !isRootSheetOpen &&
     sceneState.rootPubkey !== null &&
     uiState.rootLoad.visibleLinkProgress !== null &&
-    (rootLoadStatus === 'loading' || rootLoadStatus === 'partial')
+    isRootLoadProgressActive(uiState.rootLoad)
   const isDragFixtureLab = fixtureName === 'drag-local'
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
