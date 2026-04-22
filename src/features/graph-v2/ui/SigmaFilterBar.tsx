@@ -6,6 +6,7 @@ export interface FilterPill {
   id: 'all' | 'following' | 'followers' | 'mutuals' | 'oneway' | 'connections'
   label: string
   count: number | null
+  caption?: string
   swatch: string
   hint: string
 }
@@ -94,7 +95,7 @@ export const SigmaFilterBar = memo(function SigmaFilterBar({
                     : 'var(--sg-fg-faint)',
               }}
             >
-              {pill.count ?? '-'}
+              {pill.caption ?? pill.count ?? '-'}
             </span>
           </button>
         ))}

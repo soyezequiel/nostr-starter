@@ -285,6 +285,26 @@ test('setNodeExpansionState bumps visual revision only when the expansion state 
   )
 })
 
+test('setConnectionsLinks skips revision bump for equivalent links', () => {
+  const store = createStoreForGraphSlice()
+  const links = [
+    { source: 'alice', target: 'bob', relation: 'follow' as const },
+    { source: 'bob', target: 'carol', relation: 'follow' as const },
+  ]
+
+  store.getState().setConnectionsLinks(links)
+  const afterFirstWrite = store.getState()
+  store.getState().setConnectionsLinks(links.map((link) => ({ ...link })))
+  const afterDuplicateWrite = store.getState()
+
+  assert.equal(afterFirstWrite.connectionsLinksRevision, 1)
+  assert.equal(
+    afterDuplicateWrite.connectionsLinksRevision,
+    afterFirstWrite.connectionsLinksRevision,
+  )
+  assert.equal(afterDuplicateWrite.connectionsLinks, afterFirstWrite.connectionsLinks)
+})
+
 test('upsertNodePatches preserves maxNodes and rejected pubkeys', () => {
   const store = createStoreForGraphSlice()
 

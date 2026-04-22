@@ -15,6 +15,7 @@ import {
   traceAvatarFlow,
   truncateAvatarPubkey,
 } from '@/features/graph-runtime/debug/avatarTrace'
+import { areGraphLinksEqual } from '@/features/graph-runtime/kernel/connections'
 
 export const DEFAULT_MAX_GRAPH_NODES = 3000
 
@@ -568,6 +569,10 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
   },
   setConnectionsLinks: (links) => {
     const state = get()
+    if (areGraphLinksEqual(state.connectionsLinks, links)) {
+      return
+    }
+
     set({
       connectionsLinks: links,
       connectionsLinksRevision: state.connectionsLinksRevision + 1,

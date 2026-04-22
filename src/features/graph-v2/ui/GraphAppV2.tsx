@@ -125,7 +125,11 @@ import {
   MAX_ZAP_FILTER_PUBKEYS,
   useLiveZapFeed,
 } from '@/features/graph-v2/zaps/useLiveZapFeed'
-import { useRecentZapReplay } from '@/features/graph-v2/zaps/useRecentZapReplay'
+import {
+  useRecentZapReplay,
+  type RecentZapReplaySnapshot,
+} from '@/features/graph-v2/zaps/useRecentZapReplay'
+import { canRunZapFeedForScene } from '@/features/graph-v2/zaps/zapFeedAvailability'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import {
   shouldTraceZapPair,
@@ -152,6 +156,11 @@ const NOTIFICATION_HISTORY_LIMIT = 100
 const NOTIFICATION_TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
   minute: '2-digit',
+})
+const ZAP_REPLAY_TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
 })
 const GRAPH_MAX_NODES_SLIDER_MIN = 250
 const GRAPH_MAX_NODES_SLIDER_MAX = 12000
@@ -246,6 +255,113 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
 
 const formatInteger = (value: number) => INTEGER_FORMATTER.format(value)
+
+const clampProgress = (value: number) => {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+const formatProgressValue = (value: number) => Math.round(clampProgress(value) * 100)
+const formatProgressPercent = (value: number) => `${formatProgressValue(value)}%`
+
+const formatZapReplayTime = (timestamp: number | null) => (
+  timestamp === null
+    ? '--:--:--'
+    : ZAP_REPLAY_TIME_FORMATTER.format(new Date(timestamp * 1000))
+)
+
+type ZapReplayStageStatus = 'pending' | 'active' | 'done' | 'error'
+
+interface ZapReplayStageRow {
+  id: string
+  label: string
+  detail: string
+  value: number
+  status: ZapReplayStageStatus
+}
+
+function buildZapReplayStageRows(
+  replay: RecentZapReplaySnapshot,
+): ZapReplayStageRow[] {
+  const hasCollected =
+    replay.stage === 'decoding' ||
+    replay.stage === 'playing' ||
+    replay.stage === 'done'
+  const hasDecoded = replay.stage === 'playing' || replay.stage === 'done'
+  const hasPlayed = replay.stage === 'done'
+  const completedPlayback = replay.playedCount + replay.droppedCount
+
+  const collectionValue =
+    replay.batchCount > 0
+      ? replay.completedBatchCount / replay.batchCount
+      : hasCollected
+        ? 1
+        : 0
+  const decodeValue =
+    hasDecoded
+      ? 1
+      : replay.stage === 'decoding'
+        ? 0.5
+        : 0
+  const playValue =
+    replay.playableCount > 0
+      ? completedPlayback / replay.playableCount
+      : hasPlayed
+        ? 1
+        : 0
+
+  const collectionStatus: ZapReplayStageStatus =
+    replay.stage === 'error'
+      ? 'error'
+      : hasCollected
+        ? 'done'
+        : replay.stage === 'collecting'
+          ? 'active'
+          : 'pending'
+  const decodeStatus: ZapReplayStageStatus =
+    replay.stage === 'error' && hasCollected
+      ? 'error'
+      : hasDecoded
+        ? 'done'
+        : replay.stage === 'decoding'
+          ? 'active'
+          : 'pending'
+  const playStatus: ZapReplayStageStatus =
+    replay.stage === 'error' && hasDecoded
+      ? 'error'
+      : hasPlayed
+        ? 'done'
+        : replay.stage === 'playing'
+          ? 'active'
+          : 'pending'
+
+  return [
+    {
+      id: 'collect',
+      label: 'Recoleccion',
+      detail:
+        replay.batchCount > 0
+          ? `${formatInteger(replay.completedBatchCount)}/${formatInteger(replay.batchCount)} batches - ${formatInteger(replay.cachedCount)} cache - ${formatInteger(replay.fetchedCount)} nuevos`
+          : `${formatInteger(replay.cachedCount)} zaps en cache`,
+      value: collectionValue,
+      status: collectionStatus,
+    },
+    {
+      id: 'decode',
+      label: 'Preparacion',
+      detail: `${formatInteger(replay.decodedCount)} validos para replay`,
+      value: decodeValue,
+      status: decodeStatus,
+    },
+    {
+      id: 'play',
+      label: 'Reproduccion',
+      detail: `${formatInteger(replay.playedCount)} visibles - ${formatInteger(replay.droppedCount)} descartados`,
+      value: playValue,
+      status: playStatus,
+    },
+  ]
+}
 
 const getInitials = (value: string | null) => {
   if (!value) return 'N'
@@ -1088,6 +1204,7 @@ export default function GraphAppV2() {
   const [showZaps, setShowZaps] = useState(true)
   const [zapFeedMode, setZapFeedMode] = useState<ZapFeedMode>('live')
   const [recentZapReplayRequest, setRecentZapReplayRequest] = useState(0)
+  const [recentZapReplayRefreshRequest, setRecentZapReplayRefreshRequest] = useState(0)
   const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
     useState(false)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
@@ -1703,8 +1820,11 @@ export default function GraphAppV2() {
     sigmaHostRef.current?.setPhysicsSuspended(!physicsEnabled)
   }, [physicsEnabled])
 
-  const canRunZapFeed =
-    showZaps && !isFixtureMode && sceneState.activeLayer !== 'connections'
+  const canRunZapFeed = canRunZapFeedForScene({
+    showZaps,
+    isFixtureMode,
+    activeLayer: sceneState.activeLayer,
+  })
   const shouldEnableLiveZapFeed = canRunZapFeed && zapFeedMode === 'live'
   const shouldEnableRecentZapReplay =
     canRunZapFeed && zapFeedMode === 'recent-hour'
@@ -1727,8 +1847,13 @@ export default function GraphAppV2() {
     visiblePubkeys,
     enabled: shouldEnableRecentZapReplay,
     replayKey: recentZapReplayRequest,
+    refreshKey: recentZapReplayRefreshRequest,
     onZap: handleRecentZapReplay,
   })
+  const recentZapReplayStages = useMemo(
+    () => buildZapReplayStageRows(recentZapReplay),
+    [recentZapReplay],
+  )
 
   useEffect(() => {
     if (!shouldEnableLiveZapFeed || !pauseLiveZapsWhenSceneIsLarge) {
@@ -1985,8 +2110,9 @@ export default function GraphAppV2() {
       id: 'connections',
       label: 'Conexiones',
       count: null,
+      caption: 'mutuos',
       swatch: 'oklch(76% 0.1 180)',
-      hint: 'Conexiones: vinculos entre cuentas visibles, sin centrar la raiz.',
+      hint: 'Conexiones: solo mutuos de raiz y expandidos.',
     },
   ], [deferredScene.render.diagnostics.nodeCount])
 
@@ -2595,17 +2721,95 @@ export default function GraphAppV2() {
                       ? ` Se omitieron ${formatInteger(recentZapReplay.truncatedTargetCount)} nodos por limite operativo.`
                       : ''}
                   </div>
-                  <button
-                    className="sg-mini-action"
-                    disabled={
-                      recentZapReplay.phase === 'loading' ||
-                      recentZapReplay.phase === 'playing'
-                    }
-                    onClick={() => setRecentZapReplayRequest((current) => current + 1)}
-                    type="button"
-                  >
-                    Reproducir otra vez
-                  </button>
+                  <div className="sg-zap-replay-progress" aria-label="Progreso de zaps de la ultima hora">
+                    {recentZapReplayStages.map((stage) => {
+                      const progressValue = formatProgressValue(stage.value)
+                      return (
+                        <div
+                          className={`sg-zap-replay-stage sg-zap-replay-stage--${stage.status}`}
+                          key={stage.id}
+                        >
+                          <div className="sg-zap-replay-stage__head">
+                            <span>{stage.label}</span>
+                            <span>{progressValue}%</span>
+                          </div>
+                          <div
+                            aria-label={stage.label}
+                            aria-valuemax={100}
+                            aria-valuemin={0}
+                            aria-valuenow={progressValue}
+                            className="sg-zap-replay-bar"
+                            role="progressbar"
+                          >
+                            <span
+                              className="sg-zap-replay-bar__fill"
+                              style={{ width: `${progressValue}%` }}
+                            />
+                          </div>
+                          <div className="sg-zap-replay-stage__detail">
+                            {stage.detail}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="sg-zap-replay-timeline">
+                    <div className="sg-zap-replay-timeline__head">
+                      <span>Momento mostrado</span>
+                      <span>{formatZapReplayTime(recentZapReplay.currentZapCreatedAt)}</span>
+                    </div>
+                    <div
+                      aria-label="Avance dentro de la ultima hora"
+                      aria-valuemax={100}
+                      aria-valuemin={0}
+                      aria-valuenow={formatProgressValue(recentZapReplay.timelineProgress)}
+                      className="sg-zap-replay-timeline__rail"
+                      role="progressbar"
+                    >
+                      <span
+                        className="sg-zap-replay-timeline__fill"
+                        style={{
+                          width: formatProgressPercent(recentZapReplay.timelineProgress),
+                        }}
+                      />
+                      <span
+                        className="sg-zap-replay-timeline__marker"
+                        style={{
+                          left: formatProgressPercent(recentZapReplay.timelineProgress),
+                        }}
+                      />
+                    </div>
+                    <div className="sg-zap-replay-timeline__labels">
+                      <span>{formatZapReplayTime(recentZapReplay.windowStartAt)}</span>
+                      <span>{formatZapReplayTime(recentZapReplay.windowEndAt)}</span>
+                    </div>
+                  </div>
+                  <div className="sg-zap-replay-actions">
+                    <button
+                      className="sg-mini-action"
+                      disabled={
+                        recentZapReplay.phase === 'loading' ||
+                        recentZapReplay.phase === 'playing'
+                      }
+                      onClick={() => setRecentZapReplayRequest((current) => current + 1)}
+                      type="button"
+                    >
+                      Reproducir cache
+                    </button>
+                    <button
+                      className="sg-mini-action"
+                      disabled={
+                        recentZapReplay.phase === 'loading' ||
+                        recentZapReplay.phase === 'playing'
+                      }
+                      onClick={() => {
+                        setRecentZapReplayRefreshRequest((current) => current + 1)
+                      }}
+                      type="button"
+                    >
+                      Actualizar
+                    </button>
+                  </div>
                 </div>
               ) : null}
               <div className="sg-setting-row">

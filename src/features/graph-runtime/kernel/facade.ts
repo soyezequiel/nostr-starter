@@ -1,5 +1,4 @@
 ﻿import { createKernelEventEmitter } from '@/features/graph-runtime/kernel/events'
-import type { ContactListRecord } from '@/features/graph-runtime/db/entities'
 import type { AppKernelDependencies } from '@/features/graph-runtime/kernel/modules/context'
 import { createAnalysisModule } from '@/features/graph-runtime/kernel/modules/analysis'
 import { createExportModule } from '@/features/graph-runtime/kernel/modules/export-orch'
@@ -17,26 +16,21 @@ import { createProfileHydrationModule } from '@/features/graph-runtime/kernel/mo
 import { createRelaySessionModule } from '@/features/graph-runtime/kernel/modules/relay-session'
 import { createRootLoaderModule } from '@/features/graph-runtime/kernel/modules/root-loader'
 import { createZapLayerModule } from '@/features/graph-runtime/kernel/modules/zap-layer'
+import {
+  compareConnectionPubkeys,
+  createConnectionsDerivedState,
+  type ConnectionContactListRecord,
+} from '@/features/graph-runtime/kernel/connections'
 import type { RootLoader, ToggleLayerResult } from '@/features/graph-runtime/kernel/runtime'
 import type { UiLayer } from '@/features/graph-runtime/app/store'
 import type { RelayEventEnvelope } from '@/features/graph-runtime/nostr'
-
-type ConnectionContactListRecord = Pick<
-  ContactListRecord,
-  'pubkey' | 'eventId' | 'createdAt' | 'fetchedAt' | 'follows' | 'relayHints'
->
 
 const CONNECTIONS_CACHE_LOOKUP_CONCURRENCY = 24
 const CONNECTIONS_FETCH_BATCH_SIZE = 25
 const CONNECTIONS_FETCH_CONCURRENCY = 3
 const CONNECTIONS_PARSE_CONCURRENCY = 8
-const CONNECTIONS_PUBLISH_THROTTLE_MS = 150
-
-const compareConnectionPubkeys = (left: string, right: string) =>
-  left.localeCompare(right, undefined, {
-    numeric: false,
-    sensitivity: 'base',
-  })
+const CONNECTIONS_PUBLISH_THROTTLE_MS = 1_000
+const CONNECTIONS_PUBLISH_MIN_CONTACT_LIST_UPDATES = 500
 
 const isRelayEventNewerThanContactList = (
   current: ConnectionContactListRecord | undefined,
@@ -51,57 +45,6 @@ const isRelayEventNewerThanContactList = (
   }
 
   return envelope.event.id.localeCompare(current.eventId) < 0
-}
-
-const createConnectionsDerivedState = (
-  rootPubkey: string,
-  graphNodePubkeys: ReadonlySet<string>,
-  contactListsByPubkey: ReadonlyMap<string, ConnectionContactListRecord>,
-) => {
-  const derivedLinks: import('@/features/graph-runtime/app/store/types').GraphLink[] = []
-  const derivedKeys: string[] = []
-  const seenKeys = new Set<string>()
-  const orderedGraphPubkeys = Array.from(graphNodePubkeys).sort(compareConnectionPubkeys)
-
-  for (const pubkey of orderedGraphPubkeys) {
-    if (pubkey === rootPubkey) {
-      continue
-    }
-
-    const contactList = contactListsByPubkey.get(pubkey)
-    if (!contactList) {
-      continue
-    }
-
-    const orderedFollows = [...contactList.follows].sort(compareConnectionPubkeys)
-    for (const followPubkey of orderedFollows) {
-      if (
-        followPubkey === pubkey ||
-        followPubkey === rootPubkey ||
-        !graphNodePubkeys.has(followPubkey)
-      ) {
-        continue
-      }
-
-      const key = `${pubkey}->${followPubkey}`
-      if (seenKeys.has(key)) {
-        continue
-      }
-
-      seenKeys.add(key)
-      derivedKeys.push(key)
-      derivedLinks.push({
-        source: pubkey,
-        target: followPubkey,
-        relation: 'follow',
-      })
-    }
-  }
-
-  return {
-    links: derivedLinks,
-    signature: derivedKeys.join('|'),
-  }
 }
 
 export function createKernelFacade(dependencies: AppKernelDependencies) {
@@ -187,6 +130,8 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
     const state = ctx.store.getState()
     const rootPubkey = state.rootNodePubkey
     const graphNodePubkeys = new Set(Object.keys(state.nodes))
+    const expectedGraphRevision = state.graphRevision
+    const expectedInboundGraphRevision = state.inboundGraphRevision
 
     if (graphNodePubkeys.size === 0 || rootPubkey === null) {
       ctx.store.getState().setConnectionsLinks([])
@@ -201,9 +146,12 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
     const missingPubkeys: string[] = []
     let lastPublishedSignature: string | null = null
     let lastPublishedAt = 0
+    let unpublishedContactListUpdates = 0
 
     const isStaleDerivation = () =>
-      ctx.store.getState().rootNodePubkey !== expectedRootPubkey
+      ctx.store.getState().rootNodePubkey !== expectedRootPubkey ||
+      ctx.store.getState().graphRevision !== expectedGraphRevision ||
+      ctx.store.getState().inboundGraphRevision !== expectedInboundGraphRevision
 
     const publishDerivedLinks = (force = false) => {
       if (isStaleDerivation()) {
@@ -221,8 +169,18 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
       }
 
       const now = ctx.now()
-      if (!force && now - lastPublishedAt < CONNECTIONS_PUBLISH_THROTTLE_MS) {
-        return
+      if (!force) {
+        if (unpublishedContactListUpdates === 0) {
+          return
+        }
+
+        if (
+          unpublishedContactListUpdates <
+            CONNECTIONS_PUBLISH_MIN_CONTACT_LIST_UPDATES ||
+          now - lastPublishedAt < CONNECTIONS_PUBLISH_THROTTLE_MS
+        ) {
+          return
+        }
       }
 
       const { links, signature } = createConnectionsDerivedState(
@@ -237,6 +195,7 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
 
       lastPublishedSignature = signature
       lastPublishedAt = now
+      unpublishedContactListUpdates = 0
       currentState.setConnectionsLinks(links)
     }
 
@@ -319,6 +278,7 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
                           follows: parsed.followPubkeys,
                           relayHints: parsed.relayHints,
                         })
+                        unpublishedContactListUpdates += 1
                       },
                     )
 
