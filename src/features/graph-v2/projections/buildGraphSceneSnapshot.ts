@@ -57,6 +57,8 @@ const SIZE_PINNED = 12
 const SIZE_DEFAULT = 9
 const SIZE_SELECTED_BOOST = 8
 const SIZE_DIMMED = 5
+const MIN_NODE_EXPANSION_PROGRESS = 0.12
+const MAX_NODE_EXPANSION_PROGRESS = 0.94
 
 const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
   relation === 'follow' ? 1.1 : 0.9
@@ -216,6 +218,33 @@ const resolveNodeSize = (
     default:
       return baseSize
   }
+}
+
+const resolveNodeExpansionProgress = (
+  node: CanonicalGraphSceneState['nodesByPubkey'][string],
+) => {
+  if (node.nodeExpansionState?.status !== 'loading') {
+    return null
+  }
+
+  const step = node.nodeExpansionState.step
+  const totalSteps = node.nodeExpansionState.totalSteps
+
+  if (
+    typeof step !== 'number' ||
+    !Number.isFinite(step) ||
+    typeof totalSteps !== 'number' ||
+    !Number.isFinite(totalSteps) ||
+    totalSteps <= 0
+  ) {
+    return MIN_NODE_EXPANSION_PROGRESS
+  }
+
+  const rawProgress = step / totalSteps
+  return Math.min(
+    MAX_NODE_EXPANSION_PROGRESS,
+    Math.max(MIN_NODE_EXPANSION_PROGRESS, rawProgress),
+  )
 }
 
 const mapRenderEdge = (
@@ -450,6 +479,7 @@ const computeGraphSceneSnapshot = (
         : isPinned
           ? SIZE_PINNED
           : SIZE_DEFAULT
+    const expansionProgress = resolveNodeExpansionProgress(node)
 
     return {
       pubkey: node.pubkey,
@@ -457,6 +487,8 @@ const computeGraphSceneSnapshot = (
       pictureUrl: node.picture,
       color: resolveNodeColor(focusState, baseColor),
       size: resolveNodeSize(focusState, baseSize),
+      isExpanding: expansionProgress !== null,
+      expansionProgress,
       isRoot,
       isSelected,
       isPinned,

@@ -25,6 +25,8 @@ export interface RenderNodeAttributes {
   forceLabel: boolean
   fixed: boolean
   pictureUrl: string | null
+  isExpanding: boolean
+  expansionProgress: number | null
   isDimmed: boolean
   isSelected: boolean
   isNeighbor: boolean
@@ -79,6 +81,8 @@ const hasRenderNodeAttributeChanges = (
   current.forceLabel !== next.forceLabel ||
   current.fixed !== next.fixed ||
   current.pictureUrl !== next.pictureUrl ||
+  current.isExpanding !== next.isExpanding ||
+  current.expansionProgress !== next.expansionProgress ||
   current.isDimmed !== next.isDimmed ||
   current.isSelected !== next.isSelected ||
   current.isNeighbor !== next.isNeighbor ||
@@ -311,6 +315,8 @@ export class RenderGraphStore {
         forceLabel: node.isSelected,
         fixed: node.isPinned,
         pictureUrl: node.pictureUrl,
+        isExpanding: node.isExpanding,
+        expansionProgress: node.expansionProgress,
         isDimmed: node.isDimmed,
         isSelected: node.isSelected,
         isNeighbor: node.isNeighbor,

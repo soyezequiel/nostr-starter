@@ -245,6 +245,31 @@ test('leaves every visible node with idle/root focus state when there is no sele
   assert.ok(scene.render.visibleEdges.every((edge) => !edge.isDimmed))
 })
 
+test('maps loading node expansion state into determinate ring progress', () => {
+  const state = createState()
+  state.nodesByPubkey.alice = {
+    ...state.nodesByPubkey.alice,
+    nodeExpansionState: {
+      status: 'loading',
+      message: 'Expandiendo',
+      phase: 'correlating-followers',
+      step: 2,
+      totalSteps: 4,
+      startedAt: 100,
+      updatedAt: 200,
+    },
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const alice = scene.render.nodes.find((node) => node.pubkey === 'alice')
+  const bob = scene.render.nodes.find((node) => node.pubkey === 'bob')
+
+  assert.equal(alice?.isExpanding, true)
+  assert.equal(alice?.expansionProgress, 0.5)
+  assert.equal(bob?.isExpanding, false)
+  assert.equal(bob?.expansionProgress, null)
+})
+
 test('colors reciprocal follows as mutual connections while keeping idle nodes neutral', () => {
   const state = createState({
     activeLayer: 'graph',

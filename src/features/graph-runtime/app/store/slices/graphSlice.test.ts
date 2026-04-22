@@ -238,6 +238,53 @@ test('upsertNodePatches bumps visual revision for visual changes', () => {
   assert.equal(after.nodeDetailRevision, before.nodeDetailRevision)
 })
 
+test('setNodeExpansionState bumps visual revision only when the expansion state changes', () => {
+  const store = createStoreForGraphSlice()
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      label: 'Alice',
+      picture: null,
+      about: null,
+      nip05: null,
+      lud16: null,
+      profileEventId: null,
+      profileFetchedAt: null,
+      profileSource: null,
+      profileState: 'idle',
+      keywordHits: 0,
+      discoveredAt: 1,
+      source: 'follow',
+    },
+  ])
+
+  const before = store.getState()
+  const loadingState = {
+    status: 'loading' as const,
+    message: 'Expandiendo',
+    phase: 'fetching-structure' as const,
+    step: 2,
+    totalSteps: 4,
+    startedAt: 10,
+    updatedAt: 20,
+  }
+
+  store.getState().setNodeExpansionState('alice', loadingState)
+  const afterChange = store.getState()
+  store.getState().setNodeExpansionState('alice', loadingState)
+  const afterDuplicate = store.getState()
+
+  assert.equal(
+    afterChange.nodeVisualRevision,
+    before.nodeVisualRevision + 1,
+  )
+  assert.equal(
+    afterDuplicate.nodeVisualRevision,
+    afterChange.nodeVisualRevision,
+  )
+})
+
 test('upsertNodePatches preserves maxNodes and rejected pubkeys', () => {
   const store = createStoreForGraphSlice()
 

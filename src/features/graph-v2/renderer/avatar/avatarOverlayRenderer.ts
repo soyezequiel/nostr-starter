@@ -48,6 +48,13 @@ const FOCUS_AURA_OUTER_LINE_WIDTH_FACTOR = 0.42
 const FOCUS_AURA_INNER_LINE_WIDTH_FACTOR = 0.14
 const FOCUS_AURA_OUTER_ALPHA = 0.22
 const FOCUS_AURA_INNER_ALPHA = 0.52
+const EXPANSION_RING_GAP_PX = 4
+const EXPANSION_RING_MIN_LINE_WIDTH_PX = 2
+const EXPANSION_RING_MAX_LINE_WIDTH_PX = 5
+const EXPANSION_RING_LINE_WIDTH_FACTOR = 0.22
+const EXPANSION_RING_TRACK_ALPHA = 0.18
+const EXPANSION_RING_PROGRESS_ALPHA = 0.96
+const EXPANSION_RING_COLOR = '#7dd3a7'
 const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_FLOOR = 6
 const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_CEILING = 8
 const EMPTY_SET = new Set<string>()
@@ -64,6 +71,14 @@ interface FocusAuraItem {
   y: number
   r: number
   color: string
+}
+
+interface ExpansionRingItem {
+  pubkey: string
+  x: number
+  y: number
+  r: number
+  progress: number
 }
 
 interface AvatarRevealSelectionItem {
@@ -585,6 +600,7 @@ export class AvatarOverlayRenderer {
         : null
     const drawItems: AvatarDrawItem[] = []
     const focusAuraItems: FocusAuraItem[] = []
+    const expansionRingItems: ExpansionRingItem[] = []
     const revealCandidates: AvatarRevealSelectionItem[] = []
     const seenNodes = new Set<string>()
 
@@ -657,6 +673,15 @@ export class AvatarOverlayRenderer {
           color: nodeAttrs.color,
         })
       }
+      if (nodeAttrs.isExpanding && nodeAttrs.expansionProgress !== null) {
+        expansionRingItems.push({
+          pubkey,
+          x: viewport.x,
+          y: viewport.y,
+          r: Math.max(nodeRadiusPx, drawRadiusPx),
+          progress: nodeAttrs.expansionProgress,
+        })
+      }
       if (!budget.drawAvatars) {
         return
       }
@@ -716,6 +741,7 @@ export class AvatarOverlayRenderer {
 
     this.drawFocusAuras(ctx, focusAuraItems)
     if (!budget.drawAvatars) {
+      this.drawExpansionRings(ctx, expansionRingItems)
       this.lastDebugSnapshot = {
         generatedAtMs: nowMs,
         cameraRatio,
@@ -1024,6 +1050,8 @@ export class AvatarOverlayRenderer {
       (item) => item.loadDecision === 'candidate' && item.inflight,
     ).length
 
+    this.drawExpansionRings(ctx, expansionRingItems)
+
     this.lastDebugSnapshot = {
       generatedAtMs: nowMs,
       cameraRatio,
@@ -1228,6 +1256,58 @@ export class AvatarOverlayRenderer {
     for (const item of itemsByPubkey.values()) {
       this.drawFocusAura(ctx, item)
     }
+  }
+
+  private drawExpansionRings(
+    ctx: CanvasRenderingContext2D,
+    items: readonly ExpansionRingItem[],
+  ) {
+    const itemsByPubkey = new Map<string, ExpansionRingItem>()
+    for (const item of items) {
+      itemsByPubkey.set(item.pubkey, item)
+    }
+    for (const item of itemsByPubkey.values()) {
+      this.drawExpansionRing(ctx, item)
+    }
+  }
+
+  private drawExpansionRing(
+    ctx: CanvasRenderingContext2D,
+    item: ExpansionRingItem,
+  ) {
+    const lineWidth = Math.min(
+      EXPANSION_RING_MAX_LINE_WIDTH_PX,
+      Math.max(
+        EXPANSION_RING_MIN_LINE_WIDTH_PX,
+        item.r * EXPANSION_RING_LINE_WIDTH_FACTOR,
+      ),
+    )
+    const radius = item.r + EXPANSION_RING_GAP_PX + lineWidth * 0.5
+    const startAngle = -Math.PI / 2
+    const endAngle = startAngle + FULL_CIRCLE_RADIANS * item.progress
+
+    ctx.save()
+
+    ctx.beginPath()
+    ctx.lineWidth = lineWidth
+    ctx.strokeStyle = withAlpha(
+      EXPANSION_RING_COLOR,
+      EXPANSION_RING_TRACK_ALPHA,
+    )
+    ctx.arc(item.x, item.y, radius, 0, FULL_CIRCLE_RADIANS)
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.lineWidth = lineWidth
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = withAlpha(
+      EXPANSION_RING_COLOR,
+      EXPANSION_RING_PROGRESS_ALPHA,
+    )
+    ctx.arc(item.x, item.y, radius, startAngle, endAngle)
+    ctx.stroke()
+
+    ctx.restore()
   }
 
   private drawFocusAura(

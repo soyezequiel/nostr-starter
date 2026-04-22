@@ -72,7 +72,9 @@ import { createDragLocalFixture } from '@/features/graph-v2/testing/fixtures/dra
 import { SigmaCanvasHost, type SigmaCanvasHostHandle } from '@/features/graph-v2/ui/SigmaCanvasHost'
 import {
   AtomIcon,
+  BellIcon,
   ClockIcon,
+  CloseIcon,
   CopyIcon,
   ExternalLinkIcon,
   GearIcon,
@@ -128,8 +130,23 @@ import { downloadBlob } from '@/features/graph-runtime/export/download'
 import type { NostrProfile } from '@/lib/nostr'
 
 type SigmaSettingsTab = 'renderer' | 'relays' | 'dev'
+type NotificationSource = 'action' | 'zap'
+
+interface SigmaNotificationLogEntry {
+  id: string
+  source: NotificationSource
+  msg: string
+  tone: NonNullable<SigmaToast['tone']>
+  createdAt: number
+}
 
 const INTEGER_FORMATTER = new Intl.NumberFormat('es-AR')
+const NOTIFICATION_AUTO_DISMISS_MS = 6500
+const NOTIFICATION_HISTORY_LIMIT = 100
+const NOTIFICATION_TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
+  hour: '2-digit',
+  minute: '2-digit',
+})
 const GRAPH_MAX_NODES_SLIDER_MIN = 250
 const GRAPH_MAX_NODES_SLIDER_MAX = 12000
 const GRAPH_MAX_NODES_SLIDER_STEP = 250
@@ -1013,6 +1030,12 @@ export default function GraphAppV2() {
     isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
   )
   const [actionFeedback, setActionFeedback] = useState<string | null>(null)
+  const [notificationHistory, setNotificationHistory] = useState<SigmaNotificationLogEntry[]>([])
+  const notificationSequenceRef = useRef(0)
+  const lastRecordedNotificationRef = useRef<Record<NotificationSource, string | null>>({
+    action: null,
+    zap: null,
+  })
   const [isIdentityHelpDismissed, setIsIdentityHelpDismissed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.sessionStorage.getItem(IDENTITY_FIRST_RUN_HELP_KEY) === '1'
@@ -1050,6 +1073,7 @@ export default function GraphAppV2() {
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isRuntimeInspectorOpen, setIsRuntimeInspectorOpen] = useState(false)
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isPersonSearchOpen, setIsPersonSearchOpen] = useState(false)
   const [personSearchQuery, setPersonSearchQuery] = useState('')
   const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
@@ -1156,11 +1180,69 @@ export default function GraphAppV2() {
   const isDev = process.env.NODE_ENV === 'development'
   const canUseRuntimeInspector = isDev
 
+  const appendNotification = useCallback(
+    (source: NotificationSource, msg: string, tone: SigmaNotificationLogEntry['tone']) => {
+      const text = msg.trim()
+      if (!text) return
+      notificationSequenceRef.current += 1
+      const entry: SigmaNotificationLogEntry = {
+        id: `${Date.now()}-${notificationSequenceRef.current}`,
+        source,
+        msg: text,
+        tone,
+        createdAt: Date.now(),
+      }
+      setNotificationHistory((current) => [entry, ...current].slice(0, NOTIFICATION_HISTORY_LIMIT))
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (!actionFeedback) {
+      lastRecordedNotificationRef.current.action = null
+      return
+    }
+    const key = `action:${actionFeedback}`
+    if (lastRecordedNotificationRef.current.action === key) return
+    lastRecordedNotificationRef.current.action = key
+    appendNotification('action', actionFeedback, 'default')
+  }, [actionFeedback, appendNotification])
+
+  useEffect(() => {
+    if (!zapFeedback) {
+      lastRecordedNotificationRef.current.zap = null
+      return
+    }
+    const key = `zap:${zapFeedback}`
+    if (lastRecordedNotificationRef.current.zap === key) return
+    lastRecordedNotificationRef.current.zap = key
+    appendNotification('zap', zapFeedback, 'zap')
+  }, [zapFeedback, appendNotification])
+
+  useEffect(() => {
+    if (!actionFeedback) return
+    const currentFeedback = actionFeedback
+    const timer = window.setTimeout(() => {
+      setActionFeedback((current) => (current === currentFeedback ? null : current))
+    }, NOTIFICATION_AUTO_DISMISS_MS)
+    return () => window.clearTimeout(timer)
+  }, [actionFeedback])
+
+  useEffect(() => {
+    if (!zapFeedback) return
+    const currentFeedback = zapFeedback
+    const timer = window.setTimeout(() => {
+      setZapFeedback((current) => (current === currentFeedback ? null : current))
+    }, NOTIFICATION_AUTO_DISMISS_MS)
+    return () => window.clearTimeout(timer)
+  }, [zapFeedback])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         if (isPersonSearchOpen) { setIsPersonSearchOpen(false); return }
         if (isSettingsOpen) { setIsSettingsOpen(false); return }
+        if (isNotificationsOpen) { setIsNotificationsOpen(false); return }
         if (isRuntimeInspectorOpen) { setIsRuntimeInspectorOpen(false); return }
         if (isRootSheetOpen && sceneState.rootPubkey) { setIsRootSheetOpen(false); return }
         return
@@ -1174,6 +1256,7 @@ export default function GraphAppV2() {
         event.preventDefault()
         setIsPersonSearchOpen(false)
         setIsSettingsOpen(false)
+        setIsNotificationsOpen(false)
         setIsRootSheetOpen(false)
         setIsRuntimeInspectorOpen((current) => !current)
         return
@@ -1189,6 +1272,7 @@ export default function GraphAppV2() {
         event.preventDefault()
         if (sceneState.rootPubkey) {
           setIsSettingsOpen(false)
+          setIsNotificationsOpen(false)
           setIsPersonSearchOpen(true)
           return
         }
@@ -1197,7 +1281,7 @@ export default function GraphAppV2() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [canUseRuntimeInspector, sceneState.rootPubkey, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen])
+  }, [canUseRuntimeInspector, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen])
 
   const callbacks = useMemo<GraphInteractionCallbacks>(
     () =>
@@ -1687,6 +1771,7 @@ export default function GraphAppV2() {
     setActiveSettingsTab(tab)
     setIsRootSheetOpen(false)
     setIsPersonSearchOpen(false)
+    setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsSettingsOpen(true)
   }, [])
@@ -1906,6 +1991,7 @@ export default function GraphAppV2() {
   const handleOpenRootSheet = useCallback(() => {
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
+    setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsRootSheetOpen(true)
   }, [])
@@ -1917,6 +2003,7 @@ export default function GraphAppV2() {
     }
     setIsRootSheetOpen(false)
     setIsSettingsOpen(false)
+    setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsPersonSearchOpen(true)
   }, [sceneState.rootPubkey])
@@ -1942,12 +2029,21 @@ export default function GraphAppV2() {
     openSettingsTab(activeSettingsTab)
   }, [activeSettingsTab, isSettingsOpen, openSettingsTab])
 
+  const handleToggleNotifications = useCallback(() => {
+    setIsPersonSearchOpen(false)
+    setIsSettingsOpen(false)
+    setIsRuntimeInspectorOpen(false)
+    setIsRootSheetOpen(false)
+    setIsNotificationsOpen((current) => !current)
+  }, [])
+
   const handleToggleRuntimeInspector = useCallback(() => {
     if (!canUseRuntimeInspector) {
       return
     }
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
+    setIsNotificationsOpen(false)
     setIsRootSheetOpen(false)
     setIsRuntimeInspectorOpen((current) => !current)
   }, [canUseRuntimeInspector])
@@ -2206,6 +2302,16 @@ export default function GraphAppV2() {
       active: isSettingsOpen,
       onClick: handleToggleSettings,
     },
+    {
+      id: 'notifications',
+      tip: isNotificationsOpen
+        ? 'Cerrar notificaciones'
+        : `Notificaciones (${notificationHistory.length})`,
+      icon: <BellIcon />,
+      active: isNotificationsOpen,
+      badge: notificationHistory.length,
+      onClick: handleToggleNotifications,
+    },
     ...(canUseRuntimeInspector
       ? [{
           id: 'runtime',
@@ -2265,13 +2371,16 @@ export default function GraphAppV2() {
     handleToggleSettings,
     handleToggleZaps,
     isPersonSearchOpen,
+    isNotificationsOpen,
     isRuntimeInspectorOpen,
     isSettingsOpen,
+    notificationHistory.length,
     personSearchMatches.length,
     personSearchQuery,
     physicsEnabled,
     showZaps,
     uiState.relayState.isGraphStale,
+    handleToggleNotifications,
   ])
 
   // Toasts — combine feedback sources
@@ -2285,6 +2394,23 @@ export default function GraphAppV2() {
   const handleToastDismiss = useCallback((id: SigmaToast['id']) => {
     if (id === 'action') setActionFeedback(null)
     if (id === 'zap') setZapFeedback(null)
+  }, [])
+
+  const handleDeleteNotification = useCallback((id: string) => {
+    const entry = notificationHistory.find((item) => item.id === id)
+    setNotificationHistory((current) => current.filter((item) => item.id !== id))
+    if (!entry) return
+    if (entry.source === 'action') {
+      setActionFeedback((current) => (current === entry.msg ? null : current))
+      return
+    }
+    setZapFeedback((current) => (current === entry.msg ? null : current))
+  }, [notificationHistory])
+
+  const handleClearNotifications = useCallback(() => {
+    setNotificationHistory([])
+    setActionFeedback(null)
+    setZapFeedback(null)
   }, [])
 
   // Minimap viewport info
@@ -2479,8 +2605,13 @@ export default function GraphAppV2() {
     const primalProfileUrl = detailNpub ? `https://primal.net/p/${detailNpub}` : null
     const jumbleProfileUrl = detailNpub ? `https://jumble.social/users/${detailNpub}` : null
     const pinActionLabel = detail.isPinned ? 'Desanclar perfil' : 'Anclar perfil'
-    const exploreActionLabel = detail.isExpanded ? 'Conexiones exploradas' : 'Explorar conexiones'
     const expansionState = detail.node.nodeExpansionState
+    const isExpansionLoading = expansionState?.status === 'loading'
+    const exploreActionLabel = detail.isExpanded
+      ? 'Conexiones exploradas'
+      : isExpansionLoading
+        ? 'Expandiendo...'
+        : 'Explorar conexiones'
     const expansionStatusLabel = expansionState
       ? NODE_EXPANSION_STATUS_LABELS[expansionState.status]
       : NODE_EXPANSION_STATUS_LABELS.idle
@@ -2550,7 +2681,8 @@ export default function GraphAppV2() {
           <div className="sg-identity-help">
             <p>Abriste una identidad. Explorá sus conexiones o anclala para compararla.</p>
             <button
-              className={`sg-btn${detail.isExpanded ? '' : ' sg-btn--primary'}`}
+              className={`sg-btn${detail.isExpanded || isExpansionLoading ? '' : ' sg-btn--primary'}`}
+              disabled={isExpansionLoading}
               onClick={() => {
                 if (detail.isExpanded) {
                   dismissIdentityHelp()
@@ -2666,8 +2798,8 @@ export default function GraphAppV2() {
 
         <div className="sg-actions">
           <button
-            className={`sg-btn${detail.isExpanded ? '' : ' sg-btn--primary'}`}
-            disabled={detail.isExpanded}
+            className={`sg-btn${detail.isExpanded || isExpansionLoading ? '' : ' sg-btn--primary'}`}
+            disabled={detail.isExpanded || isExpansionLoading}
             onClick={() => {
               if (!detail.pubkey) return
               handleExploreConnections(detail.pubkey, detail.isExpanded)

@@ -136,7 +136,7 @@ export default function LandingPage() {
                   className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#ff4b5d] px-6 text-base font-bold text-[#080808] shadow-[0_0_44px_rgba(255,75,93,0.24)] transition hover:bg-[#ff6a78] focus:outline-none focus:ring-2 focus:ring-[#ff9aa4] focus:ring-offset-2 focus:ring-offset-[#060606]"
                   href="/labs/sigma"
                 >
-                  Abrir el grafo
+                  Explorar conexiones
                 </Link>
                 <div className="flex flex-wrap gap-3 text-sm">
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ff4b5d]/35 bg-[#ff4b5d]/10 px-3 py-2 text-[#f6d7d3]">

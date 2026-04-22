@@ -604,6 +604,7 @@ export const createGraphSlice: AppStateCreator<GraphSlice> = (set, get) => ({
         ...state.nodeExpansionStates,
         [pubkey]: nextState,
       },
+      nodeVisualRevision: state.nodeVisualRevision + 1,
     })
   },
   setNodeStructurePreviewState: (pubkey, nextState) => {

@@ -15,6 +15,8 @@ export interface GraphRenderNode {
   pictureUrl: string | null
   color: string
   size: number
+  isExpanding: boolean
+  expansionProgress: number | null
   isRoot: boolean
   isSelected: boolean
   isPinned: boolean
