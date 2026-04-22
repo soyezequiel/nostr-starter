@@ -135,6 +135,13 @@ import {
   shouldTraceZapPair,
   traceZapFlow,
 } from '@/features/graph-runtime/debug/zapTrace'
+import {
+  isGraphPerfStatsEnabled,
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerf,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 import { downloadBlob } from '@/features/graph-runtime/export/download'
 import type { NostrProfile } from '@/lib/nostr'
 
@@ -1281,15 +1288,15 @@ export default function GraphAppV2() {
   }, [bridge])
 
   useEffect(() => {
-    if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
-    console.info('[graph-v2 perf] enabled')
+    if (!isGraphPerfStatsEnabled()) return
+    traceGraphPerf('ui.perfStats.enabled')
     const id = setInterval(() => {
       const proj = getProjectionCacheStats()
       const snap = getSnapshotCacheStats()
-      console.info(
-        `[graph-v2 perf] projection calls=${proj.calls} hits=${proj.hits} misses=${proj.misses}` +
-        ` | snapshot calls=${snap.calls} hits=${snap.hits} misses=${snap.misses}`,
-      )
+      traceGraphPerf('ui.perfStats.cacheStats', {
+        projection: proj,
+        snapshot: snap,
+      })
     }, 2000)
     return () => clearInterval(id)
   }, [])
@@ -1461,7 +1468,7 @@ export default function GraphAppV2() {
 
   const prevSignatureRef = useRef<string | null>(null)
   useEffect(() => {
-    if (process.env.NEXT_PUBLIC_GRAPH_V2_PERF !== '1') return
+    if (!isGraphPerfStatsEnabled()) return
     const sig = sceneState.sceneSignature
     const prev = prevSignatureRef.current
     if (prev !== null && prev !== sig) {
@@ -1469,7 +1476,12 @@ export default function GraphAppV2() {
       const nextParts = sig.split('|')
       const KEYS = ['rootPubkey','activeLayer','connectionsSourceLayer','selectedNodePubkey','graphRevision','inboundGraphRevision','connectionsLinksRevision','nodeVisualRevision','expandedNodePubkeys','nodeCount','edgeCount','pinnedNodePubkeys']
       const changed = KEYS.filter((k, i) => prevParts[i] !== nextParts[i])
-      console.info('[graph-v2 perf] sceneSignature changed:', changed.join(', '))
+      traceGraphPerf('ui.sceneSignature.changed', {
+        changed,
+        activeLayer: sceneState.activeLayer,
+        nodeCount: Object.keys(sceneState.nodesByPubkey).length,
+        edgeCount: Object.keys(sceneState.edgesById).length,
+      })
     }
     prevSignatureRef.current = sig
   })
@@ -1549,16 +1561,14 @@ export default function GraphAppV2() {
         return
       }
 
-      if (process.env.NODE_ENV === 'development') {
-        console.debug('[profile-warmup] visible profile batch', {
-          requested: pubkeys.length,
-          viewportPubkeys: selection.viewportPubkeyCount,
-          scenePubkeys: selection.scenePubkeyCount,
-          eligible: selection.eligibleCount,
-          skipped: selection.skipped,
-          sample: pubkeys.slice(0, 6).map((pubkey) => pubkey.slice(0, 12)),
-        })
-      }
+      traceGraphPerf('ui.visibleProfileWarmup.batch', {
+        requested: pubkeys.length,
+        viewportPubkeys: selection.viewportPubkeyCount,
+        scenePubkeys: selection.scenePubkeyCount,
+        eligible: selection.eligibleCount,
+        skipped: selection.skipped,
+        sample: pubkeys.slice(0, 6).map((pubkey) => pubkey.slice(0, 12)),
+      })
 
       void bridge
         .prefetchNodeProfiles(pubkeys)
@@ -1607,8 +1617,29 @@ export default function GraphAppV2() {
         ...sceneState,
         activeLayer: 'graph',
       })
-      // Ejecutar la proyección almacena la salida en snapshotCache
-      buildGraphSceneSnapshot(warmupState)
+      const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
+      // Ejecutar la proyeccion almacena la salida en snapshotCache.
+      const snapshot = buildGraphSceneSnapshot(warmupState)
+      if (startedAtMs > 0) {
+        traceGraphPerfDuration(
+          'ui.fullGraphWarmup.snapshot',
+          startedAtMs,
+          () => ({
+            sourceLayer: sceneState.activeLayer,
+            activeLayer: warmupState.activeLayer,
+            nodeCount: snapshot.render.nodes.length,
+            visibleEdgeCount: snapshot.render.visibleEdges.length,
+            physicsNodeCount: snapshot.physics.nodes.length,
+            physicsEdgeCount: snapshot.physics.edges.length,
+            graphRevision: warmupState.discoveryState.graphRevision,
+            inboundGraphRevision:
+              warmupState.discoveryState.inboundGraphRevision,
+            connectionsLinksRevision:
+              warmupState.discoveryState.connectionsLinksRevision,
+          }),
+          { thresholdMs: 16 },
+        )
+      }
     }, 200)
 
     return () => {

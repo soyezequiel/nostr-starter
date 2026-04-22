@@ -1,5 +1,10 @@
 ﻿import type { Filter } from 'nostr-tools'
 import { isVerifiedEventAsync } from '@/features/graph-runtime/workers/verifyWorkerPool'
+import {
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 
 import { createRelayAdapterError } from './errors'
 import { normalizeRelayUrl } from './relay-url'
@@ -356,12 +361,32 @@ export class RelayPoolAdapter {
       }
 
       const nextBatch = pendingEvents.splice(0, pendingEvents.length)
+      const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
       observer.nextBatch?.(nextBatch)
 
       if (!observer.nextBatch) {
         for (const envelope of nextBatch) {
           observer.next?.(envelope)
         }
+      }
+      if (startedAtMs > 0) {
+        traceGraphPerfDuration(
+          'relayAdapter.flushPendingEvents',
+          startedAtMs,
+          () => ({
+            batchSize: nextBatch.length,
+            priority,
+            verificationMode,
+            flushDelayMs,
+            activeRelayCount: activeRelayUrls.length,
+            pendingRelays,
+            pendingVerifications,
+            acceptedEvents: stats.acceptedEvents,
+            duplicateRelayEvents: stats.duplicateRelayEvents,
+            rejectedEvents: stats.rejectedEvents,
+          }),
+          { thresholdMs: 8 },
+        )
       }
     }
 

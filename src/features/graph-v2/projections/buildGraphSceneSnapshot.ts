@@ -4,6 +4,12 @@ import {
   isAccountTraceRoot,
   traceAccountFlow,
 } from '@/features/graph-runtime/debug/accountTrace'
+import {
+  isGraphPerfStatsEnabled,
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 import { sortAndDedupeDirectedEdges } from '@/features/graph-v2/projections/dedupeEdges'
 import { buildLayerProjection } from '@/features/graph-v2/projections/buildLayerProjection'
 import type {
@@ -356,9 +362,7 @@ const rememberSnapshotBySignature = (
 export const buildGraphSceneSnapshot = (
   state: CanonicalGraphSceneState,
 ): GraphSceneSnapshot => {
-  const isPerfEnabled =
-    typeof process !== 'undefined' &&
-    process.env.NEXT_PUBLIC_GRAPH_V2_PERF === '1'
+  const isPerfEnabled = isGraphPerfStatsEnabled()
 
   if (isPerfEnabled) {
     _snapCalls += 1
@@ -381,7 +385,27 @@ export const buildGraphSceneSnapshot = (
     return signatureCached
   }
 
+  const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
   const snapshot = computeGraphSceneSnapshot(state)
+  if (startedAtMs > 0) {
+    traceGraphPerfDuration(
+      'buildGraphSceneSnapshot.compute',
+      startedAtMs,
+      () => ({
+        activeLayer: state.activeLayer,
+        connectionsSourceLayer: state.connectionsSourceLayer,
+        nodeCount: snapshot.render.nodes.length,
+        visibleEdgeCount: snapshot.render.visibleEdges.length,
+        physicsNodeCount: snapshot.physics.nodes.length,
+        physicsEdgeCount: snapshot.physics.edges.length,
+        graphRevision: state.discoveryState.graphRevision,
+        inboundGraphRevision: state.discoveryState.inboundGraphRevision,
+        connectionsLinksRevision:
+          state.discoveryState.connectionsLinksRevision,
+      }),
+      { thresholdMs: 16 },
+    )
+  }
   snapshotCache.set(state, snapshot)
   rememberSnapshotBySignature(state.sceneSignature, snapshot)
   return snapshot

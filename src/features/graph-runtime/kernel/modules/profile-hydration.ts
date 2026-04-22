@@ -23,6 +23,11 @@ import {
   truncateAvatarPubkey,
 } from '@/features/graph-runtime/debug/avatarTrace'
 import { getTerminalAvatarFailureForPicture } from '@/features/graph-runtime/debug/avatarTerminalFailures'
+import {
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 import { normalizeMediaUrl } from '@/lib/media'
 
 const PROFILE_PATCH_BUFFER_FLUSH_MS = 16
@@ -32,7 +37,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
   const pendingNodePatches = new Map<string, GraphNodePatch>()
   let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null
 
-  const flushPendingNodePatches = () => {
+  const flushPendingNodePatches = (reason: 'manual' | 'max' | 'timer') => {
     if (pendingFlushTimer !== null) {
       clearTimeout(pendingFlushTimer)
       pendingFlushTimer = null
@@ -44,7 +49,26 @@ export function createProfileHydrationModule(ctx: KernelContext) {
 
     const patches = Array.from(pendingNodePatches.values())
     pendingNodePatches.clear()
+    const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
     ctx.store.getState().upsertNodePatches(patches)
+    if (startedAtMs > 0) {
+      traceGraphPerfDuration(
+        'profileHydration.flushNodePatches',
+        startedAtMs,
+        () => ({
+          reason,
+          patchCount: patches.length,
+          readyCount: patches.filter((patch) => patch.profileState === 'ready')
+            .length,
+          missingCount: patches.filter(
+            (patch) => patch.profileState === 'missing',
+          ).length,
+          picturePatchCount: patches.filter((patch) => 'picture' in patch)
+            .length,
+        }),
+        { thresholdMs: 8 },
+      )
+    }
   }
 
   const queueNodePatch = (patch: GraphNodePatch) => {
@@ -55,7 +79,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     )
 
     if (pendingNodePatches.size >= PROFILE_PATCH_BUFFER_MAX) {
-      flushPendingNodePatches()
+      flushPendingNodePatches('max')
       return
     }
 
@@ -65,7 +89,7 @@ export function createProfileHydrationModule(ctx: KernelContext) {
 
     pendingFlushTimer = setTimeout(() => {
       pendingFlushTimer = null
-      flushPendingNodePatches()
+      flushPendingNodePatches('timer')
     }, PROFILE_PATCH_BUFFER_FLUSH_MS)
   }
 
@@ -389,9 +413,9 @@ export function createProfileHydrationModule(ctx: KernelContext) {
         NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY,
         processBatch,
       )
-      flushPendingNodePatches()
+      flushPendingNodePatches('manual')
     } finally {
-      flushPendingNodePatches()
+      flushPendingNodePatches('manual')
       adapter.close()
     }
   }

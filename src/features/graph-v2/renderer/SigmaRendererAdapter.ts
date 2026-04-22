@@ -71,6 +71,11 @@ import type {
   DebugNodePosition,
   DebugPhysicsDiagnostics,
 } from '@/features/graph-v2/testing/browserDebug'
+import {
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 
 const HOVER_SELECTED_NODE_COLOR = '#f4fbff'
 const HOVER_DIM_NODE_COLOR = '#121a22'
@@ -2208,7 +2213,27 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
+    const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
     const changed = this.syncPhysicsPositionsToRender()
+    if (startedAtMs > 0) {
+      traceGraphPerfDuration(
+        'renderer.flushPhysicsPositionBridge',
+        startedAtMs,
+        () => ({
+          syncMode: 'full',
+          changed,
+          renderNodeCount: this.renderStore?.getGraph().order ?? 0,
+          renderEdgeCount: this.renderStore?.getGraph().size ?? 0,
+          physicsNodeCount: this.physicsStore?.getGraph().order ?? 0,
+          physicsEdgeCount: this.physicsStore?.getGraph().size ?? 0,
+          visibleNodeCount:
+            this.avatarOverlay?.getVisibleNodePubkeys().length ?? 0,
+          hasDraggedNode: Boolean(this.draggedNodePubkey),
+          hasHoveredNode: Boolean(this.hoveredNodePubkey),
+        }),
+        { thresholdMs: 8 },
+      )
+    }
     if (changed) {
       this.markMotion()
       this.safeRefresh()

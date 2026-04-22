@@ -1,4 +1,10 @@
 import type { CanonicalEdge, CanonicalGraphSceneState } from '@/features/graph-v2/domain/types'
+import {
+  isGraphPerfStatsEnabled,
+  isGraphPerfTraceEnabled,
+  nowGraphPerfMs,
+  traceGraphPerfDuration,
+} from '@/features/graph-runtime/debug/perfTrace'
 import type { GraphV2Layer } from '@/features/graph-v2/domain/invariants'
 import {
   createCanonicalEdgeId,
@@ -182,9 +188,7 @@ export const buildLayerProjection = (
   state: CanonicalGraphSceneState,
   layer: GraphV2Layer = state.activeLayer,
 ): LayerProjection => {
-  const isPerfEnabled =
-    typeof process !== 'undefined' &&
-    process.env.NEXT_PUBLIC_GRAPH_V2_PERF === '1'
+  const isPerfEnabled = isGraphPerfStatsEnabled()
 
   if (isPerfEnabled) {
     _projCalls++
@@ -199,7 +203,27 @@ export const buildLayerProjection = (
     return cached
   }
 
+  const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
   const projection = computeLayerProjection(state, layer)
+  if (startedAtMs > 0) {
+    traceGraphPerfDuration(
+      'buildLayerProjection.compute',
+      startedAtMs,
+      () => ({
+        activeLayer: state.activeLayer,
+        requestedLayer: layer,
+        nodeCount: Object.keys(state.nodesByPubkey).length,
+        edgeCount: Object.keys(state.edgesById).length,
+        projectedEdgeCount: projection.visibleEdges.length,
+        projectedNodeCount: projection.visibleNodePubkeys.size,
+        graphRevision: state.discoveryState.graphRevision,
+        inboundGraphRevision: state.discoveryState.inboundGraphRevision,
+        connectionsLinksRevision:
+          state.discoveryState.connectionsLinksRevision,
+      }),
+      { thresholdMs: 12 },
+    )
+  }
   let byKey = projectionCache.get(state.edgesById)
   if (!byKey) {
     byKey = new Map()
