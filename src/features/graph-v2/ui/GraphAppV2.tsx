@@ -121,7 +121,10 @@ import {
   readSocialCaptureDebugLocationSnapshot,
   type SocialCaptureDebugProgressSnapshot,
 } from '@/features/graph-v2/ui/socialCaptureDebug'
-import { useLiveZapFeed } from '@/features/graph-v2/zaps/useLiveZapFeed'
+import {
+  MAX_ZAP_FILTER_PUBKEYS,
+  useLiveZapFeed,
+} from '@/features/graph-v2/zaps/useLiveZapFeed'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import {
   shouldTraceZapPair,
@@ -1081,6 +1084,8 @@ export default function GraphAppV2() {
   // Rail toggles — direct controls, decoupled from the settings panel
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
   const [showZaps, setShowZaps] = useState(true)
+  const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
+    useState(false)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
   const visibleProfileWarmupAttemptedAtRef = useRef(new Map<string, number>())
   const visibleProfileWarmupInflightRef = useRef(new Set<string>())
@@ -1703,6 +1708,7 @@ export default function GraphAppV2() {
   useLiveZapFeed({
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
     onZap: handleLiveZap,
     onDropped: (msg: string) => {
       setLiveZapFeedFeedback(msg)
@@ -1711,10 +1717,17 @@ export default function GraphAppV2() {
   })
 
   useEffect(() => {
-    if (!shouldEnableLiveZapFeed) {
+    if (!shouldEnableLiveZapFeed || !pauseLiveZapsWhenSceneIsLarge) {
       setLiveZapFeedFeedback(null)
     }
-  }, [shouldEnableLiveZapFeed])
+    if (!pauseLiveZapsWhenSceneIsLarge) {
+      setZapFeedback((current) =>
+        current?.includes(`supera el limite ${MAX_ZAP_FILTER_PUBKEYS}`)
+          ? null
+          : current,
+      )
+    }
+  }, [pauseLiveZapsWhenSceneIsLarge, shouldEnableLiveZapFeed])
 
   const settingsTabs = useMemo(
     () =>
@@ -2522,13 +2535,42 @@ export default function GraphAppV2() {
         )
       case 'relays':
         return (
-          <RelayEditor
-            isGraphStale={uiState.relayState.isGraphStale}
-            onApply={handleApplyRelays}
-            onRevert={handleRevertRelays}
-            overrideStatus={uiState.relayState.overrideStatus}
-            relayUrls={uiState.relayState.urls}
-          />
+          <div>
+            <RelayEditor
+              isGraphStale={uiState.relayState.isGraphStale}
+              onApply={handleApplyRelays}
+              onRevert={handleRevertRelays}
+              overrideStatus={uiState.relayState.overrideStatus}
+              relayUrls={uiState.relayState.urls}
+            />
+            <div className="sg-settings-section">
+              <h4>Zaps live</h4>
+              <div className="sg-setting-row">
+                <div>
+                  <div className="sg-setting-row__lbl">
+                    Pausar en escenas grandes
+                  </div>
+                  <div className="sg-setting-row__desc">
+                    Limita filtros de relay cuando hay mas de{' '}
+                    {MAX_ZAP_FILTER_PUBKEYS} nodos visibles
+                  </div>
+                </div>
+                <button
+                  aria-pressed={pauseLiveZapsWhenSceneIsLarge}
+                  className={`sg-toggle${pauseLiveZapsWhenSceneIsLarge ? ' sg-toggle--on' : ''}`}
+                  onClick={() => {
+                    setPauseLiveZapsWhenSceneIsLarge((current) => !current)
+                  }}
+                  title={
+                    pauseLiveZapsWhenSceneIsLarge
+                      ? 'Desactivar limite de zaps live'
+                      : 'Activar pausa de zaps live en escenas grandes'
+                  }
+                  type="button"
+                />
+              </div>
+            </div>
+          </div>
         )
       case 'dev':
         return (

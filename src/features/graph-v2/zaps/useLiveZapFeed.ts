@@ -13,17 +13,19 @@ import {
 } from '@/features/graph-runtime/debug/zapTrace'
 
 const MAX_RECEIPT_AGE_MS = 60_000
-const MAX_ZAP_FILTER_PUBKEYS = 256
+export const MAX_ZAP_FILTER_PUBKEYS = 256
 const SEEN_CACHE_LIMIT = 200
 
 export function useLiveZapFeed({
   visiblePubkeys,
   enabled,
+  enforceVisiblePubkeyLimit,
   onZap,
   onDropped,
 }: {
   visiblePubkeys: readonly string[]
   enabled: boolean
+  enforceVisiblePubkeyLimit: boolean
   onZap: (zap: ParsedZap) => void
   onDropped?: (message: string) => void
 }): void {
@@ -37,11 +39,14 @@ export function useLiveZapFeed({
   }, [onDropped])
 
   // Stable signature of visible pubkeys so effect only re-fires on real change.
-  // Dense graph layers can expose thousands of pubkeys; subscribing all of them
-  // creates huge relay filters and makes layer switching pay network cleanup
-  // costs. Skip live-zap animation once the scene is too broad.
+  // Dense graph layers can expose thousands of pubkeys; when the guardrail is
+  // enabled, skip live-zap animation once the scene is too broad.
+  const visiblePubkeyCount = visiblePubkeys.length
   const signature = useMemo(() => {
-    if (!enabled || visiblePubkeys.length > MAX_ZAP_FILTER_PUBKEYS) {
+    if (
+      !enabled ||
+      (enforceVisiblePubkeyLimit && visiblePubkeys.length > MAX_ZAP_FILTER_PUBKEYS)
+    ) {
       return ''
     }
 
@@ -49,12 +54,12 @@ export function useLiveZapFeed({
       .map((pubkey) => pubkey.toLowerCase())
       .sort()
       .join(',')
-  }, [enabled, visiblePubkeys])
+  }, [enabled, enforceVisiblePubkeyLimit, visiblePubkeys])
 
   useEffect(() => {
     if (!enabled) {
       traceZapFlow('liveFeed.disabled', {
-        visiblePubkeyCount: visiblePubkeys.length,
+        visiblePubkeyCount,
       })
       return
     }
@@ -62,17 +67,17 @@ export function useLiveZapFeed({
     const pubkeys = signature ? signature.split(',') : []
     if (pubkeys.length === 0) {
       const reason =
-        visiblePubkeys.length > MAX_ZAP_FILTER_PUBKEYS
+        enforceVisiblePubkeyLimit && visiblePubkeyCount > MAX_ZAP_FILTER_PUBKEYS
           ? 'visible-pubkey-limit'
           : 'empty-visible-pubkeys'
       traceZapFlow('liveFeed.skippedSubscription', {
         reason,
-        visiblePubkeyCount: visiblePubkeys.length,
+        visiblePubkeyCount,
         maxZapFilterPubkeys: MAX_ZAP_FILTER_PUBKEYS,
       })
       onDroppedRef.current?.(
         reason === 'visible-pubkey-limit'
-          ? `Zaps live pausados: ${visiblePubkeys.length} nodos visibles supera el limite ${MAX_ZAP_FILTER_PUBKEYS}.`
+          ? `Zaps live pausados: ${visiblePubkeyCount} nodos visibles supera el limite ${MAX_ZAP_FILTER_PUBKEYS}.`
           : 'Zaps live pausados: no hay nodos visibles para filtrar.',
       )
       return
@@ -108,7 +113,7 @@ export function useLiveZapFeed({
       if (pubkeys.length === 0) {
         traceZapFlow('liveFeed.skippedAfterConnect', {
           enabled,
-          visiblePubkeyCount: visiblePubkeys.length,
+          visiblePubkeyCount,
         })
         return
       }
@@ -195,5 +200,5 @@ export function useLiveZapFeed({
       subscription?.stop()
       subscription = null
     }
-  }, [enabled, signature, visiblePubkeys])
+  }, [enabled, enforceVisiblePubkeyLimit, signature, visiblePubkeyCount])
 }
