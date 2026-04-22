@@ -31,6 +31,14 @@ const INTERACTIVE_FLUSH_DELAY_MS = 32
 const BACKGROUND_FLUSH_DELAY_MS = 120
 const HEALTH_PUBLISH_DELAY_MS = 100
 
+const COUNT_UNSUPPORTED_PATTERNS = [
+  'unknown cmd',
+  'unsupported',
+  'does not support nip-45',
+  'count not supported',
+  'count unsupported',
+]
+
 const sharedRelayHealth = new Map<string, RelayHealthSnapshot>()
 const sharedHealthListeners = new Set<() => void>()
 let sharedHealthPublishHandle: ReturnType<typeof setTimeout> | null = null
@@ -52,6 +60,14 @@ interface ConnectionEntry {
   connection?: RelayConnection
   detachNotice?: () => void
   detachClose?: () => void
+}
+
+const isCountUnsupportedFailure = (
+  errorMessage: string | null | undefined,
+  lastNotice: string | null | undefined,
+) => {
+  const text = `${errorMessage ?? ''} ${lastNotice ?? ''}`.toLowerCase()
+  return COUNT_UNSUPPORTED_PATTERNS.some((pattern) => text.includes(pattern))
 }
 
 export class RelayPoolAdapter {
@@ -182,7 +198,10 @@ export class RelayPoolAdapter {
     try {
       this.updateRelayHealth(url, (current) => ({
         ...current,
-        status: current.status === 'degraded' ? 'degraded' : 'connecting',
+        status:
+          current.status === 'healthy' || current.status === 'degraded'
+            ? current.status
+            : 'connecting',
       }))
       connection = await this.withTimeout(
         this.getOrCreateConnection(url),
@@ -243,14 +262,31 @@ export class RelayPoolAdapter {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'COUNT failed.'
-      this.updateRelayHealth(url, (current) => ({
-        ...current,
-        status: current.lastEventMs ? 'degraded' : 'offline',
-        consecutiveFailures: current.consecutiveFailures + 1,
-        lastCloseReason: message,
-        lastErrorCode: 'RELAY_PAGE_TIMEOUT',
-      }))
-      this.evictConnection(url)
+      this.updateRelayHealth(url, (current) => {
+        const countUnsupported = isCountUnsupportedFailure(
+          message,
+          current.lastNotice,
+        )
+
+        if (countUnsupported) {
+          return {
+            ...current,
+            status: current.status === 'connecting' ? 'idle' : current.status,
+            lastCloseReason: message,
+          }
+        }
+
+        return {
+          ...current,
+          status: current.status === 'connecting' ? 'idle' : current.status,
+          consecutiveFailures: current.consecutiveFailures + 1,
+          lastCloseReason: message,
+          lastErrorCode: 'RELAY_PAGE_TIMEOUT',
+        }
+      })
+      if (!connection.isOpen()) {
+        this.evictConnection(url)
+      }
 
       return {
         relayUrl: url,
