@@ -415,6 +415,7 @@ export const resolveAvatarImageDisableReason = ({
   fastMoving,
   imageDrawCount,
   maxImageDrawsPerFrame,
+  hasReadyImage = false,
 }: {
   selectedForImage: boolean
   globalMotionActive: boolean
@@ -422,20 +423,21 @@ export const resolveAvatarImageDisableReason = ({
   fastMoving: boolean
   imageDrawCount: number
   maxImageDrawsPerFrame: number
+  hasReadyImage?: boolean
 }) => {
   if (!selectedForImage) {
     return 'not_selected_for_image'
   }
-  if (globalMotionActive) {
+  if (globalMotionActive && !hasReadyImage) {
     return 'global_motion_active'
   }
   if (monogramOnly) {
     return 'monogram_only'
   }
-  if (fastMoving) {
+  if (fastMoving && !hasReadyImage) {
     return 'fast_moving'
   }
-  if (imageDrawCount >= maxImageDrawsPerFrame) {
+  if (imageDrawCount >= maxImageDrawsPerFrame && !hasReadyImage) {
     return 'image_draw_cap'
   }
   return null
@@ -448,6 +450,7 @@ export const shouldDisableAvatarImage = (args: {
   fastMoving: boolean
   imageDrawCount: number
   maxImageDrawsPerFrame: number
+  hasReadyImage?: boolean
 }) => resolveAvatarImageDisableReason(args) !== null
 
 export const resolveFastNodeVelocityThresholdPx = ({
@@ -986,6 +989,8 @@ export class AvatarOverlayRenderer {
       const hasPictureUrl = item.hasPictureUrl
       const hasSafePictureUrl = item.hasSafePictureUrl
       const urlKey = item.urlKey
+      const avatarCacheEntry = urlKey !== null ? this.cache.get(urlKey) : null
+      const hasReadyImage = avatarCacheEntry?.state === 'ready'
       const blockEntry =
         urlKey !== null ? this.getBlockedAvatar(urlKey) : null
       const inflight = urlKey !== null && this.scheduler.hasInflight(urlKey)
@@ -1009,6 +1014,7 @@ export class AvatarOverlayRenderer {
               fastMoving: item.fastMoving,
               imageDrawCount,
               maxImageDrawsPerFrame,
+              hasReadyImage,
             })
       const drawResult = this.drawAvatarCircle({
         ctx: selectAvatarDrawContext(

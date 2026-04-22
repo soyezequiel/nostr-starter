@@ -417,6 +417,57 @@ test('avatar image disable reason reports the first blocking condition', () => {
   )
 })
 
+test('keeps ready avatar images visible through transient performance guards', () => {
+  for (const guard of [
+    {
+      expectedWithoutReady: 'global_motion_active',
+      globalMotionActive: true,
+      fastMoving: false,
+      imageDrawCount: 0,
+      maxImageDrawsPerFrame: 12,
+    },
+    {
+      expectedWithoutReady: 'fast_moving',
+      globalMotionActive: false,
+      fastMoving: true,
+      imageDrawCount: 0,
+      maxImageDrawsPerFrame: 12,
+    },
+    {
+      expectedWithoutReady: 'image_draw_cap',
+      globalMotionActive: false,
+      fastMoving: false,
+      imageDrawCount: 12,
+      maxImageDrawsPerFrame: 12,
+    },
+  ]) {
+    assert.equal(
+      resolveAvatarImageDisableReason({
+        selectedForImage: true,
+        globalMotionActive: guard.globalMotionActive,
+        monogramOnly: false,
+        fastMoving: guard.fastMoving,
+        imageDrawCount: guard.imageDrawCount,
+        maxImageDrawsPerFrame: guard.maxImageDrawsPerFrame,
+        hasReadyImage: false,
+      }),
+      guard.expectedWithoutReady,
+    )
+    assert.equal(
+      resolveAvatarImageDisableReason({
+        selectedForImage: true,
+        globalMotionActive: guard.globalMotionActive,
+        monogramOnly: false,
+        fastMoving: guard.fastMoving,
+        imageDrawCount: guard.imageDrawCount,
+        maxImageDrawsPerFrame: guard.maxImageDrawsPerFrame,
+        hasReadyImage: true,
+      }),
+      null,
+    )
+  }
+})
+
 test('all visible photos mode lifts frame draw caps to the visible count', () => {
   assert.equal(
     resolveAvatarFrameDrawCap({
