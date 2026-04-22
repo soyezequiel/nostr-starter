@@ -28,6 +28,7 @@ const createState = (
   },
   edgesById: {},
   sceneSignature: 'detail-test-scene',
+  topologySignature: 'detail-test-topology',
   nodeVisualRevision: 1,
   nodeDetailRevision: 0,
   rootPubkey: 'root',

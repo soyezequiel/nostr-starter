@@ -108,6 +108,7 @@ test('keeps the scene signature stable for non-visual node updates', () => {
   assert.equal(second.nodeVisualRevision, first.nodeVisualRevision)
   assert.equal(second.nodeDetailRevision, first.nodeDetailRevision + 1)
   assert.equal(second.sceneSignature, first.sceneSignature)
+  assert.equal(second.topologySignature, first.topologySignature)
 })
 
 test('changes the scene signature for visual node updates', () => {
@@ -148,6 +149,7 @@ test('changes the scene signature for visual node updates', () => {
   assert.equal(second.nodeVisualRevision, first.nodeVisualRevision + 1)
   assert.equal(second.nodeDetailRevision, first.nodeDetailRevision)
   assert.notEqual(second.sceneSignature, first.sceneSignature)
+  assert.equal(second.topologySignature, first.topologySignature)
 })
 
 test('projects the fixed root into the canonical pinned set and scene signature', () => {

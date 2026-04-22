@@ -140,6 +140,7 @@ export const createDragLocalFixture = (): FixtureScenario => {
       nodesByPubkey: Object.fromEntries(nodes.map((node) => [node.pubkey, node])),
       edgesById: Object.fromEntries(edges.map((edge) => [edge.id, edge])),
       sceneSignature: 'drag-local|graph|1|0|0',
+      topologySignature: 'drag-local|graph|1|0|0',
       nodeVisualRevision: 1,
       nodeDetailRevision: 0,
       rootPubkey: ROOT_PUBKEY,

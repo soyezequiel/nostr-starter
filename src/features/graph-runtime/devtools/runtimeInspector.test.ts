@@ -15,6 +15,7 @@ const createBaseInput = (
     nodesByPubkey: {},
     edgesById: {},
     sceneSignature: 'test',
+    topologySignature: 'test',
     nodeVisualRevision: 0,
     nodeDetailRevision: 0,
     rootPubkey: 'root',

@@ -90,6 +90,23 @@ const createSceneSignature = (
     pinnedNodePubkeysSignature,
   ].join('|')
 
+const createTopologySignature = (
+  state: AppStore,
+  activeLayer: CanonicalGraphSceneState['activeLayer'],
+  expandedNodePubkeysSignature: string,
+) =>
+  [
+    state.rootNodePubkey ?? 'no-root',
+    activeLayer,
+    state.connectionsSourceLayer,
+    state.graphRevision,
+    state.inboundGraphRevision,
+    state.connectionsLinksRevision,
+    expandedNodePubkeysSignature,
+    Object.keys(state.nodes).length,
+    state.links.length + state.inboundLinks.length + state.connectionsLinks.length,
+  ].join('|')
+
 export class LegacyStoreSnapshotAdapter {
   private previousLinks: AppStore['links'] | null = null
 
@@ -213,11 +230,17 @@ export class LegacyStoreSnapshotAdapter {
       this.getScenePinnedNodePubkeysSignature(pinnedNodePubkeys),
       this.getSceneExpandedNodePubkeysSignature(state.expandedNodePubkeys),
     )
+    const topologySignature = createTopologySignature(
+      state,
+      activeLayer,
+      this.getSceneExpandedNodePubkeysSignature(state.expandedNodePubkeys),
+    )
 
     if (
       this.previousSceneSnapshot &&
       this.previousSceneSnapshot.edgesById === edgesById &&
       this.previousSceneSnapshot.nodesByPubkey === nodesByPubkey &&
+      this.previousSceneSnapshot.topologySignature === topologySignature &&
       this.previousSceneSnapshot.sceneSignature === sceneSignature &&
       this.previousSceneSnapshot.nodeVisualRevision === state.nodeVisualRevision &&
       this.previousSceneSnapshot.nodeDetailRevision === state.nodeDetailRevision &&
@@ -247,6 +270,7 @@ export class LegacyStoreSnapshotAdapter {
       nodesByPubkey,
       edgesById,
       sceneSignature,
+      topologySignature,
       nodeVisualRevision: state.nodeVisualRevision,
       nodeDetailRevision: state.nodeDetailRevision,
       rootPubkey: state.rootNodePubkey,

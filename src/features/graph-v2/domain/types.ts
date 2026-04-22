@@ -67,6 +67,7 @@ export interface CanonicalGraphSceneState {
   nodesByPubkey: Record<string, CanonicalNode>
   edgesById: Record<string, CanonicalEdge>
   sceneSignature: string
+  topologySignature: string
   nodeVisualRevision: number
   nodeDetailRevision: number
   rootPubkey: string | null

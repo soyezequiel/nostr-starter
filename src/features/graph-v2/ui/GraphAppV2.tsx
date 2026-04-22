@@ -429,11 +429,25 @@ const createClientSceneSignature = (state: CanonicalGraphSceneState) =>
     Array.from(state.pinnedNodePubkeys).sort().join(','),
   ].join('|')
 
+const createClientTopologySignature = (state: CanonicalGraphSceneState) =>
+  [
+    state.rootPubkey ?? 'no-root',
+    state.activeLayer,
+    state.connectionsSourceLayer,
+    state.discoveryState.graphRevision,
+    state.discoveryState.inboundGraphRevision,
+    state.discoveryState.connectionsLinksRevision,
+    Array.from(state.discoveryState.expandedNodePubkeys).sort().join(','),
+    Object.keys(state.nodesByPubkey).length,
+    Object.keys(state.edgesById).length,
+  ].join('|')
+
 const withClientSceneSignature = <T extends CanonicalGraphSceneState>(
   state: T,
 ): T => ({
   ...state,
   sceneSignature: createClientSceneSignature(state),
+  topologySignature: createClientTopologySignature(state),
 })
 
 const pickFixtureUiState = (

@@ -7,6 +7,7 @@ const createEmptyState = (): CanonicalGraphSceneState => ({
   nodesByPubkey: {},
   edgesById: {},
   sceneSignature: 'empty',
+  topologySignature: 'empty',
   nodeVisualRevision: 0,
   nodeDetailRevision: 0,
   rootPubkey: null,

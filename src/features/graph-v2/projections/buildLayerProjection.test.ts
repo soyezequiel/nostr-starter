@@ -70,6 +70,7 @@ const createState = (
     },
   },
   sceneSignature: 'test-scene',
+  topologySignature: 'test-topology',
   nodeVisualRevision: 1,
   nodeDetailRevision: 0,
   rootPubkey: 'root',
