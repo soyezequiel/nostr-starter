@@ -177,6 +177,214 @@ type HoverHarness = {
   }
 }
 
+test('physics bridge prioritizes visible and focused pubkeys while layout is active, then settles the rest', async () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
+  const originalWebGLRenderingContext = globalThis.WebGLRenderingContext
+  const queuedFrames: FrameRequestCallback[] = []
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    queuedFrames.push(callback)
+    return queuedFrames.length
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+  globalThis.WebGL2RenderingContext ??= class {} as typeof WebGL2RenderingContext
+  globalThis.WebGLRenderingContext ??= class {} as typeof WebGLRenderingContext
+
+  try {
+    const { SigmaRendererAdapter } = await import(
+      '@/features/graph-v2/renderer/SigmaRendererAdapter'
+    )
+
+    const ledger = new NodePositionLedger()
+    const renderStore = new RenderGraphStore(ledger)
+    const physicsStore = new PhysicsGraphStore(ledger)
+    const scene: GraphSceneSnapshot = {
+      render: {
+        nodes: [
+          {
+            pubkey: 'A',
+            label: 'A',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: true,
+            isSelected: false,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'root',
+          },
+          {
+            pubkey: 'B',
+            label: 'B',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: true,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'selected',
+          },
+          {
+            pubkey: 'C',
+            label: 'C',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: false,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'idle',
+          },
+          {
+            pubkey: 'D',
+            label: 'D',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: false,
+            isPinned: true,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'pinned',
+          },
+        ],
+        visibleEdges: [],
+        labels: [],
+        selection: {
+          selectedNodePubkey: 'B',
+          hoveredNodePubkey: null,
+        },
+        pins: {
+          pubkeys: ['D'],
+        },
+        cameraHint: {
+          focusPubkey: 'A',
+          rootPubkey: 'A',
+        },
+        diagnostics: {
+          activeLayer: 'graph',
+          nodeCount: 4,
+          visibleEdgeCount: 0,
+          relayCount: 0,
+          isGraphStale: false,
+          topologySignature: 'priority-bridge-test',
+        },
+      },
+      physics: {
+        nodes: [
+          { pubkey: 'A', size: 10, fixed: false },
+          { pubkey: 'B', size: 10, fixed: false },
+          { pubkey: 'C', size: 10, fixed: false },
+          { pubkey: 'D', size: 10, fixed: true },
+        ],
+        edges: [],
+        diagnostics: {
+          nodeCount: 4,
+          edgeCount: 0,
+          topologySignature: 'priority-bridge-test',
+        },
+      },
+    }
+
+    renderStore.applyScene(scene.render)
+    physicsStore.applyScene(scene.physics)
+    renderStore.setNodePosition('A', 0, 0)
+    renderStore.setNodePosition('B', 0, 0)
+    renderStore.setNodePosition('C', 0, 0)
+    renderStore.setNodePosition('D', 0, 0)
+    physicsStore.setNodePosition('A', 10, 0)
+    physicsStore.setNodePosition('B', 20, 0)
+    physicsStore.setNodePosition('C', 30, 0)
+    physicsStore.setNodePosition('D', 40, 0, true)
+
+    let markDirtyCalls = 0
+    let refreshCalls = 0
+    let motionCalls = 0
+    let running = true
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      positionLedger: NodePositionLedger
+      renderStore: RenderGraphStore
+      physicsStore: PhysicsGraphStore
+      scene: GraphSceneSnapshot
+      avatarOverlay: { getVisibleNodePubkeys: () => string[] } | null
+      forceRuntime: { isRunning: () => boolean } | null
+      nodeHitTester: { markDirty: () => void } | null
+      currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+      hoveredNodePubkey: string | null
+      draggedNodePubkey: string | null
+      dragHopDistances: Map<string, number>
+      markMotion: () => void
+      safeRefresh: () => void
+      flushPhysicsPositionBridge: () => void
+    }
+
+    adapter.positionLedger = ledger
+    adapter.renderStore = renderStore
+    adapter.physicsStore = physicsStore
+    adapter.scene = scene
+    adapter.avatarOverlay = {
+      getVisibleNodePubkeys: () => ['A'],
+    }
+    adapter.forceRuntime = {
+      isRunning: () => running,
+    }
+    adapter.nodeHitTester = {
+      markDirty: () => {
+        markDirtyCalls += 1
+      },
+    }
+    adapter.currentHoverFocus = {
+      pubkey: null,
+      neighbors: new Set<string>(),
+    }
+    adapter.hoveredNodePubkey = null
+    adapter.draggedNodePubkey = null
+    adapter.dragHopDistances = new Map()
+    adapter.markMotion = () => {
+      motionCalls += 1
+    }
+    adapter.safeRefresh = () => {
+      refreshCalls += 1
+    }
+
+    adapter.flushPhysicsPositionBridge()
+
+    assert.equal(renderStore.getNodePosition('A')?.x, 10)
+    assert.equal(renderStore.getNodePosition('B')?.x, 20)
+    assert.equal(renderStore.getNodePosition('D')?.x, 40)
+    assert.equal(
+      renderStore.getNodePosition('C')?.x,
+      0,
+      'non-priority pubkeys should wait for the settle sync',
+    )
+    assert.equal(markDirtyCalls, 1)
+    assert.equal(refreshCalls, 1)
+    assert.equal(motionCalls, 1)
+    assert.equal(queuedFrames.length, 1)
+
+    running = false
+    queuedFrames.shift()?.(performance.now())
+
+    assert.equal(renderStore.getNodePosition('C')?.x, 30)
+    assert.equal(markDirtyCalls, 2)
+    assert.equal(refreshCalls, 2)
+    assert.equal(motionCalls, 2)
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+    globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
+    globalThis.WebGLRenderingContext = originalWebGLRenderingContext
+  }
+})
+
 test('continues local drag influence even when pointer movement pauses', async () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame

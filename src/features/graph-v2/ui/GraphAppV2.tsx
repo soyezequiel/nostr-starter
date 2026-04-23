@@ -234,6 +234,8 @@ const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
 const VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS = 1500
 const VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS = 250
+const SCENE_SIGNATURE_ACTIVE_LAYER_INDEX = 1
+const TOPOLOGY_SIGNATURE_ACTIVE_LAYER_INDEX = 1
 
 const selectSavedRootState = (state: AppStore) => ({
   savedRoots: state.savedRoots,
@@ -442,6 +444,50 @@ const createClientTopologySignature = (state: CanonicalGraphSceneState) =>
     Object.keys(state.nodesByPubkey).length,
     Object.keys(state.edgesById).length,
   ].join('|')
+
+const replaceSignaturePart = (
+  signature: string,
+  index: number,
+  nextValue: string,
+  fallback: () => string,
+) => {
+  const parts = signature.split('|')
+  if (parts.length <= index) {
+    return fallback()
+  }
+  parts[index] = nextValue
+  return parts.join('|')
+}
+
+const buildClientSceneStateForLayer = <T extends CanonicalGraphSceneState>(
+  state: T,
+  activeLayer: T['activeLayer'],
+): T => {
+  if (state.activeLayer === activeLayer) {
+    return state
+  }
+
+  const nextState = {
+    ...state,
+    activeLayer,
+  }
+
+  return {
+    ...nextState,
+    sceneSignature: replaceSignaturePart(
+      state.sceneSignature,
+      SCENE_SIGNATURE_ACTIVE_LAYER_INDEX,
+      activeLayer,
+      () => createClientSceneSignature(nextState),
+    ),
+    topologySignature: replaceSignaturePart(
+      state.topologySignature,
+      TOPOLOGY_SIGNATURE_ACTIVE_LAYER_INDEX,
+      activeLayer,
+      () => createClientTopologySignature(nextState),
+    ),
+  }
+}
 
 const withClientSceneSignature = <T extends CanonicalGraphSceneState>(
   state: T,
@@ -1234,6 +1280,13 @@ export default function GraphAppV2() {
   const visibleProfileWarmupInflightRef = useRef(new Set<string>())
   const visibleProfileWarmupDebugRef =
     useRef<VisibleProfileWarmupDebugSnapshot | null>(null)
+  const visibleProfileWarmupTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null)
+  const visibleProfileWarmupKeyRef = useRef<string | null>(null)
+  const fullGraphWarmupTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fullGraphWarmupKeyRef = useRef<string | null>(null)
+  const completedFullGraphWarmupKeyRef = useRef<string | null>(null)
   const [zapFeedback, setZapFeedback] = useState<string | null>(null)
   const [liveZapFeedFeedback, setLiveZapFeedFeedback] = useState<string | null>(null)
   const [visibleProfileWarmupSnapshot, setVisibleProfileWarmupSnapshot] =
@@ -1571,19 +1624,44 @@ export default function GraphAppV2() {
     [deferredScene, personSearchMatches],
   )
   const detail = useMemo(() => buildNodeDetailProjection(sceneState), [sceneState])
+  const latestWarmupSceneNodesRef = useRef(deferredScene.render.nodes)
+  latestWarmupSceneNodesRef.current = deferredScene.render.nodes
+  const latestWarmupNodesByPubkeyRef = useRef(sceneState.nodesByPubkey)
+  latestWarmupNodesByPubkeyRef.current = sceneState.nodesByPubkey
+  const visibleProfileWarmupKey =
+    !isFixtureMode &&
+    sceneState.rootPubkey &&
+    deferredScene.render.nodes.length > 0
+      ? `${sceneState.rootPubkey}|${deferredScene.render.diagnostics.topologySignature}`
+      : null
+  const fullGraphWarmupState = useMemo(
+    () =>
+      !isFixtureMode &&
+      sceneState.rootPubkey &&
+      sceneState.activeLayer !== 'graph'
+        ? buildClientSceneStateForLayer(sceneState, 'graph')
+        : null,
+    [isFixtureMode, sceneState],
+  )
+  const fullGraphWarmupKey = fullGraphWarmupState?.sceneSignature ?? null
 
   useEffect(() => {
-    if (isFixtureMode || !sceneState.rootPubkey || deferredScene.render.nodes.length === 0) {
+    if (visibleProfileWarmupTimeoutRef.current !== null) {
+      clearTimeout(visibleProfileWarmupTimeoutRef.current)
+      visibleProfileWarmupTimeoutRef.current = null
+    }
+
+    if (visibleProfileWarmupKey === null) {
+      visibleProfileWarmupKeyRef.current = null
       visibleProfileWarmupDebugRef.current = null
       setVisibleProfileWarmupSnapshot(null)
       return
     }
 
-    let cancelled = false
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    visibleProfileWarmupKeyRef.current = visibleProfileWarmupKey
 
     const runWarmup = () => {
-      if (cancelled) {
+      if (visibleProfileWarmupKeyRef.current !== visibleProfileWarmupKey) {
         return
       }
 
@@ -1592,11 +1670,12 @@ export default function GraphAppV2() {
       const inflightPubkeys = visibleProfileWarmupInflightRef.current
       const viewportPubkeys =
         sigmaHostRef.current?.getVisibleNodePubkeys() ?? []
-      const scenePubkeys = deferredScene.render.nodes.map((node) => node.pubkey)
+      const scenePubkeys = latestWarmupSceneNodesRef.current.map((node) => node.pubkey)
+      const nodesByPubkey = latestWarmupNodesByPubkeyRef.current
       const selection = selectVisibleProfileWarmupPubkeys({
         viewportPubkeys,
         scenePubkeys,
-        nodesByPubkey: sceneState.nodesByPubkey,
+        nodesByPubkey,
         attemptedAtByPubkey,
         inflightPubkeys,
         now,
@@ -1607,7 +1686,7 @@ export default function GraphAppV2() {
         buildVisibleProfileWarmupDebugSnapshot({
           viewportPubkeys,
           scenePubkeys,
-          nodesByPubkey: sceneState.nodesByPubkey,
+          nodesByPubkey,
           attemptedAtByPubkey,
           inflightPubkeys,
           now,
@@ -1623,6 +1702,12 @@ export default function GraphAppV2() {
       }
 
       if (pubkeys.length === 0) {
+        if (visibleProfileWarmupKeyRef.current === visibleProfileWarmupKey) {
+          visibleProfileWarmupTimeoutRef.current = setTimeout(
+            runWarmup,
+            VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS,
+          )
+        }
         return
       }
 
@@ -1645,8 +1730,8 @@ export default function GraphAppV2() {
             inflightPubkeys.delete(pubkey)
           }
 
-          if (!cancelled) {
-            timeoutId = setTimeout(
+          if (visibleProfileWarmupKeyRef.current === visibleProfileWarmupKey) {
+            visibleProfileWarmupTimeoutRef.current = setTimeout(
               runWarmup,
               VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS,
             )
@@ -1654,53 +1739,72 @@ export default function GraphAppV2() {
         })
     }
 
-    timeoutId = setTimeout(runWarmup, VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS)
+    visibleProfileWarmupTimeoutRef.current = setTimeout(
+      runWarmup,
+      VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS,
+    )
 
     return () => {
-      cancelled = true
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId)
+      if (visibleProfileWarmupTimeoutRef.current !== null) {
+        clearTimeout(visibleProfileWarmupTimeoutRef.current)
+        visibleProfileWarmupTimeoutRef.current = null
+      }
+      if (visibleProfileWarmupKeyRef.current === visibleProfileWarmupKey) {
+        visibleProfileWarmupKeyRef.current = null
       }
     }
-  }, [
-    bridge,
-    deferredScene.render.nodes,
-    sceneState.nodesByPubkey,
-    sceneState.rootPubkey,
-    isFixtureMode,
-  ])
+  }, [bridge, visibleProfileWarmupKey])
 
   // Pre-calcular la capa completa (graph) en segundo plano para que el
   // usuario no tenga penalidad de tiempo al alternar desde "mutuos"
   useEffect(() => {
-    if (isFixtureMode || sceneState.activeLayer === 'graph' || !sceneState.rootPubkey) {
+    if (fullGraphWarmupTimeoutRef.current !== null) {
+      clearTimeout(fullGraphWarmupTimeoutRef.current)
+      fullGraphWarmupTimeoutRef.current = null
+    }
+
+    if (fullGraphWarmupState === null || fullGraphWarmupKey === null) {
+      fullGraphWarmupKeyRef.current = null
+      if (isFixtureMode || !sceneState.rootPubkey) {
+        completedFullGraphWarmupKeyRef.current = null
+      }
       return
     }
 
-    const timeoutId = setTimeout(() => {
-      const warmupState = withClientSceneSignature({
-        ...sceneState,
-        activeLayer: 'graph',
-      })
+    if (completedFullGraphWarmupKeyRef.current === fullGraphWarmupKey) {
+      return
+    }
+
+    fullGraphWarmupKeyRef.current = fullGraphWarmupKey
+
+    fullGraphWarmupTimeoutRef.current = setTimeout(() => {
+      if (
+        fullGraphWarmupKeyRef.current !== fullGraphWarmupKey ||
+        completedFullGraphWarmupKeyRef.current === fullGraphWarmupKey
+      ) {
+        return
+      }
+
       const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
       // Ejecutar la proyeccion almacena la salida en snapshotCache.
-      const snapshot = buildGraphSceneSnapshot(warmupState)
+      const snapshot = buildGraphSceneSnapshot(fullGraphWarmupState)
+      completedFullGraphWarmupKeyRef.current = fullGraphWarmupKey
       if (startedAtMs > 0) {
         traceGraphPerfDuration(
           'ui.fullGraphWarmup.snapshot',
           startedAtMs,
           () => ({
             sourceLayer: sceneState.activeLayer,
-            activeLayer: warmupState.activeLayer,
+            activeLayer: fullGraphWarmupState.activeLayer,
             nodeCount: snapshot.render.nodes.length,
             visibleEdgeCount: snapshot.render.visibleEdges.length,
             physicsNodeCount: snapshot.physics.nodes.length,
             physicsEdgeCount: snapshot.physics.edges.length,
-            graphRevision: warmupState.discoveryState.graphRevision,
+            graphRevision: fullGraphWarmupState.discoveryState.graphRevision,
             inboundGraphRevision:
-              warmupState.discoveryState.inboundGraphRevision,
+              fullGraphWarmupState.discoveryState.inboundGraphRevision,
             connectionsLinksRevision:
-              warmupState.discoveryState.connectionsLinksRevision,
+              fullGraphWarmupState.discoveryState.connectionsLinksRevision,
           }),
           { thresholdMs: 16 },
         )
@@ -1708,9 +1812,21 @@ export default function GraphAppV2() {
     }, 200)
 
     return () => {
-      clearTimeout(timeoutId)
+      if (fullGraphWarmupTimeoutRef.current !== null) {
+        clearTimeout(fullGraphWarmupTimeoutRef.current)
+        fullGraphWarmupTimeoutRef.current = null
+      }
+      if (fullGraphWarmupKeyRef.current === fullGraphWarmupKey) {
+        fullGraphWarmupKeyRef.current = null
+      }
     }
-  }, [isFixtureMode, sceneState])
+  }, [
+    fullGraphWarmupKey,
+    fullGraphWarmupState,
+    isFixtureMode,
+    sceneState.activeLayer,
+    sceneState.rootPubkey,
+  ])
 
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null

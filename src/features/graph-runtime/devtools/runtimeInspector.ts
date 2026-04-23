@@ -707,6 +707,12 @@ const buildProfilesSection = (
     input.visibleProfileWarmup?.viewportPubkeyCount ?? visiblePubkeys.length
   const readyUsable = viewportCounts.readyUsable
   const idleCount = viewportCounts.idle
+  const loadingCount = viewportCounts.loading
+  const readyEmptyCount = viewportCounts.readyEmpty
+  const missingCount = viewportCounts.missing
+  const warmupEligibleCount = input.visibleProfileWarmup?.eligibleCount ?? 0
+  const cooldownSkippedCount = input.visibleProfileWarmup?.skipped.cooldown ?? 0
+  const inflightCount = input.visibleProfileWarmup?.inflightCount ?? 0
   const incompleteCount =
     visibleCount - readyUsable - viewportCounts.unknown
 
@@ -730,7 +736,13 @@ const buildProfilesSection = (
     tone = 'warn'
     resumen = 'Todavia hay perfiles pendientes'
     quePasaAhora =
-      'La hidratacion visible sigue corriendo y todavia quedan nodos en loading, empty o missing.'
+      loadingCount > 0 || inflightCount > 0
+        ? 'La hidratacion visible sigue corriendo y todavia quedan nodos en loading, empty o missing.'
+        : cooldownSkippedCount > 0 || warmupEligibleCount > 0
+          ? 'Quedan perfiles visibles pendientes, pero ahora no hay requests en curso; el backlog parece frenado por cooldown o por el proximo batch de warmup.'
+          : readyEmptyCount > 0 || missingCount > 0
+            ? 'Quedan nodos visibles con perfil vacio o faltante, aunque en este instante no aparece actividad de hidratacion visible.'
+            : 'Todavia quedan perfiles visibles sin resolver por completo.'
     queLeerAhora =
       'Abre Perfiles para ver si el backlog viene de cooldown, batch limit o faltantes reales.'
   }
@@ -747,30 +759,23 @@ const buildProfilesSection = (
     metricas: [
       { label: 'Ready usable', value: formatInteger(viewportCounts.readyUsable), tone: 'ok' },
       { label: 'Idle', value: formatInteger(viewportCounts.idle), tone: viewportCounts.idle > 0 ? 'warn' : 'ok' },
-      { label: 'Loading', value: formatInteger(viewportCounts.loading), tone: viewportCounts.loading > 0 ? 'warn' : 'ok' },
-      { label: 'Ready empty', value: formatInteger(viewportCounts.readyEmpty), tone: viewportCounts.readyEmpty > 0 ? 'warn' : 'neutral' },
-      { label: 'Missing', value: formatInteger(viewportCounts.missing), tone: viewportCounts.missing > 0 ? 'warn' : 'neutral' },
+      { label: 'Loading', value: formatInteger(loadingCount), tone: loadingCount > 0 ? 'warn' : 'ok' },
+      { label: 'Ready empty', value: formatInteger(readyEmptyCount), tone: readyEmptyCount > 0 ? 'warn' : 'neutral' },
+      { label: 'Missing', value: formatInteger(missingCount), tone: missingCount > 0 ? 'warn' : 'neutral' },
       {
         label: 'Elegibles para warmup',
-        value: formatInteger(input.visibleProfileWarmup?.eligibleCount ?? 0),
-        tone:
-          (input.visibleProfileWarmup?.eligibleCount ?? 0) > 0 ? 'warn' : 'ok',
+        value: formatInteger(warmupEligibleCount),
+        tone: warmupEligibleCount > 0 ? 'warn' : 'ok',
       },
       {
         label: 'Salteados por cooldown',
-        value: formatInteger(input.visibleProfileWarmup?.skipped.cooldown ?? 0),
-        tone:
-          (input.visibleProfileWarmup?.skipped.cooldown ?? 0) > 0
-            ? 'warn'
-            : 'neutral',
+        value: formatInteger(cooldownSkippedCount),
+        tone: cooldownSkippedCount > 0 ? 'warn' : 'neutral',
       },
       {
         label: 'En inflight',
-        value: formatInteger(input.visibleProfileWarmup?.inflightCount ?? 0),
-        tone:
-          (input.visibleProfileWarmup?.inflightCount ?? 0) > 0
-            ? 'warn'
-            : 'neutral',
+        value: formatInteger(inflightCount),
+        tone: inflightCount > 0 ? 'warn' : 'neutral',
       },
     ],
     notas: [
@@ -1079,7 +1084,7 @@ const buildPerformanceSection = (
   const suspects: string[] = []
 
   let tone: RuntimeInspectorTone = 'ok'
-  const resumen = 'Rendimiento estable'
+  let resumen = 'Rendimiento estable'
   let quePasaAhora =
     'No aparece un cuello dominante en el resumen actual de frame, scene churn y avatar overlay.'
   let queLeerAhora =
@@ -1087,6 +1092,14 @@ const buildPerformanceSection = (
 
   if (frameMs !== null && frameMs > 24) {
     tone = 'bad'
+    resumen =
+      avatarDraws > 60
+        ? input.physicsEnabled
+          ? 'Frame alto con overlay cargado y fisica activa'
+          : 'Frame alto con overlay cargado'
+        : input.physicsEnabled
+          ? 'Frame alto con fisica activa'
+          : 'Frame alto sostenido'
     suspects.push('Frame EMA alto')
     if (avatarDraws > 60) {
       suspects.push('Avatar overlay cargado')
@@ -1096,12 +1109,17 @@ const buildPerformanceSection = (
     }
     quePasaAhora =
       avatarDraws > 60
-        ? 'El frame promedio esta alto y el overlay de avatares esta dibujando mucho por frame.'
-        : 'El frame promedio esta alto y la escena sigue recibiendo bastante actividad.'
+        ? input.physicsEnabled
+          ? 'El frame promedio esta alto; el overlay de avatares esta dibujando mucho por frame y la fisica sigue activa.'
+          : 'El frame promedio esta alto y el overlay de avatares esta dibujando mucho por frame.'
+        : input.physicsEnabled
+          ? 'El frame promedio esta alto y la fisica sigue activa.'
+          : 'El frame promedio esta alto y la escena sigue recibiendo bastante actividad.'
     queLeerAhora =
       'Abre Rendimiento y Avatares para separar si el cuello esta en draw, escena o fisica.'
   } else if (input.uiUpdatesPerMinute > Math.max(16, input.sceneUpdatesPerMinute * 1.3)) {
     tone = 'warn'
+    resumen = 'Churn visible de UI'
     suspects.push('La UI cambia mas de lo deseable')
     quePasaAhora =
       'La UI cambia seguido frente al ritmo de invalidacion de escena. Puede haber churn de estado o progreso.'
@@ -1109,6 +1127,7 @@ const buildPerformanceSection = (
       'Abre Rendimiento y Carga Root para ver si el churn viene del progreso de carga.'
   } else if (input.physicsEnabled && overlapCount > 0) {
     tone = 'warn'
+    resumen = 'Fisica todavia activa'
     suspects.push('Fisica activa con densidad visible')
     quePasaAhora =
       'La fisica sigue activa y reporta densidad suficiente como para seguir moviendo el layout.'

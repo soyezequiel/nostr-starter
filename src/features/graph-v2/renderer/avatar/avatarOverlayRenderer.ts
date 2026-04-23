@@ -116,11 +116,51 @@ interface AvatarDrawItem {
   monogramCanvas: HTMLCanvasElement
 }
 
+interface AvatarResolvedDrawItem {
+  pubkey: string
+  x: number
+  y: number
+  r: number
+  url: string | null
+  urlKey: AvatarUrlKey | null
+  urlHost: string | null
+  hasPictureUrl: boolean
+  hasSafePictureUrl: boolean
+  fastMoving: boolean
+  monogramOnly: boolean
+  isPersistentAvatar: boolean
+  zoomedOutMonogram: boolean
+  priority: number
+  label: string
+  color: string
+}
+
+interface AvatarDrawScanItem {
+  pubkey: string
+  x: number
+  y: number
+  r: number
+  url: string | null
+  fastMoving: boolean
+  isPersistentAvatar: boolean
+  zoomedOutMonogram: boolean
+  priority: number
+  label: string
+  color: string
+}
+
 interface AvatarUrlMetadata {
   hasPictureUrl: boolean
   hasSafePictureUrl: boolean
   urlKey: AvatarUrlKey | null
   host: string | null
+}
+
+interface OverlayViewportBounds {
+  width: number
+  height: number
+  centerX: number
+  centerY: number
 }
 
 export const createAvatarUrlMetadataResolver = (
@@ -655,6 +695,7 @@ export class AvatarOverlayRenderer {
       this.lastCameraSignature !== null &&
       this.lastCameraSignature !== cameraSignature
     this.lastCameraSignature = cameraSignature
+    const overlayBounds = this.getOverlayViewportBounds()
     const graph = this.sigma.getGraph()
     const rawSelectedNodePubkey = this.getSelectedNodePubkey()
     const selectedNodePubkey =
@@ -666,7 +707,7 @@ export class AvatarOverlayRenderer {
       rawHoveredNodePubkey !== null && graph.hasNode(rawHoveredNodePubkey)
         ? rawHoveredNodePubkey
         : null
-    const drawItems: AvatarDrawItem[] = []
+    const drawItems: AvatarDrawScanItem[] = []
     const focusAuraItems: FocusAuraItem[] = []
     const expansionRingItems: ExpansionRingItem[] = []
     const revealCandidates: AvatarRevealSelectionItem[] = []
@@ -725,7 +766,7 @@ export class AvatarOverlayRenderer {
         hasPriorityAvatarSizing,
         zoomedOutMonogram,
       })
-      if (!this.isInViewport(viewport.x, viewport.y, drawRadiusPx)) {
+      if (!this.isInViewport(overlayBounds, viewport.x, viewport.y, drawRadiusPx)) {
         return
       }
       seenNodes.add(pubkey)
@@ -779,35 +820,19 @@ export class AvatarOverlayRenderer {
           cameraRatio,
         )
 
-      const monogramInput: MonogramInput = {
-        label: nodeAttrs.label || pubkey.slice(0, 2),
-        color: nodeAttrs.color || '#7dd3a7',
-        paletteKey: pubkey,
-        showBackground: budget.showMonogramBackgrounds,
-        showText: budget.showMonogramText,
-      }
-      const priority = resolvePriority(nodeAttrs, viewport, this.sigma)
-      const urlMetadata = this.avatarUrlMetadata.resolve(pubkey, nodeAttrs.pictureUrl)
+      const priority = resolvePriority(nodeAttrs, viewport, overlayBounds)
       drawItems.push({
         pubkey,
         x: viewport.x,
         y: viewport.y,
         r: drawRadiusPx,
         url: nodeAttrs.pictureUrl,
-        urlKey: urlMetadata.urlKey,
-        urlHost: urlMetadata.host,
-        hasPictureUrl: urlMetadata.hasPictureUrl,
-        hasSafePictureUrl: urlMetadata.hasSafePictureUrl,
         fastMoving,
-        monogramOnly:
-          !isPersistentAvatar &&
-          zoomedOutMonogram &&
-          !allowZoomedOutImages,
         isPersistentAvatar,
         zoomedOutMonogram,
         priority,
-        monogramInput,
-        monogramCanvas: this.cache.getMonogram(pubkey, monogramInput),
+        label: nodeAttrs.label || pubkey.slice(0, 2),
+        color: nodeAttrs.color || '#7dd3a7',
       })
     })
     this.lastVisibleNodePubkeys = Array.from(seenNodes)
@@ -888,12 +913,17 @@ export class AvatarOverlayRenderer {
     let drawnImageCount = 0
     let monogramDrawCount = 0
     let withPictureMonogramDrawCount = 0
-    const resolvedDrawItems = drawItems
+    const resolvedDrawItems: AvatarResolvedDrawItem[] = drawItems
       .map((item) => {
         const isPersistentAvatar =
           item.isPersistentAvatar || forcedAvatarPubkeys.has(item.pubkey)
+        const urlMetadata = this.avatarUrlMetadata.resolve(item.pubkey, item.url)
         return {
           ...item,
+          urlKey: urlMetadata.urlKey,
+          urlHost: urlMetadata.host,
+          hasPictureUrl: urlMetadata.hasPictureUrl,
+          hasSafePictureUrl: urlMetadata.hasSafePictureUrl,
           isPersistentAvatar,
           monogramOnly:
             !isPersistentAvatar &&
@@ -968,6 +998,20 @@ export class AvatarOverlayRenderer {
           return b.priority - a.priority
         })
       : selectedDrawItems
+    const materializedDrawItems: AvatarDrawItem[] = orderedDrawItems.map((item) => {
+      const monogramInput: MonogramInput = {
+        label: item.label,
+        color: item.color,
+        paletteKey: item.pubkey,
+        showBackground: budget.showMonogramBackgrounds,
+        showText: budget.showMonogramText,
+      }
+      return {
+        ...item,
+        monogramInput,
+        monogramCanvas: this.cache.getMonogram(item.pubkey, monogramInput),
+      }
+    })
     const maxImageDrawsPerFrame = resolveAvatarFrameDrawCap({
       baseCap: budget.maxImageDrawsPerFrame,
       visibleCount: visiblePhotoCount,
@@ -980,7 +1024,7 @@ export class AvatarOverlayRenderer {
     let blockedCandidateCount = 0
     let inflightCandidateCount = 0
 
-    for (const item of orderedDrawItems) {
+    for (const item of materializedDrawItems) {
       const isPersistentAvatar = item.isPersistentAvatar
       const selectedForImage = selectedOrInflightPubkeys.has(item.pubkey)
       const hasVisibleMonogramPart =
@@ -1535,11 +1579,30 @@ export class AvatarOverlayRenderer {
     return clamped
   }
 
-  private isInViewport(x: number, y: number, r: number): boolean {
+  private getOverlayViewportBounds(): OverlayViewportBounds {
     const container = this.sigma.getContainer()
-    const w = container.clientWidth
-    const h = container.clientHeight
-    return x + r >= 0 && x - r <= w && y + r >= 0 && y - r <= h
+    const width = container.clientWidth
+    const height = container.clientHeight
+    return {
+      width,
+      height,
+      centerX: width / 2,
+      centerY: height / 2,
+    }
+  }
+
+  private isInViewport(
+    bounds: OverlayViewportBounds,
+    x: number,
+    y: number,
+    r: number,
+  ): boolean {
+    return (
+      x + r >= 0 &&
+      x - r <= bounds.width &&
+      y + r >= 0 &&
+      y - r <= bounds.height
+    )
   }
 
   private getOverlayContext(): CanvasRenderingContext2D | null {
@@ -1569,17 +1632,13 @@ export class AvatarOverlayRenderer {
 const resolvePriority = (
   attrs: RenderNodeAttributes,
   viewport: { x: number; y: number },
-  sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>,
+  bounds: OverlayViewportBounds,
 ): number => {
   if (attrs.isRoot) return 0
   if (attrs.isPinned) return 1
   if (attrs.isSelected) return 2
   if (attrs.isNeighbor) return 3
-  const container = sigma.getContainer()
-  const cx = container.clientWidth / 2
-  const cy = container.clientHeight / 2
-  const dx = viewport.x - cx
-  const dy = viewport.y - cy
-  const dist = Math.sqrt(dx * dx + dy * dy)
-  return 4 + dist
+  const dx = viewport.x - bounds.centerX
+  const dy = viewport.y - bounds.centerY
+  return 4 + dx * dx + dy * dy
 }

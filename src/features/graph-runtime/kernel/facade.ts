@@ -186,6 +186,10 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
         }
       }
 
+      if (force && unpublishedContactListUpdates === 0 && lastPublishedSignature !== null) {
+        return
+      }
+
       const { links, signature } = createConnectionsDerivedState(
         currentRootPubkey,
         new Set(Object.keys(currentState.nodes)),

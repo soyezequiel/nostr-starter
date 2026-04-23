@@ -266,6 +266,8 @@ const hasEdgeVisualStyleChange = (
   from.zIndex !== to.zIndex ||
   from.hidden !== to.hidden
 
+const EMPTY_PUBKEY_LIST: readonly string[] = []
+
 const mixNodeVisualAttributes = (
   from: RenderNodeAttributes | NodeVisualStyle,
   to: RenderNodeAttributes,
@@ -2219,25 +2221,70 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
     }
 
+    if (changed) {
+      this.nodeHitTester?.markDirty()
+    }
+
     return changed
+  }
+
+  private collectPhysicsBridgePubkeys(): string[] {
+    const priorityPubkeys = new Set<string>()
+    const addPubkey = (pubkey: string | null | undefined) => {
+      if (pubkey) {
+        priorityPubkeys.add(pubkey)
+      }
+    }
+
+    for (const pubkey of this.avatarOverlay?.getVisibleNodePubkeys() ??
+      EMPTY_PUBKEY_LIST) {
+      priorityPubkeys.add(pubkey)
+    }
+
+    addPubkey(this.scene?.render.cameraHint.rootPubkey ?? null)
+    addPubkey(this.scene?.render.selection.selectedNodePubkey ?? null)
+    addPubkey(this.hoveredNodePubkey)
+    addPubkey(this.currentHoverFocus.pubkey)
+    addPubkey(this.draggedNodePubkey)
+
+    for (const pubkey of this.scene?.render.pins.pubkeys ?? EMPTY_PUBKEY_LIST) {
+      priorityPubkeys.add(pubkey)
+    }
+
+    for (const pubkey of this.currentHoverFocus.neighbors) {
+      priorityPubkeys.add(pubkey)
+    }
+
+    for (const pubkey of this.dragHopDistances.keys()) {
+      priorityPubkeys.add(pubkey)
+    }
+
+    return Array.from(priorityPubkeys)
   }
 
   private readonly flushPhysicsPositionBridge = () => {
     this.pendingPhysicsBridgeFrame = null
 
-    if (!this.forceRuntime?.isRunning()) {
-      return
-    }
-
     const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
-    const changed = this.syncPhysicsPositionsToRender()
+    const priorityPubkeys = this.collectPhysicsBridgePubkeys()
+    const syncMode =
+      this.forceRuntime?.isRunning() === false
+        ? 'full_settle'
+        : priorityPubkeys.length > 0
+          ? 'priority'
+          : 'full'
+    const changed =
+      syncMode === 'priority'
+        ? this.syncPhysicsPositionsToRenderForPubkeys(priorityPubkeys)
+        : this.syncPhysicsPositionsToRender()
     if (startedAtMs > 0) {
       traceGraphPerfDuration(
         'renderer.flushPhysicsPositionBridge',
         startedAtMs,
         () => ({
-          syncMode: 'full',
+          syncMode,
           changed,
+          priorityPubkeyCount: priorityPubkeys.length,
           renderNodeCount: this.renderStore?.getGraph().order ?? 0,
           renderEdgeCount: this.renderStore?.getGraph().size ?? 0,
           physicsNodeCount: this.physicsStore?.getGraph().order ?? 0,
@@ -2253,6 +2300,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     if (changed) {
       this.markMotion()
       this.safeRefresh()
+    }
+
+    if (!this.forceRuntime?.isRunning()) {
+      return
     }
 
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(

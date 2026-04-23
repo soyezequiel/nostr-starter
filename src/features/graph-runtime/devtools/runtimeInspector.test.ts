@@ -6,6 +6,7 @@ import {
   type RuntimeInspectorBuildInput,
 } from '@/features/graph-runtime/devtools/runtimeInspector'
 import type { AvatarRuntimeStateDebugSnapshot } from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import type { VisibleProfileWarmupDebugSnapshot } from '@/features/graph-v2/ui/visibleProfileWarmup'
 
 const createBaseInput = (
   avatarRuntimeSnapshot: AvatarRuntimeStateDebugSnapshot,
@@ -597,4 +598,86 @@ test('runtime inspector treats layer-filter-only coverage as non-dominant', () =
   assert.equal(snapshot.primary.tone, 'neutral')
   assert.equal(snapshot.primary.titulo, 'Sin alerta dominante')
   assert.equal(snapshot.primary.abrirAhora, 'performance')
+})
+
+test('runtime inspector escalates performance summary when frame time is bad', () => {
+  const runtimeSnapshot = createAvatarRuntimeSnapshot()
+  runtimeSnapshot.overlay.counts.drawnImages = 712
+
+  const input = createBaseInput(runtimeSnapshot)
+  input.avatarPerfSnapshot = {
+    baseTier: 'high',
+    tier: 'mid',
+    isDegraded: true,
+    emaFrameMs: 32.4,
+    budget: {
+      sizeThreshold: 12,
+      zoomThreshold: 1.5,
+      concurrency: 4,
+      maxBucket: 128,
+      lruCap: 512,
+      maxAvatarDrawsPerFrame: 180,
+      maxImageDrawsPerFrame: 72,
+      drawAvatars: true,
+    },
+  }
+  input.physicsEnabled = true
+  input.sceneUpdatesPerMinute = 3
+  input.uiUpdatesPerMinute = 0
+
+  const snapshot = buildRuntimeInspectorSnapshot(input)
+
+  assert.equal(snapshot.performance.tone, 'bad')
+  assert.equal(
+    snapshot.performance.resumen,
+    'Frame alto con overlay cargado y fisica activa',
+  )
+  assert.equal(snapshot.primary.abrirAhora, 'performance')
+  assert.equal(snapshot.primary.titulo, snapshot.performance.resumen)
+  assert.match(snapshot.performance.quePasaAhora, /fisica sigue activa/i)
+})
+
+test('runtime inspector does not claim profile hydration is still running without inflight work', () => {
+  const input = createBaseInput(createAvatarRuntimeSnapshot())
+  input.visibleNodePubkeys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
+  input.visibleProfileWarmup = {
+    pubkeys: [],
+    viewportPubkeyCount: 10,
+    scenePubkeyCount: 10,
+    orderedPubkeyCount: 10,
+    eligibleCount: 2,
+    skipped: {
+      missingNode: 0,
+      alreadyUsable: 8,
+      inflight: 0,
+      cooldown: 2,
+    },
+    generatedAtMs: 0,
+    selectedSamples: [],
+    attemptedCount: 2,
+    inflightCount: 0,
+    profileStates: {
+      idle: 0,
+      loading: 0,
+      readyUsable: 8,
+      readyEmpty: 1,
+      missing: 1,
+      unknown: 0,
+    },
+    viewportProfileStates: {
+      idle: 0,
+      loading: 0,
+      readyUsable: 8,
+      readyEmpty: 1,
+      missing: 1,
+      unknown: 0,
+    },
+  } satisfies VisibleProfileWarmupDebugSnapshot
+
+  const snapshot = buildRuntimeInspectorSnapshot(input)
+
+  assert.equal(snapshot.profiles.tone, 'warn')
+  assert.equal(snapshot.profiles.resumen, 'Todavia hay perfiles pendientes')
+  assert.doesNotMatch(snapshot.profiles.quePasaAhora, /sigue corriendo/i)
+  assert.match(snapshot.profiles.quePasaAhora, /cooldown/i)
 })
