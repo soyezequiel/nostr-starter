@@ -177,6 +177,11 @@ const PRIORITY: Array<RuntimeInspectorSummaryItem['id']> = [
   'relays',
 ]
 
+const COVERAGE_PROJECTION_ONLY_SUMMARIES = new Set([
+  'La capa actual filtra nodos cargados',
+  'La capa actual puede ocultar followers',
+])
+
 const formatInteger = (value: number | null | undefined) => {
   if (value === null || value === undefined) {
     return 'sin dato'
@@ -519,6 +524,22 @@ const toneRank = (tone: RuntimeInspectorTone) => {
     default:
       return 0
   }
+}
+
+const primaryToneRank = (
+  id: RuntimeInspectorSummaryItem['id'],
+  section: {
+    tone: RuntimeInspectorTone
+    resumen: string
+  },
+) => {
+  if (
+    id === 'coverage' &&
+    COVERAGE_PROJECTION_ONLY_SUMMARIES.has(section.resumen)
+  ) {
+    return toneRank('neutral')
+  }
+  return toneRank(section.tone)
 }
 
 const buildCoverageSection = (
@@ -1334,16 +1355,33 @@ const buildPrimaryIssue = (
     load: RuntimeInspectorLoadSection
   },
 ): RuntimeInspectorPrimaryIssue => {
+  const sectionMap = {
+    coverage: sections.coverage,
+    profiles: sections.profiles,
+    avatars: sections.avatars,
+    zaps: sections.zaps,
+    performance: sections.performance,
+    relays: sections.relays,
+  }
   const ordered = [...summary].sort((left, right) => {
-    const toneDiff = toneRank(right.tone) - toneRank(left.tone)
+    const toneDiff =
+      primaryToneRank(right.id, sectionMap[right.id]) -
+      primaryToneRank(left.id, sectionMap[left.id])
     if (toneDiff !== 0) {
       return toneDiff
     }
     return PRIORITY.indexOf(left.id) - PRIORITY.indexOf(right.id)
   })
   const top = ordered[0]
+  const topSection = top ? sectionMap[top.id] : null
+  const topRank =
+    top && topSection ? primaryToneRank(top.id, topSection) : toneRank('neutral')
 
-  if (!top || top.tone === 'neutral') {
+  if (
+    !top ||
+    !topSection ||
+    topRank < toneRank('warn')
+  ) {
     return {
       titulo: 'Sin alerta dominante',
       causaProbable:
@@ -1353,16 +1391,7 @@ const buildPrimaryIssue = (
       tone: 'neutral',
     }
   }
-
-  const sectionMap = {
-    coverage: sections.coverage,
-    profiles: sections.profiles,
-    avatars: sections.avatars,
-    zaps: sections.zaps,
-    performance: sections.performance,
-    relays: sections.relays,
-  }
-  const section = sectionMap[top.id]
+  const section = topSection
 
   return {
     titulo: section.resumen,

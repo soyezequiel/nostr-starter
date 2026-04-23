@@ -477,3 +477,124 @@ test('runtime inspector translates unsupported COUNT relay notices', () => {
     'COUNT no soportado por este relay',
   )
 })
+
+test('runtime inspector does not surface layer-filter coverage as the primary issue', () => {
+  const runtimeSnapshot = createAvatarRuntimeSnapshot()
+  runtimeSnapshot.cache.byState.failed = 0
+  runtimeSnapshot.cache.entries = []
+  runtimeSnapshot.overlay.counts.visibleNodes = 302
+  runtimeSnapshot.overlay.counts.nodesWithPictureUrl = 0
+  runtimeSnapshot.overlay.counts.nodesWithSafePictureUrl = 0
+  runtimeSnapshot.overlay.counts.selectedForImage = 0
+  runtimeSnapshot.overlay.counts.loadCandidates = 0
+  runtimeSnapshot.overlay.counts.pendingCacheMiss = 0
+  runtimeSnapshot.overlay.counts.pendingCandidates = 0
+  runtimeSnapshot.overlay.byDrawFallbackReason = {}
+  runtimeSnapshot.overlay.byCacheState = {}
+  runtimeSnapshot.overlay.nodes = []
+
+  const input = createBaseInput(runtimeSnapshot)
+  input.sceneState.activeLayer = 'mutuals'
+  input.scene.render.diagnostics.activeLayer = 'mutuals'
+  input.scene.render.diagnostics.nodeCount = 302
+  input.uiState.rootLoad.status = 'partial'
+  input.uiState.rootLoad.visibleLinkProgress = {
+    visibleLinkCount: 2358,
+    contactListEventCount: 5,
+    inboundCandidateEventCount: 1997,
+    lastRelayUrl: 'wss://nostr.mom',
+    updatedAt: 1,
+    following: {
+      status: 'complete',
+      loadedCount: 904,
+      totalCount: 904,
+      isTotalKnown: true,
+    },
+    followers: {
+      status: 'partial',
+      loadedCount: 1755,
+      totalCount: 1755,
+      isTotalKnown: false,
+    },
+  }
+  input.graphSummary.nodeCount = 2358
+  input.graphSummary.linkCount = 0
+  input.graphSummary.maxNodes = 3000
+  input.zapSummary = {
+    status: 'disabled',
+    edgeCount: 0,
+    skippedReceipts: 0,
+    loadedFrom: 'none',
+    message: null,
+    targetCount: 0,
+    lastUpdatedAt: null,
+  }
+
+  const snapshot = buildRuntimeInspectorSnapshot(input)
+
+  assert.equal(snapshot.coverage.tone, 'warn')
+  assert.equal(snapshot.coverage.resumen, 'La capa actual filtra nodos cargados')
+  assert.equal(snapshot.primary.abrirAhora, 'zaps')
+  assert.equal(snapshot.primary.titulo, 'Zaps sin evidencia util')
+})
+
+test('runtime inspector treats layer-filter-only coverage as non-dominant', () => {
+  const runtimeSnapshot = createAvatarRuntimeSnapshot()
+  runtimeSnapshot.cache.byState.failed = 0
+  runtimeSnapshot.cache.entries = []
+  runtimeSnapshot.overlay.counts.visibleNodes = 302
+  runtimeSnapshot.overlay.counts.nodesWithPictureUrl = 0
+  runtimeSnapshot.overlay.counts.nodesWithSafePictureUrl = 0
+  runtimeSnapshot.overlay.counts.selectedForImage = 0
+  runtimeSnapshot.overlay.counts.loadCandidates = 0
+  runtimeSnapshot.overlay.counts.pendingCacheMiss = 0
+  runtimeSnapshot.overlay.counts.pendingCandidates = 0
+  runtimeSnapshot.overlay.byDrawFallbackReason = {}
+  runtimeSnapshot.overlay.byCacheState = {}
+  runtimeSnapshot.overlay.nodes = []
+
+  const input = createBaseInput(runtimeSnapshot)
+  input.sceneState.activeLayer = 'mutuals'
+  input.scene.render.diagnostics.activeLayer = 'mutuals'
+  input.scene.render.diagnostics.nodeCount = 302
+  input.uiState.rootLoad.status = 'partial'
+  input.uiState.rootLoad.visibleLinkProgress = {
+    visibleLinkCount: 2358,
+    contactListEventCount: 5,
+    inboundCandidateEventCount: 1997,
+    lastRelayUrl: 'wss://nostr.mom',
+    updatedAt: 1,
+    following: {
+      status: 'complete',
+      loadedCount: 904,
+      totalCount: 904,
+      isTotalKnown: true,
+    },
+    followers: {
+      status: 'partial',
+      loadedCount: 1755,
+      totalCount: 1755,
+      isTotalKnown: false,
+    },
+  }
+  input.graphSummary.nodeCount = 2358
+  input.graphSummary.linkCount = 0
+  input.graphSummary.maxNodes = 3000
+  input.zapSummary = {
+    status: 'enabled',
+    edgeCount: 1,
+    skippedReceipts: 0,
+    loadedFrom: 'live',
+    message: null,
+    targetCount: 1,
+    lastUpdatedAt: null,
+  }
+
+  const snapshot = buildRuntimeInspectorSnapshot(input)
+
+  assert.equal(snapshot.coverage.tone, 'warn')
+  assert.equal(snapshot.coverage.resumen, 'La capa actual filtra nodos cargados')
+  assert.equal(snapshot.primary.tone, 'neutral')
+  assert.equal(snapshot.primary.titulo, 'Sin alerta dominante')
+  assert.equal(snapshot.primary.abrirAhora, 'performance')
+})
