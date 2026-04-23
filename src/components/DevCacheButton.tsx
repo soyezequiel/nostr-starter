@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { clearSiteCache } from '@/lib/dev/clearSiteCache'
+import {
+  clearSiteCache,
+  requestBrowserSiteDataClear,
+} from '@/lib/dev/clearSiteCache'
 
 const IS_DEVELOPMENT_BUILD = process.env.NODE_ENV === 'development'
 
@@ -43,12 +46,15 @@ export default function DevCacheButton() {
     }
 
     setStatus('running')
-    setMessage('Borrando cache local...')
+    setMessage('Borrando cache local y datos persistidos del navegador...')
 
     try {
       const summary = await clearSiteCache()
+      const browserSiteDataCleared = await requestBrowserSiteDataClear()
       setMessage(
-        `Cache borrado: ${summary.indexedDbDatabases} IndexedDB, ${summary.indexedDbStores} stores, ${summary.cacheStorageCaches} caches. Recargando...`,
+        browserSiteDataCleared
+          ? `Datos del sitio borrados: ${summary.indexedDbDatabases} IndexedDB, ${summary.indexedDbStores} stores, ${summary.cacheStorageCaches} caches. Recargando...`
+          : `Cache local borrado: ${summary.indexedDbDatabases} IndexedDB, ${summary.indexedDbStores} stores, ${summary.cacheStorageCaches} caches. Recargando...`,
       )
 
       window.setTimeout(() => {

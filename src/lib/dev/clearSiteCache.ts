@@ -12,6 +12,24 @@ export interface ClearSiteCacheSummary {
   sessionStorageCleared: boolean
 }
 
+export async function requestBrowserSiteDataClear(): Promise<boolean> {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    const response = await fetch('/api/dev/clear-site-data', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+    })
+
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 const FALLBACK_INDEXED_DB_NAMES = [NOSTR_GRAPH_DB_NAME]
 
 function openIndexedDatabase(name: string): Promise<IDBDatabase | null> {

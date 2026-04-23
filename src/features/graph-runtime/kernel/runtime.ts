@@ -11,6 +11,7 @@ import {
   createEventsWorkerGateway,
   createGraphWorkerGateway,
 } from '@/features/graph-runtime/workers/browser'
+import type { EventsWorkerActionMap } from '@/features/graph-runtime/workers/events/contracts'
 import type { GraphWorkerActionMap } from '@/features/graph-runtime/workers/graph/contracts'
 import type { WorkerActionName } from '@/features/graph-runtime/workers/shared/protocol'
 import type { WorkerClient } from '@/features/graph-runtime/workers/shared/runtime'
@@ -133,10 +134,34 @@ class LazyGraphWorkerGateway implements WorkerClient<GraphWorkerActionMap> {
   }
 }
 
+class LazyEventsWorkerGateway implements WorkerClient<EventsWorkerActionMap> {
+  private activeWorker: WorkerClient<EventsWorkerActionMap> | null = null
+
+  private getWorker() {
+    if (!this.activeWorker) {
+      this.activeWorker = createEventsWorkerGateway()
+    }
+
+    return this.activeWorker
+  }
+
+  public invoke<TAction extends WorkerActionName<EventsWorkerActionMap>>(
+    action: TAction,
+    payload: EventsWorkerActionMap[TAction]['request'],
+  ) {
+    return this.getWorker().invoke(action, payload)
+  }
+
+  public dispose() {
+    this.activeWorker?.dispose()
+    this.activeWorker = null
+  }
+}
+
 export const browserAppKernel: KernelFacade & RootLoader = createKernelFacade({
   store: browserAppStore,
   repositories: createRepositories(browserDatabase),
-  eventsWorker: createEventsWorkerGateway(),
+  eventsWorker: new LazyEventsWorkerGateway(),
   graphWorker: new LazyGraphWorkerGateway(),
   createRelayAdapter: createRelayPoolAdapter,
   defaultRelayUrls: [...DEFAULT_SESSION_RELAY_URLS],

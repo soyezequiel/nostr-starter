@@ -20,8 +20,9 @@ import {
 } from '@/features/graph-runtime/workers/workerScriptUrl'
 
 const INLINE_WORKERS_FLAG = '1'
-const WORKER_PROBE_TIMEOUT_MS = 5_000
-const WORKER_PROBE_ATTEMPTS = 2
+const IS_DEVELOPMENT = process.env.NODE_ENV === 'development'
+const WORKER_PROBE_TIMEOUT_MS = IS_DEVELOPMENT ? 15_000 : 5_000
+const WORKER_PROBE_ATTEMPTS = IS_DEVELOPMENT ? 3 : 2
 const shouldForceInlineWorkers = () =>
   process.env.NEXT_PUBLIC_GRAPH_INLINE_WORKERS === INLINE_WORKERS_FLAG
 
