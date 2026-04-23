@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import {
+  memo,
   useCallback,
   startTransition,
   useDeferredValue,
@@ -21,6 +22,7 @@ import { useAppStore } from '@/features/graph-runtime/app/store'
 import { DEFAULT_MAX_GRAPH_NODES } from '@/features/graph-runtime/app/store/slices/graphSlice'
 import type {
   AppStore,
+  RootLoadState,
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph-runtime/app/store/types'
@@ -1164,6 +1166,92 @@ function PersonSearchPanel({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+interface SigmaRootLoadChromeProps {
+  bridge: LegacyKernelBridge
+  displayNodeCount: number
+  fallbackMessage: string | null
+  hasRoot: boolean
+  identityLabel?: string | null
+  isRootLoadScreenOpen: boolean
+  isRootSheetOpen: boolean
+  relayState: CanonicalRelayState
+  rootLoadOverride?: RootLoadState | null
+  rootPubkey: string | null
+  sceneNodeCount: number
+}
+
+const EMPTY_SERVER_ROOT_LOAD: RootLoadState = {
+  status: 'idle',
+  message: null,
+  loadedFrom: null,
+  visibleLinkProgress: null,
+}
+
+const getServerRootLoadSnapshot = () => EMPTY_SERVER_ROOT_LOAD
+
+const SigmaRootLoadChrome = memo(function SigmaRootLoadChrome({
+  bridge,
+  displayNodeCount,
+  fallbackMessage,
+  hasRoot,
+  identityLabel,
+  isRootLoadScreenOpen,
+  isRootSheetOpen,
+  relayState,
+  rootLoadOverride,
+  rootPubkey,
+  sceneNodeCount,
+}: SigmaRootLoadChromeProps) {
+  const subscribedRootLoad = useSyncExternalStore(
+    bridge.subscribeUi,
+    () => bridge.getUiState().rootLoad,
+    getServerRootLoadSnapshot,
+  )
+  const rootLoad = rootLoadOverride ?? subscribedRootLoad
+  const visibleLoadFeedback =
+    fallbackMessage === 'Cargando root...' && rootLoad.message
+      ? rootLoad.message
+      : fallbackMessage ?? rootLoad.message
+  const isGraphLoading =
+    !isRootSheetOpen &&
+    (isRootLoadScreenOpen ||
+      (rootPubkey !== null &&
+        rootLoad.status === 'loading' &&
+        sceneNodeCount < 3))
+  const shouldShowLoadProgressHud =
+    !isGraphLoading &&
+    !isRootSheetOpen &&
+    hasRoot &&
+    rootLoad.visibleLinkProgress !== null &&
+    isRootLoadProgressActive(rootLoad)
+
+  if (!isGraphLoading && !shouldShowLoadProgressHud) {
+    return null
+  }
+
+  return (
+    <>
+      {isGraphLoading ? (
+        <SigmaLoadingOverlay
+          identityLabel={identityLabel}
+          message={visibleLoadFeedback}
+          nodeCount={displayNodeCount}
+          relayState={relayState}
+          rootLoad={rootLoad}
+        />
+      ) : null}
+      {shouldShowLoadProgressHud ? (
+        <SigmaLoadProgressHud
+          identityLabel={identityLabel}
+          message={visibleLoadFeedback}
+          nodeCount={displayNodeCount}
+          rootLoad={rootLoad}
+        />
+      ) : null}
+    </>
+  )
+})
+
 export default function GraphAppV2() {
   const searchParams = useSearchParams()
   const fixtureName = searchParams.get('fixture')
@@ -1189,10 +1277,10 @@ export default function GraphAppV2() {
     bridge.getSceneState,
     bridge.getSceneState,
   )
-  const liveUiState = useSyncExternalStore(
+  const liveRelayState = useSyncExternalStore(
     bridge.subscribeUi,
-    bridge.getUiState,
-    bridge.getUiState,
+    () => bridge.getUiState().relayState,
+    () => bridge.getUiState().relayState,
   )
   const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
     () => (isFixtureMode ? createDragLocalFixture().state : null),
@@ -1317,7 +1405,11 @@ export default function GraphAppV2() {
   }, [])
 
   const sceneState = fixtureState ?? liveSceneState
-  const uiState = fixtureState ? pickFixtureUiState(fixtureState) : liveUiState
+  const fixtureUiState = useMemo(
+    () => (fixtureState ? pickFixtureUiState(fixtureState) : null),
+    [fixtureState],
+  )
+  const relayState = fixtureUiState?.relayState ?? liveRelayState
   const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
 
   useEffect(() => {
@@ -1715,27 +1807,6 @@ export default function GraphAppV2() {
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
     : null
-  const rootLoadMessage = uiState.rootLoad.message
-  const visibleLoadFeedback =
-    loadFeedback === 'Cargando root...' && rootLoadMessage
-      ? rootLoadMessage
-      : loadFeedback ?? rootLoadMessage
-  const rootLoadStatus = uiState.rootLoad.status
-  // Show overlay while the root is actively being fetched, but not inside the
-  // loader modal (the modal has its own feedback) and not if we already have
-  // a meaningful number of nodes drawn.
-  const isGraphLoading =
-    !isRootSheetOpen &&
-    (isRootLoadScreenOpen ||
-      (sceneState.rootPubkey !== null &&
-        rootLoadStatus === 'loading' &&
-        scene.render.nodes.length < 3))
-  const shouldShowLoadProgressHud =
-    !isGraphLoading &&
-    !isRootSheetOpen &&
-    sceneState.rootPubkey !== null &&
-    uiState.rootLoad.visibleLinkProgress !== null &&
-    isRootLoadProgressActive(uiState.rootLoad)
   const isDragFixtureLab = fixtureName === 'drag-local'
   const hasSavedRoots = savedRoots.length > 0
   const shouldShowSavedRootsSection = !savedRootsHydrated || hasSavedRoots
@@ -2233,8 +2304,8 @@ export default function GraphAppV2() {
     },
     {
       k: 'Relays',
-      v: `${uiState.relayState.isGraphStale ? Math.max(0, uiState.relayState.urls.length - 1) : uiState.relayState.urls.length}/${uiState.relayState.urls.length}`,
-      tone: uiState.relayState.isGraphStale ? 'warn' : 'good',
+      v: `${relayState.isGraphStale ? Math.max(0, relayState.urls.length - 1) : relayState.urls.length}/${relayState.urls.length}`,
+      tone: relayState.isGraphStale ? 'warn' : 'good',
     },
     {
       k: 'Frame',
@@ -2247,8 +2318,8 @@ export default function GraphAppV2() {
     deferredScene.render.diagnostics.nodeCount,
     deferredScene.render.diagnostics.visibleEdgeCount,
     physicsEnabled,
-    uiState.relayState.isGraphStale,
-    uiState.relayState.urls.length,
+    relayState.isGraphStale,
+    relayState.urls.length,
   ])
 
   // Rail buttons — every entry is a DIRECT action or toggle.
@@ -2351,12 +2422,12 @@ export default function GraphAppV2() {
   }, [])
 
   const handleStaleRelays = useCallback(() => {
-    if (!uiState.relayState.isGraphStale) {
+    if (!relayState.isGraphStale) {
       setActionFeedback('Relays al dia: no hay override para revertir.')
       return
     }
     void handleRevertRelays()
-  }, [handleRevertRelays, uiState.relayState.isGraphStale])
+  }, [handleRevertRelays, relayState.isGraphStale])
 
   const handleCopyNpub = useCallback((npub: string) => {
     void copyToClipboard(npub)
@@ -2628,9 +2699,9 @@ export default function GraphAppV2() {
     },
     {
       id: 'stale',
-      tip: uiState.relayState.isGraphStale ? 'Revertir relays' : 'Relays al día',
+      tip: relayState.isGraphStale ? 'Revertir relays' : 'Relays al dia',
       icon: <ClockIcon />,
-      active: uiState.relayState.isGraphStale,
+      active: relayState.isGraphStale,
       onClick: handleStaleRelays,
       dividerAfter: true,
     },
@@ -2664,7 +2735,7 @@ export default function GraphAppV2() {
     personSearchQuery,
     physicsEnabled,
     showZaps,
-    uiState.relayState.isGraphStale,
+    relayState.isGraphStale,
   ])
 
   // Toasts — combine feedback sources
@@ -2766,11 +2837,11 @@ export default function GraphAppV2() {
         return (
           <div>
             <RelayEditor
-              isGraphStale={uiState.relayState.isGraphStale}
+              isGraphStale={relayState.isGraphStale}
               onApply={handleApplyRelays}
               onRevert={handleRevertRelays}
-              overrideStatus={uiState.relayState.overrideStatus}
-              relayUrls={uiState.relayState.urls}
+              overrideStatus={relayState.overrideStatus}
+              relayUrls={relayState.urls}
             />
             <div className="sg-settings-section">
               <h4>Zaps</h4>
@@ -2972,7 +3043,7 @@ export default function GraphAppV2() {
               {[
                 ['Topología render', String(deferredScene.render.diagnostics.topologySignature)],
                 ['Topología física', String(deferredScene.physics.diagnostics.topologySignature)],
-                ['Relays',       String(uiState.relayState.urls.length)],
+                ['Relays',       String(relayState.urls.length)],
                 ['Pinned',       String(sceneState.pinnedNodePubkeys.size)],
                 ['Viewport',     isFixtureMode
                   ? (lastViewportRatio ? `${lastViewportRatio.toFixed(2)}×` : 'idle')
@@ -3354,7 +3425,7 @@ export default function GraphAppV2() {
   return (
     <main
       className="sg-app"
-      data-graph-loading={isGraphLoading ? 'true' : undefined}
+      data-graph-loading={isRootLoadScreenOpen ? 'true' : undefined}
       data-graph-v2=""
     >
       {/* Canvas — always present, full bleed under all chrome */}
@@ -3371,16 +3442,19 @@ export default function GraphAppV2() {
         scene={displayScene}
       />
 
-      {/* Loading overlay — while root data is arriving */}
-      {isGraphLoading && (
-        <SigmaLoadingOverlay
-          identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
-          message={visibleLoadFeedback}
-          nodeCount={displayScene.render.nodes.length}
-          relayState={uiState.relayState}
-          rootLoad={uiState.rootLoad}
-        />
-      )}
+      <SigmaRootLoadChrome
+        bridge={bridge}
+        displayNodeCount={displayScene.render.nodes.length}
+        fallbackMessage={loadFeedback}
+        hasRoot={hasRoot}
+        identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
+        isRootLoadScreenOpen={isRootLoadScreenOpen}
+        isRootSheetOpen={isRootSheetOpen}
+        relayState={relayState}
+        rootLoadOverride={fixtureUiState?.rootLoad ?? null}
+        rootPubkey={sceneState.rootPubkey}
+        sceneNodeCount={scene.render.nodes.length}
+      />
 
       {/* Top bar: root chip (left) + brand (right) */}
       <SigmaTopBar
@@ -3406,14 +3480,6 @@ export default function GraphAppV2() {
           />
           <SigmaSideRail buttons={railButtons} />
           <SigmaHud stats={hudStats} />
-          {shouldShowLoadProgressHud && (
-            <SigmaLoadProgressHud
-              identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
-              message={visibleLoadFeedback}
-              nodeCount={displayScene.render.nodes.length}
-              rootLoad={uiState.rootLoad}
-            />
-          )}
           {!isIdentityPanelOpen && !isPersonSearchPanelOpen && !isNotificationsOpen && (
             <SigmaMinimap
               getSnapshot={getMinimapSnapshot}
@@ -3505,7 +3571,7 @@ export default function GraphAppV2() {
           canClose={hasRoot}
           manualInputSlot={
             <SigmaRootInput
-              feedback={visibleLoadFeedback}
+              feedback={loadFeedback}
               onValidRoot={loadRootFromPointer}
             />
           }
