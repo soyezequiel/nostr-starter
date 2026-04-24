@@ -1,12 +1,22 @@
 import { verifyEvent, validateEvent, type Event } from 'nostr-tools'
 
-self.onmessage = (e: MessageEvent<{ id: string; event: Event }>) => {
-  const { id, event } = e.data
-
+const verifyNostrEvent = (event: Event): boolean => {
   try {
-    const valid = validateEvent(event) && verifyEvent(event)
-    self.postMessage({ id, valid })
+    return validateEvent(event) && verifyEvent(event)
   } catch {
-    self.postMessage({ id, valid: false })
+    return false
   }
+}
+
+self.onmessage = (
+  e: MessageEvent<{ id: string; event?: Event; events?: Event[] }>,
+) => {
+  const { id, event, events } = e.data
+
+  if (Array.isArray(events)) {
+    self.postMessage({ id, results: events.map(verifyNostrEvent) })
+    return
+  }
+
+  self.postMessage({ id, valid: event ? verifyNostrEvent(event) : false })
 }

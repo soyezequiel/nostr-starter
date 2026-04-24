@@ -4,7 +4,7 @@ import { detectDevicePerformance } from '@/features/graph-runtime/devicePerforma
 import { getVerifyWorkerScriptUrl } from '@/features/graph-runtime/workers/workerScriptUrl'
 
 type PendingRequest = {
-  resolve: (value: boolean) => void
+  resolve: (value: boolean | boolean[]) => void
   reject: (reason?: unknown) => void
 }
 
@@ -36,6 +36,7 @@ const resolveVerifyWorkerCount = () => {
 export class VerifyWorkerPool {
   private workerSlots: WorkerSlot[] | null = null
   private nextWorkerIndex = 0
+  private requestSequence = 0
   private fallbackPromise:
     | Promise<{
         validateEvent: typeof import('nostr-tools').validateEvent
@@ -71,6 +72,11 @@ export class VerifyWorkerPool {
     this.nextWorkerIndex = 0
   }
 
+  private createRequestId(): string {
+    this.requestSequence += 1
+    return `verify.worker:${this.requestSequence}`
+  }
+
   private initializeWorkers() {
     if (this.workerSlots !== null || typeof Worker === 'undefined') {
       return this.workerSlots
@@ -96,7 +102,13 @@ export class VerifyWorkerPool {
 
         worker.addEventListener(
           'message',
-          (event: MessageEvent<{ id?: string; valid?: boolean }>) => {
+          (
+            event: MessageEvent<{
+              id?: string
+              valid?: boolean
+              results?: boolean[]
+            }>,
+          ) => {
             const id =
               typeof event.data?.id === 'string' ? event.data.id : null
             if (!id) {
@@ -109,7 +121,11 @@ export class VerifyWorkerPool {
             }
 
             pending.delete(id)
-            request.resolve(event.data.valid === true)
+            request.resolve(
+              Array.isArray(event.data.results)
+                ? event.data.results
+                : event.data.valid === true,
+            )
           },
         )
 
@@ -135,38 +151,72 @@ export class VerifyWorkerPool {
     }
   }
 
-  public async verify(event: Event): Promise<boolean> {
+  private async verifyManyFallback(events: readonly Event[]): Promise<boolean[]> {
+    const { validateEvent, verifyEvent } = await this.loadFallback()
+    return events.map((event) => {
+      try {
+        return validateEvent(event) && verifyEvent(event)
+      } catch {
+        return false
+      }
+    })
+  }
+
+  private verifyManyWithWorker(events: readonly Event[]): Promise<boolean[]> | null {
     const workerSlots = this.initializeWorkers()
 
     if (workerSlots && workerSlots.length > 0) {
       const slot = workerSlots[this.nextWorkerIndex % workerSlots.length]
       this.nextWorkerIndex =
         (this.nextWorkerIndex + 1) % Math.max(1, workerSlots.length)
-      const requestId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `${Date.now()}:${Math.random().toString(36).slice(2)}`
+      const requestId = this.createRequestId()
 
-      return new Promise<boolean>((resolve, reject) => {
-        slot.pending.set(requestId, { resolve, reject })
+      return new Promise<boolean[]>((resolve, reject) => {
+        slot.pending.set(requestId, {
+          resolve: (value) => {
+            resolve(Array.isArray(value) ? value : [value === true])
+          },
+          reject,
+        })
 
         try {
-          slot.worker.postMessage({
-            id: requestId,
-            event,
-          })
+          slot.worker.postMessage(
+            events.length === 1
+              ? {
+                  id: requestId,
+                  event: events[0],
+                }
+              : {
+                  id: requestId,
+                  events,
+                },
+          )
         } catch (error) {
           slot.pending.delete(requestId)
           reject(error)
         }
-      }).catch(async () => {
-        const { validateEvent, verifyEvent } = await this.loadFallback()
-        return validateEvent(event) && verifyEvent(event)
-      })
+      }).then((result) => events.map((_, index) => result[index] === true))
     }
 
-    const { validateEvent, verifyEvent } = await this.loadFallback()
-    return validateEvent(event) && verifyEvent(event)
+    return null
+  }
+
+  public async verifyMany(events: readonly Event[]): Promise<boolean[]> {
+    if (events.length === 0) {
+      return []
+    }
+
+    const workerVerification = this.verifyManyWithWorker(events)
+    if (workerVerification) {
+      return workerVerification.catch(() => this.verifyManyFallback(events))
+    }
+
+    return this.verifyManyFallback(events)
+  }
+
+  public async verify(event: Event): Promise<boolean> {
+    const [verified] = await this.verifyMany([event])
+    return verified === true
   }
 
   public terminate() {
@@ -178,4 +228,8 @@ export const globalVerifyPool = new VerifyWorkerPool()
 
 export function isVerifiedEventAsync(event: Event): Promise<boolean> {
   return globalVerifyPool.verify(event)
+}
+
+export function isVerifiedEventsAsync(events: readonly Event[]): Promise<boolean[]> {
+  return globalVerifyPool.verifyMany(events)
 }

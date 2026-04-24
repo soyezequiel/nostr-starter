@@ -17,6 +17,7 @@ import {
   expectRecord,
   expectString,
   expectStringMatrix,
+  isHexIdentifier,
   normalizeEventId,
   normalizePubkey,
 } from '@/features/graph-runtime/workers/shared/validation'
@@ -116,7 +117,7 @@ export function parseContactList(request: ParseContactListRequest): ParseContact
       return
     }
 
-    if (!/^[0-9a-f]{8,}$/i.test(followedPubkey)) {
+    if (!isHexIdentifier(followedPubkey)) {
       diagnostics.push(
         createDiagnostic(
           'FOLLOW_TAG_INVALID_PUBKEY',

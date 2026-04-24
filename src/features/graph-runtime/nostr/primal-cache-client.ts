@@ -1,6 +1,6 @@
 ﻿import type { Event } from 'nostr-tools'
 
-import { isVerifiedEventAsync } from '@/features/graph-runtime/workers/verifyWorkerPool'
+import { isVerifiedEventsAsync } from '@/features/graph-runtime/workers/verifyWorkerPool'
 
 export const PRIMAL_CACHE_URL = 'wss://cache2.primal.net/v1'
 
@@ -262,13 +262,16 @@ export class PrimalCacheClient {
         })
       }
     }).then(async (events) => {
+      const verificationResults = await isVerifiedEventsAsync(
+        events.map((eventMessage) => eventMessage.event),
+      )
       const verifiedEvents: PrimalEventMessage[] = []
 
-      for (const eventMessage of events) {
-        if (await isVerifiedEventAsync(eventMessage.event)) {
+      events.forEach((eventMessage, index) => {
+        if (verificationResults[index] === true) {
           verifiedEvents.push(eventMessage)
         }
-      }
+      })
 
       return verifiedEvents
     })

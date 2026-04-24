@@ -1,5 +1,24 @@
 ﻿import { WorkerProtocolError, isRecord } from '@/features/graph-runtime/workers/shared/protocol'
 
+export function isHexIdentifier(value: string): boolean {
+  if (value.length < 8) {
+    return false
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    const isDigit = code >= 48 && code <= 57
+    const isLowerHex = code >= 97 && code <= 102
+    const isUpperHex = code >= 65 && code <= 70
+
+    if (!isDigit && !isLowerHex && !isUpperHex) {
+      return false
+    }
+  }
+
+  return true
+}
+
 export function expectRecord(value: unknown, path: string): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new WorkerProtocolError('INVALID_PAYLOAD', `${path} must be an object.`, { path })
@@ -76,7 +95,7 @@ export function expectStringMatrix(value: unknown, path: string): string[][] {
 export function normalizePubkey(value: unknown, path: string): string {
   const normalized = expectString(value, path).toLowerCase()
 
-  if (!/^[0-9a-f]{8,}$/i.test(normalized)) {
+  if (!isHexIdentifier(normalized)) {
     throw new WorkerProtocolError('INVALID_PAYLOAD', `${path} must look like a hex pubkey.`, {
       path,
     })
@@ -88,7 +107,7 @@ export function normalizePubkey(value: unknown, path: string): string {
 export function normalizeEventId(value: unknown, path: string): string {
   const normalized = expectString(value, path).toLowerCase()
 
-  if (!/^[0-9a-f]{8,}$/i.test(normalized)) {
+  if (!isHexIdentifier(normalized)) {
     throw new WorkerProtocolError('INVALID_PAYLOAD', `${path} must look like a hex event id.`, {
       path,
     })

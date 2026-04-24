@@ -1,5 +1,6 @@
 ﻿import type { Filter } from 'nostr-tools'
-import { isVerifiedEventAsync } from '@/features/graph-runtime/workers/verifyWorkerPool'
+import { isVerifiedEventsAsync } from '@/features/graph-runtime/workers/verifyWorkerPool'
+import type { Event } from 'nostr-tools'
 import {
   isGraphPerfTraceEnabled,
   nowGraphPerfMs,
@@ -34,6 +35,9 @@ const DEFAULT_MAX_AUTHORS_PER_FILTER = 50
 const INTERACTIVE_FLUSH_DELAY_MS = 32
 // PERF: background subs do not need tight flush; this reduces microtask churn.
 const BACKGROUND_FLUSH_DELAY_MS = 120
+const INTERACTIVE_VERIFICATION_BATCH_DELAY_MS = 8
+const BACKGROUND_VERIFICATION_BATCH_DELAY_MS = 32
+const MAX_VERIFICATION_BATCH_EVENTS = 64
 const HEALTH_PUBLISH_DELAY_MS = 100
 
 const COUNT_UNSUPPORTED_PATTERNS = [
@@ -65,6 +69,13 @@ interface ConnectionEntry {
   connection?: RelayConnection
   detachNotice?: () => void
   detachClose?: () => void
+}
+
+interface PendingVerificationEvent {
+  event: Event
+  relayUrl: string
+  receivedAtMs: number
+  attempt: number
 }
 
 const isCountUnsupportedFailure = (
@@ -329,8 +340,14 @@ export class RelayPoolAdapter {
       priority === 'background'
         ? BACKGROUND_FLUSH_DELAY_MS
         : INTERACTIVE_FLUSH_DELAY_MS
+    const verificationBatchDelayMs =
+      priority === 'background'
+        ? BACKGROUND_VERIFICATION_BATCH_DELAY_MS
+        : INTERACTIVE_VERIFICATION_BATCH_DELAY_MS
     const pendingEvents: RelayEventEnvelope[] = []
+    const pendingVerificationEvents: PendingVerificationEvent[] = []
     let flushHandle: ReturnType<typeof setTimeout> | null = null
+    let verificationFlushHandle: ReturnType<typeof setTimeout> | null = null
 
     // Bounded LRU dedup set. Using Map instead of Set because Map preserves
     // insertion order in V8, giving us O(1) LRU eviction via .keys().next().
@@ -399,6 +416,124 @@ export class RelayPoolAdapter {
         flushHandle = null
         flushPendingEvents()
       }, flushDelayMs)
+    }
+
+    const markRelayEventRejected = (relayUrl: string) => {
+      stats.rejectedEvents += 1
+      this.updateRelayHealth(relayUrl, (current) => ({
+        ...current,
+        lastErrorCode: 'RELAY_EVENT_INVALID',
+      }))
+    }
+
+    const processVerifiedEvents = (
+      batch: PendingVerificationEvent[],
+      verificationResults: readonly boolean[],
+    ) => {
+      let acceptedCount = 0
+
+      batch.forEach((item, index) => {
+        if (verificationResults[index] !== true) {
+          markRelayEventRejected(item.relayUrl)
+          return
+        }
+
+        stats.acceptedEvents += 1
+        this.acceptRelayEvent(item.relayUrl)
+        pendingEvents.push({
+          event: item.event,
+          relayUrl: item.relayUrl,
+          receivedAtMs: item.receivedAtMs,
+          attempt: item.attempt,
+        })
+        acceptedCount += 1
+      })
+
+      if (acceptedCount > 0) {
+        scheduleFlush()
+      }
+    }
+
+    const scheduleVerificationFlush = () => {
+      if (verificationFlushHandle !== null) {
+        return
+      }
+
+      verificationFlushHandle = this.clock.setTimeout(() => {
+        verificationFlushHandle = null
+        flushPendingVerifications()
+      }, verificationBatchDelayMs)
+    }
+
+    const flushPendingVerifications = () => {
+      if (verificationFlushHandle !== null) {
+        this.clock.clearTimeout(verificationFlushHandle)
+        verificationFlushHandle = null
+      }
+
+      if (
+        pendingVerificationEvents.length === 0 ||
+        cancelled ||
+        completed
+      ) {
+        return
+      }
+
+      const batch = pendingVerificationEvents.splice(
+        0,
+        MAX_VERIFICATION_BATCH_EVENTS,
+      )
+      const events = batch.map((item) => item.event)
+      const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
+
+      void isVerifiedEventsAsync(events)
+        .then((verificationResults) => {
+          if (cancelled || completed) {
+            return
+          }
+
+          processVerifiedEvents(batch, verificationResults)
+
+          if (startedAtMs > 0) {
+            traceGraphPerfDuration(
+              'relayAdapter.verifyPendingEvents',
+              startedAtMs,
+              () => ({
+                batchSize: batch.length,
+                acceptedEvents: stats.acceptedEvents,
+                duplicateRelayEvents: stats.duplicateRelayEvents,
+                rejectedEvents: stats.rejectedEvents,
+                priority,
+                remainingQueuedVerifications: pendingVerificationEvents.length,
+                verificationBatchDelayMs,
+              }),
+              { thresholdMs: 8 },
+            )
+          }
+        })
+        .catch(() => {
+          if (cancelled || completed) {
+            return
+          }
+
+          batch.forEach((item) => markRelayEventRejected(item.relayUrl))
+        })
+        .finally(() => {
+          pendingVerifications = Math.max(
+            0,
+            pendingVerifications - batch.length,
+          )
+
+          if (
+            pendingVerificationEvents.length > 0 &&
+            !cancelled &&
+            !completed
+          ) {
+            scheduleVerificationFlush()
+          }
+
+          finalize()
+        })
     }
 
     const finalize = () => {
@@ -640,48 +775,21 @@ export class RelayPoolAdapter {
             addSeenRelayEvent(relayEventKey)
 
             if (verificationMode === 'verify-worker') {
-              // Async path only allocated when verification is required
               pendingVerifications += 1
-              void isVerifiedEventAsync(event)
-                .then((isValid) => {
-                  if (cancelled || completed) {
-                    return
-                  }
-
-                  if (!isValid) {
-                    stats.rejectedEvents += 1
-                    this.updateRelayHealth(url, (current) => ({
-                      ...current,
-                      lastErrorCode: 'RELAY_EVENT_INVALID',
-                    }))
-                    return
-                  }
-
-                  stats.acceptedEvents += 1
-                  this.acceptRelayEvent(url)
-                  pendingEvents.push({
-                    event,
-                    relayUrl: url,
-                    receivedAtMs: this.clock.now(),
-                    attempt: attemptNumber,
-                  })
-                  scheduleFlush()
-                })
-                .catch(() => {
-                  if (cancelled || completed) {
-                    return
-                  }
-
-                  stats.rejectedEvents += 1
-                  this.updateRelayHealth(url, (current) => ({
-                    ...current,
-                    lastErrorCode: 'RELAY_EVENT_INVALID',
-                  }))
-                })
-                .finally(() => {
-                  pendingVerifications = Math.max(0, pendingVerifications - 1)
-                  finalize()
-                })
+              pendingVerificationEvents.push({
+                event,
+                relayUrl: url,
+                receivedAtMs: this.clock.now(),
+                attempt: attemptNumber,
+              })
+              if (
+                pendingVerificationEvents.length >=
+                MAX_VERIFICATION_BATCH_EVENTS
+              ) {
+                flushPendingVerifications()
+              } else {
+                scheduleVerificationFlush()
+              }
               return
             }
 
@@ -819,6 +927,11 @@ export class RelayPoolAdapter {
         this.clock.clearTimeout(flushHandle)
         flushHandle = null
       }
+      if (verificationFlushHandle !== null) {
+        this.clock.clearTimeout(verificationFlushHandle)
+        verificationFlushHandle = null
+      }
+      pendingVerificationEvents.splice(0, pendingVerificationEvents.length)
     }
   }
 
