@@ -99,6 +99,16 @@ export function SearchIcon() {
   )
 }
 
+export function FilterIcon() {
+  return (
+    <svg {...COMMON}>
+      <path d="M4 6h16" />
+      <path d="M7 12h10" />
+      <path d="M10 18h4" />
+    </svg>
+  )
+}
+
 export function CopyIcon() {
   return (
     <svg {...COMMON}>

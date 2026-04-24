@@ -81,6 +81,7 @@ import {
   CloseIcon,
   CopyIcon,
   ExternalLinkIcon,
+  FilterIcon,
   GearIcon,
   PinIcon,
   PulseIcon,
@@ -93,7 +94,8 @@ import { SigmaFilterBar, type FilterPill } from '@/features/graph-v2/ui/SigmaFil
 import { SigmaSideRail, type RailButton } from '@/features/graph-v2/ui/SigmaSideRail'
 import { SigmaHud, type HudStat } from '@/features/graph-v2/ui/SigmaHud'
 import { SigmaMinimap } from '@/features/graph-v2/ui/SigmaMinimap'
-import { SigmaSidePanel } from '@/features/graph-v2/ui/SigmaSidePanel'
+import { SigmaMobileBottomNav, type MobileNavButton } from '@/features/graph-v2/ui/SigmaMobileBottomNav'
+import { SigmaSidePanel, type SigmaPanelSnap } from '@/features/graph-v2/ui/SigmaSidePanel'
 import { SigmaRootLoader } from '@/features/graph-v2/ui/SigmaRootLoader'
 import { SigmaEmptyState } from '@/features/graph-v2/ui/SigmaEmptyState'
 import {
@@ -145,6 +147,8 @@ import type { NostrProfile } from '@/lib/nostr'
 type SigmaSettingsTab = 'performance' | 'visuals' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
 type ZapFeedMode = 'live' | 'recent-hour'
+type MobileUtilityPanel = 'filters' | null
+type ZapActivitySource = 'live' | 'recent-hour' | 'simulated'
 type SceneConnection = Pick<
   CanonicalGraphSceneState['edgesById'][string],
   'source' | 'target' | 'relation' | 'origin'
@@ -158,9 +162,27 @@ interface SigmaNotificationLogEntry {
   createdAt: number
 }
 
+interface ZapActivityLogEntry {
+  id: string
+  source: ZapActivitySource
+  fromPubkey: string
+  toPubkey: string
+  sats: number
+  played: boolean
+  createdAt: number
+}
+
 const INTEGER_FORMATTER = new Intl.NumberFormat('es-AR')
 const NOTIFICATION_AUTO_DISMISS_MS = 6500
 const NOTIFICATION_HISTORY_LIMIT = 100
+const ZAP_ACTIVITY_LIMIT = 80
+const MOBILE_PHYSICS_QUERY = '(max-width: 720px)'
+const MOBILE_FORCE_ATLAS_REPULSION_FORCE = 2.4
+const ZAP_ACTIVITY_SOURCE_LABELS: Record<ZapActivitySource, string> = {
+  live: 'Live',
+  'recent-hour': 'Ultima hora',
+  simulated: 'Simulado',
+}
 const NOTIFICATION_TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
   minute: '2-digit',
@@ -233,6 +255,17 @@ const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
 const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
+
+const createDefaultPhysicsTuningForViewport = (): ForceAtlasPhysicsTuning => {
+  if (typeof window === 'undefined' || !window.matchMedia(MOBILE_PHYSICS_QUERY).matches) {
+    return DEFAULT_FORCE_ATLAS_PHYSICS_TUNING
+  }
+
+  return {
+    ...DEFAULT_FORCE_ATLAS_PHYSICS_TUNING,
+    repulsionForce: MOBILE_FORCE_ATLAS_REPULSION_FORCE,
+  }
+}
 const VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS = 1500
 const VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS = 250
 const CONNECTION_LOD_RECOVERY_FRAME_MS = 24
@@ -1468,7 +1501,7 @@ export default function GraphAppV2() {
   const [dragInfluenceTuning, setDragInfluenceTuning] =
     useState<DragNeighborhoodInfluenceTuning>(DEFAULT_DRAG_NEIGHBORHOOD_INFLUENCE_TUNING)
   const [physicsTuning, setPhysicsTuning] =
-    useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
+    useState<ForceAtlasPhysicsTuning>(createDefaultPhysicsTuningForViewport)
   const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(true)
   const [
     hideConnectionsOnLowPerformance,
@@ -1488,6 +1521,8 @@ export default function GraphAppV2() {
   const [isRuntimeInspectorOpen, setIsRuntimeInspectorOpen] = useState(false)
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isPersonSearchOpen, setIsPersonSearchOpen] = useState(false)
+  const [mobileUtilityPanel, setMobileUtilityPanel] = useState<MobileUtilityPanel>(null)
+  const [mobilePanelSnap, setMobilePanelSnap] = useState<SigmaPanelSnap>('mid')
   const [personSearchQuery, setPersonSearchQuery] = useState('')
   const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
   // Rail toggles — direct controls, decoupled from the settings panel
@@ -1501,6 +1536,8 @@ export default function GraphAppV2() {
   const [recentZapReplayRefreshRequest, setRecentZapReplayRefreshRequest] = useState(0)
   const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
     useState(false)
+  const [zapActivityLog, setZapActivityLog] = useState<ZapActivityLogEntry[]>([])
+  const zapActivitySequenceRef = useRef(0)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
   const visibleProfileWarmupAttemptedAtRef = useRef(new Map<string, number>())
   const visibleProfileWarmupInflightRef = useRef(new Set<string>())
@@ -1686,6 +1723,7 @@ export default function GraphAppV2() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (mobileUtilityPanel) { setMobileUtilityPanel(null); return }
         if (isPersonSearchOpen) { setIsPersonSearchOpen(false); return }
         if (isSettingsOpen) { setIsSettingsOpen(false); return }
         if (isZapsPanelOpen) { setIsZapsPanelOpen(false); return }
@@ -1705,6 +1743,7 @@ export default function GraphAppV2() {
         setIsSettingsOpen(false)
         setIsZapsPanelOpen(false)
         setIsNotificationsOpen(false)
+        setMobileUtilityPanel(null)
         setIsRootSheetOpen(false)
         setIsRuntimeInspectorOpen((current) => !current)
         return
@@ -1722,6 +1761,7 @@ export default function GraphAppV2() {
           setIsSettingsOpen(false)
           setIsZapsPanelOpen(false)
           setIsNotificationsOpen(false)
+          setMobileUtilityPanel(null)
           setIsPersonSearchOpen(true)
           return
         }
@@ -1730,7 +1770,7 @@ export default function GraphAppV2() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [canUseRuntimeInspector, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isZapsPanelOpen])
+  }, [canUseRuntimeInspector, mobileUtilityPanel, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isZapsPanelOpen])
 
   const closeCompetingSidePanels = useCallback(() => {
     setIsRootSheetOpen(false)
@@ -1739,6 +1779,7 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
+    setMobileUtilityPanel(null)
   }, [])
 
   const dismissIdentityHelp = useCallback(() => {
@@ -1779,12 +1820,14 @@ export default function GraphAppV2() {
         ? {
             onNodeClick: (pubkey: string) => {
               closeCompetingSidePanels()
+              setMobilePanelSnap('peek')
               setFixtureState((current) =>
                 current ? { ...current, selectedNodePubkey: pubkey } : current,
               )
             },
             onNodeDoubleClick: (pubkey: string) => {
               closeCompetingSidePanels()
+              setMobilePanelSnap('peek')
               setFixtureState((current) =>
                 current ? { ...current, selectedNodePubkey: pubkey } : current,
               )
@@ -1818,10 +1861,12 @@ export default function GraphAppV2() {
             ...controller.callbacks,
             onNodeClick: (pubkey: string) => {
               closeCompetingSidePanels()
+              setMobilePanelSnap('peek')
               controller.callbacks.onNodeClick(pubkey)
             },
             onNodeDoubleClick: (pubkey: string) => {
               closeCompetingSidePanels()
+              setMobilePanelSnap('peek')
               controller.callbacks.onNodeDoubleClick(pubkey)
               handleExploreConnections(
                 pubkey,
@@ -2112,6 +2157,23 @@ export default function GraphAppV2() {
     () => buildSceneConnectionIndex(sceneState.edgesById),
     [sceneState.edgesById],
   )
+  const appendZapActivity = useCallback((
+    zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>,
+    source: ZapActivitySource,
+    played: boolean,
+  ) => {
+    zapActivitySequenceRef.current += 1
+    const entry: ZapActivityLogEntry = {
+      id: `${Date.now()}-${zapActivitySequenceRef.current}`,
+      source,
+      fromPubkey: zap.fromPubkey,
+      toPubkey: zap.toPubkey,
+      sats: zap.sats,
+      played,
+      createdAt: Date.now(),
+    }
+    setZapActivityLog((current) => [entry, ...current].slice(0, ZAP_ACTIVITY_LIMIT))
+  }, [])
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     const shouldTrace = shouldTraceZapPair(zap)
@@ -2214,10 +2276,14 @@ export default function GraphAppV2() {
   const shouldEnableRecentZapReplay =
     canRunZapFeed && zapFeedMode === 'recent-hour'
   const handleLiveZap = useCallback((zap: ParsedZap) => {
-    handleZap(zap)
+    const played = handleZap(zap)
+    appendZapActivity(zap, 'live', played)
     setLiveZapFeedFeedback(null)
-  }, [handleZap])
-  const handleRecentZapReplay = useCallback((zap: ParsedZap) => handleZap(zap), [handleZap])
+  }, [appendZapActivity, handleZap])
+  const handleRecentZapReplay = useCallback((zap: ParsedZap) => {
+    const played = handleZap(zap)
+    appendZapActivity(zap, 'recent-hour', played)
+  }, [appendZapActivity, handleZap])
   useLiveZapFeed({
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
@@ -2305,12 +2371,13 @@ export default function GraphAppV2() {
     const buckets = [21, 210, 2_100, 21_000, 210_000]
     const sats = buckets[Math.floor(Math.random() * buckets.length)]
     const played = handleZap({ fromPubkey, toPubkey, sats })
+    appendZapActivity({ fromPubkey, toPubkey, sats }, 'simulated', played)
     setZapFeedback(
       played
         ? `Zap simulado: ${sats} sats ${fromPubkey.slice(0, 8)}… → ${toPubkey.slice(0, 8)}…`
         : 'No se pudo reproducir el zap simulado.',
     )
-  }, [findSimulationPair, handleZap])
+  }, [appendZapActivity, findSimulationPair, handleZap])
 
   const updatePhysicsTuning = useCallback(function updatePhysicsTuning<K extends keyof ForceAtlasPhysicsTuning>(
     key: K, value: ForceAtlasPhysicsTuning[K],
@@ -2344,6 +2411,8 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
+    setMobileUtilityPanel(null)
+    setMobilePanelSnap('mid')
     setIsSettingsOpen(true)
   }, [])
 
@@ -2569,6 +2638,7 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
+    setMobileUtilityPanel(null)
     setIsRootSheetOpen(true)
   }, [])
 
@@ -2587,6 +2657,8 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
+    setMobileUtilityPanel(null)
+    setMobilePanelSnap('mid')
     setIsPersonSearchOpen(true)
   }, [clearSelectedNode, isPersonSearchOpen, sceneState.rootPubkey])
 
@@ -2601,6 +2673,7 @@ export default function GraphAppV2() {
       bridge.selectNode(pubkey)
     }
     setIsPersonSearchOpen(false)
+    setMobilePanelSnap('peek')
   }, [bridge, isFixtureMode, updateFixtureState])
 
   const handleOpenSettings = useCallback(() => {
@@ -2623,6 +2696,8 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsRootSheetOpen(false)
+    setMobileUtilityPanel(null)
+    setMobilePanelSnap('mid')
     setIsNotificationsOpen(true)
   }, [clearSelectedNode, isNotificationsOpen])
 
@@ -2637,6 +2712,8 @@ export default function GraphAppV2() {
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsRootSheetOpen(false)
+    setMobileUtilityPanel(null)
+    setMobilePanelSnap('mid')
     setIsZapsPanelOpen(true)
   }, [clearSelectedNode, isZapsPanelOpen])
 
@@ -2654,8 +2731,28 @@ export default function GraphAppV2() {
     setIsZapsPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRootSheetOpen(false)
+    setMobileUtilityPanel(null)
     setIsRuntimeInspectorOpen(true)
   }, [canUseRuntimeInspector, clearSelectedNode, isRuntimeInspectorOpen])
+
+  const handleOpenMobileUtilityPanel = useCallback((
+    panel: Exclude<MobileUtilityPanel, null>,
+    snap: SigmaPanelSnap = 'mid',
+  ) => {
+    if (mobileUtilityPanel === panel) {
+      setMobileUtilityPanel(null)
+      return
+    }
+
+    setIsRootSheetOpen(false)
+    setIsPersonSearchOpen(false)
+    setIsSettingsOpen(false)
+    setIsZapsPanelOpen(false)
+    setIsNotificationsOpen(false)
+    setIsRuntimeInspectorOpen(false)
+    setMobilePanelSnap(snap)
+    setMobileUtilityPanel(panel)
+  }, [mobileUtilityPanel])
 
   const handleTogglePhysics = useCallback(() => {
     setPhysicsEnabled((current) => {
@@ -2854,6 +2951,68 @@ export default function GraphAppV2() {
     relayState.isGraphStale,
   ])
 
+  const mobileNavButtons: MobileNavButton[] = useMemo(() => [
+    {
+      id: 'search',
+      label: 'Buscar',
+      tip: isPersonSearchOpen
+        ? 'Cerrar busqueda'
+        : personSearchQuery.trim()
+          ? `Buscar persona: ${personSearchMatches.length} coincidencia${personSearchMatches.length === 1 ? '' : 's'}`
+          : 'Buscar persona',
+      icon: <SearchIcon />,
+      active: isPersonSearchOpen || personSearchQuery.trim().length > 0,
+      onClick: handleOpenPersonSearch,
+    },
+    {
+      id: 'filters',
+      label: 'Filtros',
+      tip: mobileUtilityPanel === 'filters'
+        ? 'Cerrar filtros de conexiones'
+        : 'Filtros de conexiones',
+      icon: <FilterIcon />,
+      active: mobileUtilityPanel === 'filters',
+      onClick: () => handleOpenMobileUtilityPanel('filters', 'mid'),
+    },
+    {
+      id: 'zaps',
+      label: 'Zaps',
+      tip: isZapsPanelOpen ? 'Cerrar zaps' : 'Zaps en vivo',
+      icon: <ZapIcon />,
+      active: isZapsPanelOpen,
+      badge: zapActivityLog.length,
+      onClick: handleOpenZapsPanel,
+    },
+    {
+      id: 'view',
+      label: 'Vista',
+      tip: 'Centrar vista',
+      icon: <TargetIcon />,
+      onClick: handleRecenter,
+    },
+    {
+      id: 'settings',
+      label: 'Ajustes',
+      tip: isSettingsOpen ? 'Cerrar ajustes' : 'Ajustes',
+      icon: <GearIcon />,
+      active: isSettingsOpen,
+      onClick: handleOpenSettings,
+    },
+  ], [
+    handleOpenMobileUtilityPanel,
+    handleOpenPersonSearch,
+    handleOpenZapsPanel,
+    handleOpenSettings,
+    isPersonSearchOpen,
+    isSettingsOpen,
+    isZapsPanelOpen,
+    mobileUtilityPanel,
+    personSearchMatches.length,
+    personSearchQuery,
+    handleRecenter,
+    zapActivityLog.length,
+  ])
+
   // Toasts — combine feedback sources
   const toastEntries: SigmaToast[] = useMemo(() => {
     const entries: SigmaToast[] = []
@@ -2958,6 +3117,7 @@ export default function GraphAppV2() {
               avatarRuntimeOptions={avatarRuntimeOptions}
               onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
             />
+            {renderZapSettingsContent()}
           </div>
         )
       case 'relays':
@@ -3025,7 +3185,7 @@ export default function GraphAppV2() {
             />
             <PhysicsTuningPanel
               onChange={updatePhysicsTuning}
-              onReset={() => setPhysicsTuning(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)}
+              onReset={() => setPhysicsTuning(createDefaultPhysicsTuningForViewport())}
               tuning={physicsTuning}
             />
             {isDragFixtureLab ? (
@@ -3115,7 +3275,7 @@ export default function GraphAppV2() {
 
   // ── Detail panel content ───────────────────────────────────────────────────
 
-  const renderZapsContent = () => (
+  const renderZapSettingsContent = () => (
     <div>
       <div className="sg-settings-section">
         <h4>Visualizacion</h4>
@@ -3269,6 +3429,71 @@ export default function GraphAppV2() {
     </div>
   )
 
+  const getZapActorLabel = (pubkey: string) => {
+    const node = sceneState.nodesByPubkey[pubkey]
+    const label = node?.label?.trim()
+    return label || `${pubkey.slice(0, 8)}...`
+  }
+
+  const zapFeedStatus = shouldEnableLiveZapFeed
+    ? 'Live'
+    : zapFeedMode === 'recent-hour'
+      ? 'Ultima hora'
+      : 'Pausado'
+
+  const renderZapsContent = () => (
+    <div className="sg-zap-feed">
+      <div className="sg-zap-feed__head">
+        <div className="sg-zap-feed__summary">
+          <span className="sg-section-label">Zaps visibles</span>
+          <strong>{zapActivityLog.length} zap{zapActivityLog.length === 1 ? '' : 's'}</strong>
+        </div>
+        <span
+          className={`sg-zap-feed__status${shouldEnableLiveZapFeed ? ' sg-zap-feed__status--live' : ''}`}
+        >
+          {zapFeedStatus}
+        </span>
+      </div>
+
+      {liveZapFeedFeedback ? (
+        <p className="sg-zap-feed__feedback">{liveZapFeedFeedback}</p>
+      ) : null}
+
+      {zapActivityLog.length > 0 ? (
+        <div className="sg-zap-feed__list">
+          {zapActivityLog.map((entry) => (
+            <article
+              className={`sg-zap-feed__item${entry.played ? '' : ' sg-zap-feed__item--dropped'}`}
+              key={entry.id}
+            >
+              <div className="sg-zap-feed__meta">
+                <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
+                <time dateTime={new Date(entry.createdAt).toISOString()}>
+                  {NOTIFICATION_TIME_FORMATTER.format(entry.createdAt)}
+                </time>
+              </div>
+              <div className="sg-zap-feed__amount">
+                {formatInteger(entry.sats)} sats
+              </div>
+              <p>
+                <span>{getZapActorLabel(entry.fromPubkey)}</span>
+                <span aria-hidden="true">{'->'}</span>
+                <span>{getZapActorLabel(entry.toPubkey)}</span>
+              </p>
+              <span className="sg-zap-feed__result">
+                {entry.played ? 'Mostrado en el grafo' : 'Fuera de la vista actual'}
+              </span>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="sg-zap-feed__empty">
+          Todavia no hay zaps visibles en esta sesion.
+        </p>
+      )}
+    </div>
+  )
+
   const renderNotificationsContent = () => (
     <div className="sg-notifications">
       <div className="sg-notifications__head">
@@ -3319,6 +3544,44 @@ export default function GraphAppV2() {
           Todavia no hay notificaciones en esta sesion.
         </p>
       )}
+    </div>
+  )
+
+  const renderFilterContent = () => (
+    <div className="sg-mobile-filter-panel">
+      <div className="sg-mobile-panel-intro">
+        <span className="sg-section-label">Filtro de conexiones</span>
+        <p>
+          Elegi que relaciones queres ver en el grafo. Esto cambia la proyeccion visible,
+          no los datos cargados ni la evidencia exportable.
+        </p>
+      </div>
+      <div className="sg-mobile-filter-list">
+        {filterPills.map((pill) => (
+          <button
+            aria-pressed={pill.id === filterActiveId}
+            className={`sg-mobile-filter-option${pill.id === filterActiveId ? ' sg-mobile-filter-option--active' : ''}`}
+            key={pill.id}
+            onClick={() => {
+              handleFilterSelect(pill.id)
+              setMobilePanelSnap('peek')
+            }}
+            type="button"
+          >
+            <span
+              className="sg-mobile-filter-option__swatch"
+              style={{ background: pill.swatch }}
+            />
+            <span className="sg-mobile-filter-option__body">
+              <strong>{pill.label}</strong>
+              <span>{pill.hint}</span>
+            </span>
+            <span className="sg-mobile-filter-option__count">
+              {pill.caption ?? pill.count ?? '-'}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 
@@ -3564,13 +3827,15 @@ export default function GraphAppV2() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const isPersonSearchPanelOpen = isPersonSearchOpen && !isRootSheetOpen && hasRoot
+  const isMobileUtilityPanelOpen = mobileUtilityPanel !== null && !isRootSheetOpen && hasRoot
   const isIdentityPanelOpen =
     detail.node !== null &&
     !isRootSheetOpen &&
     !isSettingsOpen &&
     !isZapsPanelOpen &&
     !isNotificationsOpen &&
-    !isPersonSearchPanelOpen
+    !isPersonSearchPanelOpen &&
+    !isMobileUtilityPanelOpen
   const handleCloseSidePanel = useCallback(() => {
     if (isSettingsOpen) {
       setIsSettingsOpen(false)
@@ -3584,6 +3849,10 @@ export default function GraphAppV2() {
     if (isPersonSearchPanelOpen) {
       setIsPersonSearchOpen(false)
     }
+    if (isMobileUtilityPanelOpen) {
+      setMobileUtilityPanel(null)
+      return
+    }
     if (isIdentityPanelOpen && !isIdentityHelpDismissed) {
       dismissIdentityHelp()
     }
@@ -3593,6 +3862,7 @@ export default function GraphAppV2() {
     dismissIdentityHelp,
     isIdentityHelpDismissed,
     isIdentityPanelOpen,
+    isMobileUtilityPanelOpen,
     isNotificationsOpen,
     isPersonSearchPanelOpen,
     isSettingsOpen,
@@ -3652,8 +3922,12 @@ export default function GraphAppV2() {
             pills={filterPills}
           />
           <SigmaSideRail buttons={railButtons} />
+          <SigmaMobileBottomNav buttons={mobileNavButtons} />
           <SigmaHud stats={hudStats} />
-          {!isIdentityPanelOpen && !isPersonSearchPanelOpen && !isNotificationsOpen && (
+          {!isIdentityPanelOpen &&
+            !isPersonSearchPanelOpen &&
+            !isNotificationsOpen &&
+            !isMobileUtilityPanelOpen && (
             <SigmaMinimap
               getSnapshot={getMinimapSnapshot}
               getViewport={getMinimapViewport}
@@ -3694,7 +3968,12 @@ export default function GraphAppV2() {
         </RuntimeInspectorUiStateBridge>
       ) : null}
 
-      {(isSettingsOpen || isZapsPanelOpen || isNotificationsOpen || isPersonSearchPanelOpen || isIdentityPanelOpen) &&
+      {(isSettingsOpen ||
+        isZapsPanelOpen ||
+        isNotificationsOpen ||
+        isPersonSearchPanelOpen ||
+        isIdentityPanelOpen ||
+        isMobileUtilityPanelOpen) &&
         !isRuntimeInspectorOpen && (
         <SigmaSidePanel
           eyebrow={
@@ -3706,8 +3985,11 @@ export default function GraphAppV2() {
                   ? 'NOTIFICACIONES'
                   : isPersonSearchPanelOpen
                     ? 'BUSCAR PERSONA'
-                    : 'IDENTIDAD'
+                    : mobileUtilityPanel === 'filters'
+                      ? 'FILTROS'
+                      : 'IDENTIDAD'
           }
+          mobileSnap={mobilePanelSnap}
           onClose={handleCloseSidePanel}
           tabs={
             isSettingsOpen && settingsTabs.length > 1 ? (
@@ -3744,6 +4026,8 @@ export default function GraphAppV2() {
               query={personSearchQuery}
               totalNodeCount={deferredScene.render.nodes.length}
             />
+          ) : mobileUtilityPanel === 'filters' ? (
+            renderFilterContent()
           ) : (
             renderDetailContent()
           )}
