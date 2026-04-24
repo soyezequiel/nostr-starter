@@ -3,6 +3,7 @@
 
 import {
   memo,
+  type ReactNode,
   useCallback,
   startTransition,
   useDeferredValue,
@@ -36,6 +37,7 @@ import type {
   CanonicalGraphSceneState,
   CanonicalGraphState,
   CanonicalGraphUiState,
+  CanonicalRelayState,
   CanonicalNode,
 } from '@/features/graph-v2/domain/types'
 import {
@@ -1183,7 +1185,7 @@ interface SigmaRootLoadChromeProps {
 const EMPTY_SERVER_ROOT_LOAD: RootLoadState = {
   status: 'idle',
   message: null,
-  loadedFrom: null,
+  loadedFrom: 'none',
   visibleLinkProgress: null,
 }
 
@@ -1250,6 +1252,26 @@ const SigmaRootLoadChrome = memo(function SigmaRootLoadChrome({
       ) : null}
     </>
   )
+})
+
+interface RuntimeInspectorUiStateBridgeProps {
+  bridge: LegacyKernelBridge
+  children: (uiState: CanonicalGraphUiState) => ReactNode
+  fixtureUiState: CanonicalGraphUiState | null
+}
+
+const RuntimeInspectorUiStateBridge = memo(function RuntimeInspectorUiStateBridge({
+  bridge,
+  children,
+  fixtureUiState,
+}: RuntimeInspectorUiStateBridgeProps) {
+  const liveUiState = useSyncExternalStore(
+    bridge.subscribeUi,
+    bridge.getUiState,
+    bridge.getUiState,
+  )
+
+  return <>{children(fixtureUiState ?? liveUiState)}</>
 })
 
 export default function GraphAppV2() {
@@ -3521,22 +3543,26 @@ export default function GraphAppV2() {
 
       {/* Side panel — search, detail, or settings (right), one at a time */}
       {canUseRuntimeInspector && isRuntimeInspectorOpen && hasRoot ? (
-        <RuntimeInspectorDrawer
-          avatarPerfSnapshot={avatarPerfSnapshot}
-          deviceSummary={runtimeInspectorStoreState.deviceSummary}
-          graphSummary={runtimeInspectorStoreState.graphSummary}
-          liveZapFeedback={liveZapFeedFeedback}
-          onClose={() => setIsRuntimeInspectorOpen(false)}
-          open={isRuntimeInspectorOpen}
-          physicsEnabled={physicsEnabled}
-          scene={deferredScene}
-          sceneState={sceneState}
-          showZaps={showZaps}
-          sigmaHostRef={sigmaHostRef}
-          uiState={uiState}
-          visibleProfileWarmup={visibleProfileWarmupSnapshot}
-          zapSummary={runtimeInspectorStoreState.zapSummary}
-        />
+        <RuntimeInspectorUiStateBridge bridge={bridge} fixtureUiState={fixtureUiState}>
+          {(uiState) => (
+            <RuntimeInspectorDrawer
+              avatarPerfSnapshot={avatarPerfSnapshot}
+              deviceSummary={runtimeInspectorStoreState.deviceSummary}
+              graphSummary={runtimeInspectorStoreState.graphSummary}
+              liveZapFeedback={liveZapFeedFeedback}
+              onClose={() => setIsRuntimeInspectorOpen(false)}
+              open={isRuntimeInspectorOpen}
+              physicsEnabled={physicsEnabled}
+              scene={deferredScene}
+              sceneState={sceneState}
+              showZaps={showZaps}
+              sigmaHostRef={sigmaHostRef}
+              uiState={uiState}
+              visibleProfileWarmup={visibleProfileWarmupSnapshot}
+              zapSummary={runtimeInspectorStoreState.zapSummary}
+            />
+          )}
+        </RuntimeInspectorUiStateBridge>
       ) : null}
 
       {(isSettingsOpen || isNotificationsOpen || isPersonSearchPanelOpen || isIdentityPanelOpen) &&
