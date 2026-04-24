@@ -401,6 +401,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private hideAvatarsOnMove = false
 
+  private avatarImagesEnabled = true
+
+  private hideConnectionsForLowPerformance = false
+
   private avatarRuntimeOptions: AvatarRuntimeOptions =
     DEFAULT_AVATAR_RUNTIME_OPTIONS
 
@@ -822,6 +826,29 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.safeRefresh()
   }
 
+  public setAvatarImagesEnabled(enabled: boolean) {
+    if (this.avatarImagesEnabled === enabled) {
+      return
+    }
+
+    this.avatarImagesEnabled = enabled
+    if (enabled) {
+      this.avatarBudget?.enable()
+    } else {
+      this.avatarBudget?.disable()
+    }
+    this.safeRefresh()
+  }
+
+  public setHideConnectionsForLowPerformance(enabled: boolean) {
+    if (this.hideConnectionsForLowPerformance === enabled) {
+      return
+    }
+
+    this.hideConnectionsForLowPerformance = enabled
+    this.safeRender()
+  }
+
   public setAvatarRuntimeOptions(options: AvatarRuntimeOptions) {
     const nextOptions: AvatarRuntimeOptions = {
       sizeThreshold: clampNumber(
@@ -1130,7 +1157,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.nodeHitTester?.markDirty()
     }
     this.lastDragFlushTimestamp = now
-    this.safeRefresh()
+    this.safeRender()
     if (shouldEmitDragMove) {
       this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
     }
@@ -1258,7 +1285,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.resumePhysicsAfterDrag = true
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)
-    this.safeRefresh()
+    this.safeRender()
 
     // Recalculate hover based on actual pointer position after release.
     this.recalculateHoverAfterDrag()
@@ -1489,6 +1516,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
         },
       })
       this.avatarBudget = new PerfBudget(tier)
+      if (!this.avatarImagesEnabled) {
+        this.avatarBudget.disable()
+      }
       this.avatarOverlay = new AvatarOverlayRenderer({
         sigma,
         cache: this.avatarCache,
@@ -1550,7 +1580,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.motionClearTimer = setTimeout(() => {
       this.motionActive = false
       this.motionClearTimer = null
-      this.safeRefresh()
+      this.safeRender()
     }, this.MOTION_RESUME_MS)
   }
 
@@ -1565,7 +1595,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.cameraMotionClearTimer = setTimeout(() => {
       this.cameraMotionActive = false
       this.cameraMotionClearTimer = null
-      this.safeRefresh()
+      this.safeRender()
     }, this.MOTION_RESUME_MS)
   }
 
@@ -1641,7 +1671,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.sceneFocusTransition = null
     }
 
-    this.safeRefresh()
+    this.safeRender()
 
     if (this.highlightTransition || this.sceneFocusTransition) {
       this.scheduleHighlightTransitionFrame()
@@ -1991,6 +2021,31 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
   }
 
+  private resolveLowPerformanceEdgeLodAttributes(
+    edge: string,
+    data: RenderEdgeAttributes,
+  ): RenderEdgeAttributes {
+    if (data.hidden || data.touchesFocus || !this.sigma) {
+      return data
+    }
+
+    const hoverFocus = this.currentHoverFocus
+    if (hoverFocus.pubkey) {
+      const graph = this.sigma.getGraph()
+      if (!graph.hasEdge(edge)) {
+        return data
+      }
+
+      const source = graph.source(edge)
+      const target = graph.target(edge)
+      if (source === hoverFocus.pubkey || target === hoverFocus.pubkey) {
+        return this.resolveEdgeHoverAttributes(edge, data, hoverFocus)
+      }
+    }
+
+    return { ...data, hidden: true }
+  }
+
   private applyNodeSceneFocusTransition(
     node: string,
     target: RenderNodeAttributes,
@@ -2068,6 +2123,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return dragEdgeLod
     }
 
+    if (this.hideConnectionsForLowPerformance) {
+      return this.resolveLowPerformanceEdgeLodAttributes(edge, data)
+    }
+
     if (this.highlightTransition) {
       const amount = this.getTransitionAmount(this.highlightTransition)
       const from = this.resolveEdgeHoverAttributes(
@@ -2132,7 +2191,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     // reassigned (not mutated) on the next hover, so the transition's `to`
     // snapshot stays stable without a defensive clone.
     this.startHighlightTransition(previousFocus, this.currentHoverFocus)
-    this.safeRefresh()
+    this.safeRender()
   }
 
   private cancelPendingHoverFocus() {

@@ -57,6 +57,17 @@ export function ZapIcon() {
   )
 }
 
+export function PhotoIcon({ disabled = false }: { disabled?: boolean }) {
+  return (
+    <svg {...COMMON}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8" cy="10" r="1.5" />
+      <path d="m4 17 5-5 4 4 2-2 5 5" />
+      {disabled ? <line x1="4" y1="4" x2="20" y2="20" /> : null}
+    </svg>
+  )
+}
+
 export function TargetIcon() {
   return (
     <svg {...COMMON}>

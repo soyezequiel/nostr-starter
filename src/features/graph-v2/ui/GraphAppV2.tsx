@@ -59,7 +59,10 @@ import {
   DEFAULT_AVATAR_RUNTIME_OPTIONS,
   type AvatarRuntimeOptions,
 } from '@/features/graph-v2/renderer/avatar/types'
-import type { PerfBudgetSnapshot } from '@/features/graph-v2/renderer/avatar/perfBudget'
+import {
+  PERF_BUDGET_DOWNGRADE_MS,
+  type PerfBudgetSnapshot,
+} from '@/features/graph-v2/renderer/avatar/perfBudget'
 import type {
   SocialGraphCaptureFormat,
   SocialGraphCapturePhase,
@@ -82,6 +85,7 @@ import {
   CopyIcon,
   ExternalLinkIcon,
   GearIcon,
+  PhotoIcon,
   PinIcon,
   PulseIcon,
   SearchIcon,
@@ -218,6 +222,18 @@ const DEVICE_PROFILE_LABELS: Record<
 
 type ValidRootIdentity = Extract<RootIdentityResolution, { status: 'valid' }>
 
+const readStoredAvatarPhotosEnabled = () => {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(AVATAR_PHOTOS_ENABLED_STORAGE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
 interface LoadRootInput
   extends Omit<Pick<ValidRootIdentity, 'pubkey' | 'relays' | 'evidence'>, 'relays'> {
   relays?: string[]
@@ -238,10 +254,27 @@ const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
 }
 
 const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
+const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
 const VISIBLE_PROFILE_WARMUP_LOOP_DELAY_MS = 1500
 const VISIBLE_PROFILE_WARMUP_INITIAL_DELAY_MS = 250
+const CONNECTION_LOD_RECOVERY_FRAME_MS = 24
+
+const resolveLowPerformanceConnectionLodState = (
+  snapshot: PerfBudgetSnapshot | null,
+  wasActive: boolean,
+) => {
+  if (!snapshot) {
+    return false
+  }
+
+  if (snapshot.emaFrameMs >= PERF_BUDGET_DOWNGRADE_MS) {
+    return true
+  }
+
+  return wasActive && snapshot.emaFrameMs > CONNECTION_LOD_RECOVERY_FRAME_MS
+}
 
 const selectSavedRootState = (state: AppStore) => ({
   savedRoots: state.savedRoots,
@@ -1358,6 +1391,14 @@ export default function GraphAppV2() {
   const [physicsTuning, setPhysicsTuning] =
     useState<ForceAtlasPhysicsTuning>(DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   const [devPhysicsAutoFreezeEnabled, setDevPhysicsAutoFreezeEnabled] = useState(true)
+  const [
+    devHideConnectionsOnLowPerformance,
+    setDevHideConnectionsOnLowPerformance,
+  ] = useState(false)
+  const [
+    isLowPerformanceForConnections,
+    setIsLowPerformanceForConnections,
+  ] = useState(false)
   const [avatarRuntimeOptions, setAvatarRuntimeOptions] =
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
@@ -1378,6 +1419,9 @@ export default function GraphAppV2() {
   const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
   // Rail toggles — direct controls, decoupled from the settings panel
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
+  const [avatarPhotosEnabled, setAvatarPhotosEnabled] = useState(
+    readStoredAvatarPhotosEnabled,
+  )
   const [showZaps, setShowZaps] = useState(true)
   const [zapFeedMode, setZapFeedMode] = useState<ZapFeedMode>('live')
   const [recentZapReplayRequest, setRecentZapReplayRequest] = useState(0)
@@ -1458,6 +1502,23 @@ export default function GraphAppV2() {
     bridge.connect()
     return () => bridge.dispose()
   }, [bridge])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        AVATAR_PHOTOS_ENABLED_STORAGE_KEY,
+        avatarPhotosEnabled ? '1' : '0',
+      )
+    } catch {
+      // Persistence is best-effort; the runtime toggle still works.
+    }
+  }, [avatarPhotosEnabled])
+
+  useEffect(() => {
+    setIsLowPerformanceForConnections((current) =>
+      resolveLowPerformanceConnectionLodState(avatarPerfSnapshot, current),
+    )
+  }, [avatarPerfSnapshot])
 
   useEffect(() => {
     if (!isGraphPerfStatsEnabled()) return
@@ -2145,6 +2206,10 @@ export default function GraphAppV2() {
   )
 
   const stableAvatarRuntimeOptions = useMemo(() => avatarRuntimeOptions, [avatarRuntimeOptions])
+  const lowPerformanceConnectionHidingActive =
+    isDev &&
+    devHideConnectionsOnLowPerformance &&
+    isLowPerformanceForConnections
   const handleAvatarPerfSnapshot = useCallback(
     (snapshot: PerfBudgetSnapshot | null) => { setAvatarPerfSnapshot(snapshot) },
     [],
@@ -2497,6 +2562,18 @@ export default function GraphAppV2() {
     })
   }, [])
 
+  const handleToggleAvatarPhotos = useCallback(() => {
+    setAvatarPhotosEnabled((current) => {
+      const next = !current
+      setActionFeedback(
+        next
+          ? 'Fotos de avatares activadas.'
+          : 'Fotos de avatares desactivadas para ahorrar rendimiento.',
+      )
+      return next
+    })
+  }, [])
+
   const handleToggleZaps = useCallback(() => {
     setShowZaps((current) => {
       const next = !current
@@ -2769,13 +2846,25 @@ export default function GraphAppV2() {
       tip: physicsEnabled ? 'Pausar física' : 'Reanudar física',
       icon: <AtomIcon />,
       active: physicsEnabled,
+      pressed: physicsEnabled,
       onClick: handleTogglePhysics,
+    },
+    {
+      id: 'avatar-photos',
+      tip: avatarPhotosEnabled
+        ? 'Desactivar fotos para ahorrar rendimiento'
+        : 'Activar fotos de avatares',
+      icon: <PhotoIcon disabled={!avatarPhotosEnabled} />,
+      active: avatarPhotosEnabled,
+      pressed: avatarPhotosEnabled,
+      onClick: handleToggleAvatarPhotos,
     },
     {
       id: 'zaps',
       tip: showZaps ? 'Ocultar zaps' : 'Mostrar zaps',
       icon: <ZapIcon />,
       active: showZaps,
+      pressed: showZaps,
       onClick: handleToggleZaps,
       dividerAfter: true,
     },
@@ -2805,7 +2894,9 @@ export default function GraphAppV2() {
       onClick: handleOpenPersonSearch,
     },
   ], [
+    avatarPhotosEnabled,
     canUseRuntimeInspector,
+    handleToggleAvatarPhotos,
     handleOpenPersonSearch,
     handleOpenNotifications,
     handleOpenRuntimeInspector,
@@ -3105,6 +3196,38 @@ export default function GraphAppV2() {
                       setDevPhysicsAutoFreezeEnabled(event.target.checked)
                     }}
                     type="checkbox"
+                  />
+                </div>
+              </div>
+            ) : null}
+            {isDev ? (
+              <div className="sg-settings-section">
+                <h4>Render dev</h4>
+                <div className="sg-setting-row">
+                  <div>
+                    <div className="sg-setting-row__lbl">
+                      Ocultar conexiones si baja el rendimiento
+                    </div>
+                    <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 0' }}>
+                      Estado: {lowPerformanceConnectionHidingActive
+                        ? 'ocultando conexiones'
+                        : isLowPerformanceForConnections
+                          ? 'bajo rendimiento detectado'
+                          : 'rendimiento estable'}.
+                    </p>
+                  </div>
+                  <button
+                    aria-pressed={devHideConnectionsOnLowPerformance}
+                    className={`sg-toggle${devHideConnectionsOnLowPerformance ? ' sg-toggle--on' : ''}`}
+                    onClick={() => {
+                      setDevHideConnectionsOnLowPerformance((current) => !current)
+                    }}
+                    title={
+                      devHideConnectionsOnLowPerformance
+                        ? 'Desactivar LOD de conexiones por rendimiento'
+                        : 'Activar LOD de conexiones por rendimiento'
+                    }
+                    type="button"
                   />
                 </div>
               </div>
@@ -3518,10 +3641,12 @@ export default function GraphAppV2() {
     >
       {/* Canvas — always present, full bleed under all chrome */}
       <SigmaCanvasHost
+        avatarImagesEnabled={avatarPhotosEnabled}
         avatarRuntimeOptions={stableAvatarRuntimeOptions}
         callbacks={callbacks}
         dragInfluenceTuning={dragInfluenceTuning}
         enableDebugProbe={isTestMode}
+        hideConnectionsForLowPerformance={lowPerformanceConnectionHidingActive}
         hideAvatarsOnMove={stableAvatarRuntimeOptions.hideImagesOnFastNodes}
         onAvatarPerfSnapshot={handleAvatarPerfSnapshot}
         physicsAutoFreezeEnabled={isDev ? devPhysicsAutoFreezeEnabled : true}

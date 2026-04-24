@@ -18,6 +18,53 @@ const wait = (ms: number) =>
     setTimeout(resolve, ms)
   })
 
+test('avatar image toggle disables and re-enables the avatar budget', async () => {
+  const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
+  const originalWebGLRenderingContext = globalThis.WebGLRenderingContext
+  globalThis.WebGL2RenderingContext ??= class {} as typeof WebGL2RenderingContext
+  globalThis.WebGLRenderingContext ??= class {} as typeof WebGLRenderingContext
+
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+  try {
+    let disableCalls = 0
+    let enableCalls = 0
+    let refreshCalls = 0
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      avatarBudget: {
+        disable: () => void
+        enable: () => void
+      }
+      safeRefresh: () => void
+      setAvatarImagesEnabled: (enabled: boolean) => void
+    }
+
+    adapter.avatarBudget = {
+      disable: () => {
+        disableCalls += 1
+      },
+      enable: () => {
+        enableCalls += 1
+      },
+    }
+    adapter.safeRefresh = () => {
+      refreshCalls += 1
+    }
+
+    adapter.setAvatarImagesEnabled(false)
+    adapter.setAvatarImagesEnabled(false)
+    adapter.setAvatarImagesEnabled(true)
+
+    assert.equal(disableCalls, 1)
+    assert.equal(enableCalls, 1)
+    assert.equal(refreshCalls, 2)
+  } finally {
+    globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
+    globalThis.WebGLRenderingContext = originalWebGLRenderingContext
+  }
+})
+
 const installAnimationFrameStub = () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
@@ -133,7 +180,8 @@ const createCallbacks = (
 })
 
 type DragHarness = {
-  sigma: { refresh: () => void }
+  sigma: { refresh: () => void; scheduleRender: () => void }
+  container: Pick<HTMLElement, 'offsetWidth' | 'offsetHeight'>
   positionLedger: NodePositionLedger
   renderStore: RenderGraphStore
   physicsStore: PhysicsGraphStore
@@ -187,6 +235,8 @@ type EdgeReducerHarness = {
   }
   draggedNodePubkey: string | null
   currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+  safeRender: () => void
+  setHideConnectionsForLowPerformance: (enabled: boolean) => void
   edgeReducer: (
     edge: string,
     data: {
@@ -203,6 +253,7 @@ type EdgeReducerHarness = {
     size: number
     color: string
     hidden: boolean
+    touchesFocus?: boolean
     zIndex: number
   }
 }
@@ -239,9 +290,22 @@ test('continues local drag influence even when pointer movement pauses', async (
     physicsStore.setNodePosition('D', 42, 0)
 
     const dragMoves: Array<{ x: number; y: number }> = []
+    let refreshCalls = 0
+    let renderCalls = 0
     const adapter = new SigmaRendererAdapter() as unknown as DragHarness
 
-    adapter.sigma = { refresh: () => {} }
+    adapter.sigma = {
+      refresh: () => {
+        refreshCalls += 1
+      },
+      scheduleRender: () => {
+        renderCalls += 1
+      },
+    }
+    adapter.container = {
+      offsetWidth: 800,
+      offsetHeight: 600,
+    }
     adapter.positionLedger = ledger
     adapter.renderStore = renderStore
     adapter.physicsStore = physicsStore
@@ -270,6 +334,8 @@ test('continues local drag influence even when pointer movement pauses', async (
     assert.equal(afterFirstRenderFrame.y, afterFirstFrame.y)
     assert.equal(dragMoves.length, 1)
     assert.equal(queuedFrames.length, 1)
+    assert.equal(renderCalls, 1)
+    assert.equal(refreshCalls, 0)
 
     const beforeSecondFrame = physicsStore.getNodePosition('D')!
     queuedFrames.shift()?.(performance.now())
@@ -284,6 +350,8 @@ test('continues local drag influence even when pointer movement pauses', async (
       1,
       'expected no synthetic drag-move callback without a new pointer position',
     )
+    assert.equal(renderCalls, 2)
+    assert.equal(refreshCalls, 0)
   } finally {
     globalThis.requestAnimationFrame = originalRequestAnimationFrame
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame
@@ -300,7 +368,7 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   let resumeCalls = 0
   let bridgeEnsures = 0
   let bridgeCancels = 0
-  let refreshCalls = 0
+  let renderCalls = 0
   const dragEnds: Array<{ x: number; y: number }> = []
 
   const adapter = new SigmaRendererAdapter() as unknown as {
@@ -325,7 +393,7 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
     ensurePhysicsPositionBridge: () => void
     setCameraLocked: (_locked: boolean) => void
     setGraphBoundsLocked: (_locked: boolean) => void
-    safeRefresh: () => void
+    safeRender: () => void
     recalculateHoverAfterDrag: () => void
     releaseDrag: (options?: { pinOnRelease?: boolean }) => void
   }
@@ -376,8 +444,8 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   }
   adapter.setCameraLocked = () => {}
   adapter.setGraphBoundsLocked = () => {}
-  adapter.safeRefresh = () => {
-    refreshCalls += 1
+  adapter.safeRender = () => {
+    renderCalls += 1
   }
   adapter.recalculateHoverAfterDrag = () => {}
 
@@ -386,10 +454,107 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   assert.equal(resumeCalls, 0)
   assert.equal(bridgeEnsures, 0)
   assert.equal(bridgeCancels, 1)
-  assert.equal(refreshCalls, 1)
+  assert.equal(renderCalls, 1)
   assert.equal(adapter.draggedNodePubkey, null)
   assert.equal(adapter.resumePhysicsAfterDrag, true)
   assert.deepEqual(dragEnds, [{ x: 10, y: 20 }])
+})
+
+test('highlight transition frame uses render-only scheduling', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let renderCalls = 0
+  let refreshCalls = 0
+  let rescheduleCalls = 0
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    pendingHighlightTransitionFrame: number | null
+    highlightTransition: {
+      from: { pubkey: string | null; neighbors: Set<string> }
+      to: { pubkey: string | null; neighbors: Set<string> }
+      startedAt: number
+      durationMs: number
+    } | null
+    sceneFocusTransition: {
+      from: null
+      to: null
+      startedAt: number
+      durationMs: number
+    } | null
+    safeRender: () => void
+    safeRefresh: () => void
+    scheduleHighlightTransitionFrame: () => void
+    flushHighlightTransitionFrame: () => void
+  }
+
+  adapter.pendingHighlightTransitionFrame = 1
+  adapter.highlightTransition = {
+    from: { pubkey: 'alice', neighbors: new Set(['bob']) },
+    to: { pubkey: 'bob', neighbors: new Set(['alice']) },
+    startedAt: performance.now(),
+    durationMs: 1000,
+  }
+  adapter.sceneFocusTransition = null
+  adapter.safeRender = () => {
+    renderCalls += 1
+  }
+  adapter.safeRefresh = () => {
+    refreshCalls += 1
+  }
+  adapter.scheduleHighlightTransitionFrame = () => {
+    rescheduleCalls += 1
+  }
+
+  adapter.flushHighlightTransitionFrame()
+
+  assert.equal(adapter.pendingHighlightTransitionFrame, null)
+  assert.equal(renderCalls, 1)
+  assert.equal(refreshCalls, 0)
+  assert.equal(rescheduleCalls, 1)
+})
+
+test('motion settle timers use render-only scheduling', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let renderCalls = 0
+  let refreshCalls = 0
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    avatarOverlay: object | null
+    motionActive: boolean
+    cameraMotionActive: boolean
+    motionClearTimer: ReturnType<typeof setTimeout> | null
+    cameraMotionClearTimer: ReturnType<typeof setTimeout> | null
+    MOTION_RESUME_MS: number
+    safeRender: () => void
+    safeRefresh: () => void
+    markMotion: () => void
+    markCameraMotion: () => void
+  }
+
+  adapter.avatarOverlay = {}
+  adapter.motionActive = false
+  adapter.cameraMotionActive = false
+  adapter.motionClearTimer = null
+  adapter.cameraMotionClearTimer = null
+  adapter.MOTION_RESUME_MS = 0
+  adapter.safeRender = () => {
+    renderCalls += 1
+  }
+  adapter.safeRefresh = () => {
+    refreshCalls += 1
+  }
+
+  adapter.markMotion()
+  adapter.markCameraMotion()
+  await wait(5)
+
+  assert.equal(adapter.motionActive, false)
+  assert.equal(adapter.cameraMotionActive, false)
+  assert.equal(renderCalls, 2)
+  assert.equal(refreshCalls, 0)
 })
 
 test('physics bridge syncs visible priority nodes while spreading background nodes across frames', async () => {
@@ -743,6 +908,68 @@ test('edge reducer hides non first-order edges while dragging a node', async () 
   assert.equal(firstOrder.hidden, false)
   assert.ok(firstOrder.size > baseEdge.size)
   assert.equal(unrelated.hidden, true)
+})
+
+test('edge reducer hides background edges during low-performance connection LOD', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['C->D', ['C', 'D']],
+    ['E->F', ['E', 'F']],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness
+  let renderCalls = 0
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+  const focusedEdge = {
+    ...baseEdge,
+    touchesFocus: true,
+    zIndex: 6,
+  }
+
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)?.[0] ?? '',
+      target: (edgeId) => edgeEndpoints.get(edgeId)?.[1] ?? '',
+    }),
+  }
+  adapter.draggedNodePubkey = 'A'
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.safeRender = () => {
+    renderCalls += 1
+  }
+
+  adapter.setHideConnectionsForLowPerformance(true)
+  adapter.setHideConnectionsForLowPerformance(true)
+  const draggedEdge = adapter.edgeReducer('A->B', baseEdge)
+  adapter.draggedNodePubkey = null
+  const focused = adapter.edgeReducer('E->F', focusedEdge)
+  const hidden = adapter.edgeReducer('C->D', baseEdge)
+  adapter.setHideConnectionsForLowPerformance(false)
+  const visible = adapter.edgeReducer('A->B', baseEdge)
+
+  assert.equal(draggedEdge.hidden, false)
+  assert.ok(draggedEdge.size > baseEdge.size)
+  assert.equal(focused.hidden, false)
+  assert.equal(focused.touchesFocus, true)
+  assert.equal(hidden.hidden, true)
+  assert.equal(visible.hidden, false)
+  assert.equal(renderCalls, 2)
 })
 
 test('social capture uses an isolated avatar cache', async () => {

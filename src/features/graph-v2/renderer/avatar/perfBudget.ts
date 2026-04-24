@@ -6,7 +6,7 @@
 import type { ImageLodBucket } from '@/features/graph-v2/renderer/avatar/avatarImageUtils'
 
 const EMA_ALPHA = 0.1
-const DOWNGRADE_MS = 40
+export const PERF_BUDGET_DOWNGRADE_MS = 40
 const UPGRADE_MS = 18
 const DOWNGRADE_WINDOW_MS = 2000
 const UPGRADE_WINDOW_MS = 5000
@@ -50,7 +50,7 @@ export class PerfBudget {
     this.emaFrameMs = this.emaFrameMs * (1 - EMA_ALPHA) + clamped * EMA_ALPHA
     const nowMs = this.now()
 
-    if (this.emaFrameMs >= DOWNGRADE_MS) {
+    if (this.emaFrameMs >= PERF_BUDGET_DOWNGRADE_MS) {
       this.overBudgetSinceMs ??= nowMs
       this.underBudgetSinceMs = null
       if (nowMs - this.overBudgetSinceMs >= DOWNGRADE_WINDOW_MS) {

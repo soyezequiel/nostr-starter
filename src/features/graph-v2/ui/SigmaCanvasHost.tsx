@@ -29,6 +29,8 @@ interface SigmaCanvasHostProps {
   physicsTuning?: Partial<ForceAtlasPhysicsTuning>
   physicsAutoFreezeEnabled?: boolean
   hideAvatarsOnMove?: boolean
+  avatarImagesEnabled?: boolean
+  hideConnectionsForLowPerformance?: boolean
   avatarRuntimeOptions?: AvatarRuntimeOptions
   onAvatarPerfSnapshot?: (snapshot: PerfBudgetSnapshot | null) => void
 }
@@ -80,6 +82,8 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       physicsTuning,
       physicsAutoFreezeEnabled = true,
       hideAvatarsOnMove = false,
+      avatarImagesEnabled = true,
+      hideConnectionsForLowPerformance = false,
       avatarRuntimeOptions,
       onAvatarPerfSnapshot,
     },
@@ -95,6 +99,10 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   const physicsTuningRef = useRef(physicsTuning)
   const physicsAutoFreezeEnabledRef = useRef(physicsAutoFreezeEnabled)
   const hideAvatarsOnMoveRef = useRef(hideAvatarsOnMove)
+  const avatarImagesEnabledRef = useRef(avatarImagesEnabled)
+  const hideConnectionsForLowPerformanceRef = useRef(
+    hideConnectionsForLowPerformance,
+  )
   const avatarRuntimeOptionsRef = useRef(avatarRuntimeOptions)
   const lastAvatarPerfSnapshotKeyRef = useRef<string | null>(null)
 
@@ -104,10 +112,15 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     physicsTuningRef.current = physicsTuning
     physicsAutoFreezeEnabledRef.current = physicsAutoFreezeEnabled
     hideAvatarsOnMoveRef.current = hideAvatarsOnMove
+    avatarImagesEnabledRef.current = avatarImagesEnabled
+    hideConnectionsForLowPerformanceRef.current =
+      hideConnectionsForLowPerformance
     avatarRuntimeOptionsRef.current = avatarRuntimeOptions
   }, [
+    avatarImagesEnabled,
     avatarRuntimeOptions,
     dragInfluenceTuning,
+    hideConnectionsForLowPerformance,
     hideAvatarsOnMove,
     physicsAutoFreezeEnabled,
     physicsTuning,
@@ -135,11 +148,15 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       }
 
       const nextAdapter = new SigmaRendererAdapter()
+      nextAdapter.setAvatarImagesEnabled(avatarImagesEnabledRef.current)
       nextAdapter.mount(container, sceneRef.current, callbacks)
       nextAdapter.setDragInfluenceTuning(dragInfluenceTuningRef.current ?? {})
       nextAdapter.setAutoFreezeEnabled(physicsAutoFreezeEnabledRef.current)
       nextAdapter.setPhysicsTuning(physicsTuningRef.current ?? {})
       nextAdapter.setHideAvatarsOnMove(hideAvatarsOnMoveRef.current)
+      nextAdapter.setHideConnectionsForLowPerformance(
+        hideConnectionsForLowPerformanceRef.current,
+      )
       if (avatarRuntimeOptionsRef.current) {
         nextAdapter.setAvatarRuntimeOptions(avatarRuntimeOptionsRef.current)
       }
@@ -259,6 +276,16 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   useEffect(() => {
     adapterRef.current?.setHideAvatarsOnMove(hideAvatarsOnMove)
   }, [hideAvatarsOnMove])
+
+  useEffect(() => {
+    adapterRef.current?.setAvatarImagesEnabled(avatarImagesEnabled)
+  }, [avatarImagesEnabled])
+
+  useEffect(() => {
+    adapterRef.current?.setHideConnectionsForLowPerformance(
+      hideConnectionsForLowPerformance,
+    )
+  }, [hideConnectionsForLowPerformance])
 
   useEffect(() => {
     if (!avatarRuntimeOptions) {
