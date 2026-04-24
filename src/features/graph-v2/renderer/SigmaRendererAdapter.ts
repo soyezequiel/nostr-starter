@@ -85,7 +85,8 @@ const HIGHLIGHT_TRANSITION_MS = 180
 const HOVER_FOCUS_DWELL_MS = 500
 const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
-const PHYSICS_BRIDGE_PRIORITY_CAP = 768
+const PHYSICS_BRIDGE_BACKGROUND_SYNC_CAP = 96
+const PHYSICS_BRIDGE_VIEWPORT_PADDING_RATIO = 0.12
 const NODE_ZOOM_OUT_MIN_SCALE = 0.42
 const NODE_ZOOM_OUT_SCALE_EXPONENT = 0.55
 const AVATAR_MIN_SIZE_THRESHOLD = 4
@@ -334,6 +335,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private pendingPhysicsBridgeFrame: number | null = null
 
+  private physicsBridgeViewportCursor = 0
+
+  private physicsBridgeBackgroundCursor = 0
+
   private pendingGraphPosition: { x: number; y: number } | null = null
 
   private dragHopDistances: Map<string, number> = new Map()
@@ -445,7 +450,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.pendingContainerRefresh = false
-    this.sigma.refresh()
+    this.scheduleContainerRefresh()
   }
 
   private observeContainer(container: HTMLElement) {
@@ -2234,9 +2239,121 @@ export class SigmaRendererAdapter implements RendererAdapter {
     return changed
   }
 
+  private collectViewportRenderPubkeys(
+    addPubkey: (pubkey: string | null | undefined) => boolean,
+  ) {
+    const sigma = this.sigma
+    const renderStore = this.renderStore
+    const physicsStore = this.physicsStore
+    if (
+      !sigma ||
+      !renderStore ||
+      typeof sigma.getDimensions !== 'function' ||
+      typeof sigma.viewportToGraph !== 'function'
+    ) {
+      return { visibleNodeCount: 0, addedNodeCount: 0 }
+    }
+
+    const viewport = this.getMinimapViewport()
+    if (!viewport) {
+      return { visibleNodeCount: 0, addedNodeCount: 0 }
+    }
+
+    const viewportWidth = viewport.maxX - viewport.minX
+    const viewportHeight = viewport.maxY - viewport.minY
+    const padding =
+      Math.max(viewportWidth, viewportHeight) *
+      PHYSICS_BRIDGE_VIEWPORT_PADDING_RATIO
+    const minX = viewport.minX - padding
+    const minY = viewport.minY - padding
+    const maxX = viewport.maxX + padding
+    const maxY = viewport.maxY + padding
+    const nodeIds = renderStore.getGraph().nodes()
+    const nodeCount = nodeIds.length
+    let visibleNodeCount = 0
+    let addedNodeCount = 0
+    const isInsideViewport = (x: number, y: number) =>
+      x >= minX && x <= maxX && y >= minY && y <= maxY
+
+    if (nodeCount === 0) {
+      return { visibleNodeCount, addedNodeCount }
+    }
+
+    const start = this.physicsBridgeViewportCursor % nodeCount
+    for (let offset = 0; offset < nodeCount; offset += 1) {
+      const index = (start + offset) % nodeCount
+      const pubkey = nodeIds[index]
+      if (!pubkey) {
+        continue
+      }
+      const attrs = renderStore.getGraph().getNodeAttributes(pubkey)
+      if (attrs.hidden) {
+        continue
+      }
+
+      const renderVisible = isInsideViewport(attrs.x, attrs.y)
+      const physicsPosition =
+        renderVisible || !physicsStore?.hasNode(pubkey)
+          ? null
+          : physicsStore.getGraph().getNodeAttributes(pubkey)
+      const physicsVisible = physicsPosition
+        ? isInsideViewport(physicsPosition.x, physicsPosition.y)
+        : false
+      if (!renderVisible && !physicsVisible) {
+        continue
+      }
+
+      visibleNodeCount += 1
+      if (addPubkey(pubkey)) {
+        addedNodeCount += 1
+      }
+      this.physicsBridgeViewportCursor = (index + 1) % nodeCount
+    }
+
+    return { visibleNodeCount, addedNodeCount }
+  }
+
+  private collectBackgroundPhysicsBridgePubkeys(
+    addPubkey: (pubkey: string | null | undefined) => boolean,
+  ) {
+    const physicsStore = this.physicsStore
+    if (!physicsStore) {
+      return 0
+    }
+
+    const nodeIds = physicsStore.getGraph().nodes()
+    const nodeCount = nodeIds.length
+    if (nodeCount === 0) {
+      return 0
+    }
+
+    const start = this.physicsBridgeBackgroundCursor % nodeCount
+    let addedNodeCount = 0
+    for (
+      let offset = 0;
+      offset < nodeCount &&
+      addedNodeCount < PHYSICS_BRIDGE_BACKGROUND_SYNC_CAP;
+      offset += 1
+    ) {
+      const index = (start + offset) % nodeCount
+      if (addPubkey(nodeIds[index])) {
+        addedNodeCount += 1
+      }
+      this.physicsBridgeBackgroundCursor = (index + 1) % nodeCount
+    }
+
+    return addedNodeCount
+  }
+
   private readonly collectPhysicsBridgePubkeys = () => {
     if (!this.physicsStore) {
-      return []
+      return {
+        pubkeys: [],
+        visibleRenderNodeCount: 0,
+        visibleRenderSyncedNodeCount: 0,
+        avatarVisibleNodeCount: 0,
+        backgroundSyncedNodeCount: 0,
+      }
     }
 
     const physicsStore = this.physicsStore
@@ -2246,14 +2363,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
       if (
         !pubkey ||
         seen.has(pubkey) ||
-        !physicsStore.hasNode(pubkey) ||
-        pubkeys.length >= PHYSICS_BRIDGE_PRIORITY_CAP
+        !physicsStore.hasNode(pubkey)
       ) {
-        return
+        return false
       }
 
       seen.add(pubkey)
       pubkeys.push(pubkey)
+      return true
     }
 
     addPubkey(this.scene?.render.cameraHint.rootPubkey)
@@ -2264,7 +2381,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     for (const pubkey of this.scene?.render.pins.pubkeys ?? []) {
       addPubkey(pubkey)
     }
-    for (const pubkey of this.avatarOverlay?.getVisibleNodePubkeys() ?? []) {
+    const avatarVisiblePubkeys = this.avatarOverlay?.getVisibleNodePubkeys() ?? []
+    for (const pubkey of avatarVisiblePubkeys) {
       addPubkey(pubkey)
     }
     for (const pubkey of this.hoveredNeighbors) {
@@ -2275,8 +2393,19 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )) {
       addPubkey(pubkey)
     }
+    const viewportSync = this.collectViewportRenderPubkeys(addPubkey)
+    const backgroundSyncedNodeCount =
+      seen.size < physicsStore.getGraph().order
+        ? this.collectBackgroundPhysicsBridgePubkeys(addPubkey)
+        : 0
 
-    return pubkeys
+    return {
+      pubkeys,
+      visibleRenderNodeCount: viewportSync.visibleNodeCount,
+      visibleRenderSyncedNodeCount: viewportSync.addedNodeCount,
+      avatarVisibleNodeCount: avatarVisiblePubkeys.length,
+      backgroundSyncedNodeCount,
+    }
   }
 
   private readonly flushPhysicsPositionBridge = () => {
@@ -2316,10 +2445,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
-    const priorityPubkeys = this.collectPhysicsBridgePubkeys()
+    const priority = this.collectPhysicsBridgePubkeys()
+    const priorityPubkeys = priority.pubkeys
     const physicsNodeCount = this.physicsStore?.getGraph().order ?? 0
     const shouldUsePrioritySync =
       priorityPubkeys.length > 0 && priorityPubkeys.length < physicsNodeCount
+    const syncMode = shouldUsePrioritySync ? 'progressive' : 'full'
     const changed = shouldUsePrioritySync
       ? this.syncPhysicsPositionsToRenderForPubkeys(priorityPubkeys)
       : this.syncPhysicsPositionsToRender()
@@ -2328,15 +2459,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
         'renderer.flushPhysicsPositionBridge',
         startedAtMs,
         () => ({
-          syncMode: shouldUsePrioritySync ? 'priority' : 'full',
+          syncMode,
           changed,
           renderNodeCount: this.renderStore?.getGraph().order ?? 0,
           renderEdgeCount: this.renderStore?.getGraph().size ?? 0,
           physicsNodeCount,
           physicsEdgeCount: this.physicsStore?.getGraph().size ?? 0,
           priorityNodeCount: priorityPubkeys.length,
-          visibleNodeCount:
-            this.avatarOverlay?.getVisibleNodePubkeys().length ?? 0,
+          visibleRenderNodeCount: priority.visibleRenderNodeCount,
+          visibleRenderSyncedNodeCount:
+            priority.visibleRenderSyncedNodeCount,
+          avatarVisibleNodeCount: priority.avatarVisibleNodeCount,
+          backgroundSyncedNodeCount: priority.backgroundSyncedNodeCount,
           hasDraggedNode: Boolean(this.draggedNodePubkey),
           hasHoveredNode: Boolean(this.hoveredNodePubkey),
         }),

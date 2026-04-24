@@ -6,6 +6,11 @@ import type { AppStoreApi } from '@/features/graph-runtime/app/store/types'
 import { GraphDomainStore } from '@/features/graph-v2/application/GraphDomainStore'
 import { LegacyKernelBridge } from '@/features/graph-v2/bridge/LegacyKernelBridge'
 
+const waitForScheduledBridgeEmit = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 const createRuntimeStub = () => ({
   loadRoot: async () => ({
     status: 'ready' as const,
@@ -124,7 +129,7 @@ test('reuses the adapted canonical snapshot when unrelated legacy UI state chang
   bridge.dispose()
 })
 
-test('subscribeUi receives root load updates without invalidating the scene snapshot', () => {
+test('subscribeUi receives root load updates without invalidating the scene snapshot', async () => {
   const store = createAppStore()
   const bridge = new LegacyKernelBridge({
     runtime: createRuntimeStub(),
@@ -154,6 +159,10 @@ test('subscribeUi receives root load updates without invalidating the scene snap
     visibleLinkProgress: null,
   })
 
+  assert.equal(uiEmits, 0)
+  assert.equal(compatibilityEmits, 0)
+  await waitForScheduledBridgeEmit()
+
   assert.equal(sceneEmits, 0)
   assert.equal(uiEmits, 1)
   assert.equal(compatibilityEmits, 1)
@@ -164,6 +173,57 @@ test('subscribeUi receives root load updates without invalidating the scene snap
 
   unsubscribeScene()
   unsubscribeUi()
+  unsubscribeCompatibility()
+  bridge.dispose()
+})
+
+test('coalesces repeated scene notifications while keeping snapshots current', async () => {
+  const store = createAppStore()
+  const bridge = new LegacyKernelBridge({
+    runtime: createRuntimeStub(),
+    store,
+    domainStore: new GraphDomainStore(),
+  })
+
+  let sceneEmits = 0
+  let compatibilityEmits = 0
+  const unsubscribeScene = bridge.subscribeScene(() => {
+    sceneEmits += 1
+  })
+  const unsubscribeCompatibility = bridge.subscribe(() => {
+    compatibilityEmits += 1
+  })
+
+  store.getState().upsertNodes([
+    {
+      pubkey: 'alice',
+      keywordHits: 0,
+      discoveredAt: 1,
+      profileState: 'ready',
+      source: 'follow',
+    },
+  ])
+  store.getState().upsertNodes([
+    {
+      pubkey: 'bob',
+      keywordHits: 0,
+      discoveredAt: 2,
+      profileState: 'ready',
+      source: 'follow',
+    },
+  ])
+
+  assert.equal(bridge.getSceneState().nodesByPubkey.alice?.pubkey, 'alice')
+  assert.equal(bridge.getSceneState().nodesByPubkey.bob?.pubkey, 'bob')
+  assert.equal(sceneEmits, 0)
+  assert.equal(compatibilityEmits, 0)
+
+  await waitForScheduledBridgeEmit()
+
+  assert.equal(sceneEmits, 1)
+  assert.equal(compatibilityEmits, 1)
+
+  unsubscribeScene()
   unsubscribeCompatibility()
   bridge.dispose()
 })

@@ -1405,6 +1405,8 @@ export default function GraphAppV2() {
   }, [])
 
   const sceneState = fixtureState ?? liveSceneState
+  const latestSceneStateRef = useRef(sceneState)
+  latestSceneStateRef.current = sceneState
   const fixtureUiState = useMemo(
     () => (fixtureState ? pickFixtureUiState(fixtureState) : null),
     [fixtureState],
@@ -1649,6 +1651,8 @@ export default function GraphAppV2() {
     [sceneState.sceneSignature],
   )
   const deferredScene = useDeferredValue(scene)
+  const latestVisibleWarmupRef = useRef({ deferredScene, sceneState })
+  latestVisibleWarmupRef.current = { deferredScene, sceneState }
   const deferredPersonSearchQuery = useDeferredValue(personSearchQuery)
   const personSearchMatches = useMemo(
     () =>
@@ -1662,10 +1666,19 @@ export default function GraphAppV2() {
     () => applyPersonSearchHighlight(deferredScene, personSearchMatches),
     [deferredScene, personSearchMatches],
   )
-  const detail = useMemo(() => buildNodeDetailProjection(sceneState), [sceneState])
+  const detail = useMemo(
+    () => buildNodeDetailProjection(sceneState),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sceneState.nodeDetailRevision, sceneState.sceneSignature],
+  )
 
   useEffect(() => {
-    if (isFixtureMode || !sceneState.rootPubkey || deferredScene.render.nodes.length === 0) {
+    const latest = latestVisibleWarmupRef.current
+    if (
+      isFixtureMode ||
+      !latest.sceneState.rootPubkey ||
+      latest.deferredScene.render.nodes.length === 0
+    ) {
       visibleProfileWarmupDebugRef.current = null
       setVisibleProfileWarmupSnapshot(null)
       return
@@ -1684,11 +1697,17 @@ export default function GraphAppV2() {
       const inflightPubkeys = visibleProfileWarmupInflightRef.current
       const viewportPubkeys =
         sigmaHostRef.current?.getVisibleNodePubkeys() ?? []
-      const scenePubkeys = deferredScene.render.nodes.map((node) => node.pubkey)
+      const {
+        deferredScene: latestDeferredScene,
+        sceneState: latestSceneState,
+      } = latestVisibleWarmupRef.current
+      const scenePubkeys = latestDeferredScene.render.nodes.map(
+        (node) => node.pubkey,
+      )
       const selection = selectVisibleProfileWarmupPubkeys({
         viewportPubkeys,
         scenePubkeys,
-        nodesByPubkey: sceneState.nodesByPubkey,
+        nodesByPubkey: latestSceneState.nodesByPubkey,
         attemptedAtByPubkey,
         inflightPubkeys,
         now,
@@ -1699,7 +1718,7 @@ export default function GraphAppV2() {
         buildVisibleProfileWarmupDebugSnapshot({
           viewportPubkeys,
           scenePubkeys,
-          nodesByPubkey: sceneState.nodesByPubkey,
+          nodesByPubkey: latestSceneState.nodesByPubkey,
           attemptedAtByPubkey,
           inflightPubkeys,
           now,
@@ -1756,22 +1775,26 @@ export default function GraphAppV2() {
     }
   }, [
     bridge,
-    deferredScene.render.nodes,
-    sceneState.nodesByPubkey,
-    sceneState.rootPubkey,
     isFixtureMode,
+    sceneState.sceneSignature,
   ])
 
   // Pre-calcular la capa completa (graph) en segundo plano para que el
   // usuario no tenga penalidad de tiempo al alternar desde "mutuos"
   useEffect(() => {
-    if (isFixtureMode || sceneState.activeLayer === 'graph' || !sceneState.rootPubkey) {
+    const scheduledSceneState = latestSceneStateRef.current
+    if (
+      isFixtureMode ||
+      scheduledSceneState.activeLayer === 'graph' ||
+      !scheduledSceneState.rootPubkey
+    ) {
       return
     }
 
     const timeoutId = setTimeout(() => {
+      const currentSceneState = latestSceneStateRef.current
       const warmupState = withClientSceneSignature({
-        ...sceneState,
+        ...currentSceneState,
         activeLayer: 'graph',
       })
       const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
@@ -1782,7 +1805,7 @@ export default function GraphAppV2() {
           'ui.fullGraphWarmup.snapshot',
           startedAtMs,
           () => ({
-            sourceLayer: sceneState.activeLayer,
+            sourceLayer: currentSceneState.activeLayer,
             activeLayer: warmupState.activeLayer,
             nodeCount: snapshot.render.nodes.length,
             visibleEdgeCount: snapshot.render.visibleEdges.length,
@@ -1802,7 +1825,7 @@ export default function GraphAppV2() {
     return () => {
       clearTimeout(timeoutId)
     }
-  }, [isFixtureMode, sceneState])
+  }, [isFixtureMode, sceneState.sceneSignature])
 
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null

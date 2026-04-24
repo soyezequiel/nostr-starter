@@ -57,6 +57,19 @@ export class LegacyKernelBridge {
 
   private readonly compatibilityListeners = new Set<() => void>()
 
+  private pendingSceneEmitFrame: number | null = null
+
+  private pendingUiEmitFrame: number | null = null
+
+  private pendingCompatibilityEmitFrame: number | null = null
+
+  private pendingSceneEmitTimer: ReturnType<typeof setTimeout> | null = null
+
+  private pendingUiEmitTimer: ReturnType<typeof setTimeout> | null = null
+
+  private pendingCompatibilityEmitTimer: ReturnType<typeof setTimeout> | null =
+    null
+
   private uiState: CanonicalGraphUiState
 
   private combinedState: CanonicalGraphState
@@ -137,6 +150,7 @@ export class LegacyKernelBridge {
     this.unsubscribeUi?.()
     this.unsubscribeScene = null
     this.unsubscribeUi = null
+    this.cancelScheduledEmits()
   }
 
   public async loadRoot(pubkey: string, options?: LoadRootOptions) {
@@ -204,8 +218,8 @@ export class LegacyKernelBridge {
 
     this.domainStore.replaceState(nextSceneState)
     this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
-    this.emit(this.sceneListeners)
-    this.emit(this.compatibilityListeners)
+    this.scheduleSceneEmit()
+    this.scheduleCompatibilityEmit()
   }
 
   private replaceUiState(nextUiState: CanonicalGraphUiState) {
@@ -215,8 +229,142 @@ export class LegacyKernelBridge {
 
     this.uiState = nextUiState
     this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
-    this.emit(this.uiListeners)
-    this.emit(this.compatibilityListeners)
+    this.scheduleUiEmit()
+    this.scheduleCompatibilityEmit()
+  }
+
+  private scheduleSceneEmit() {
+    if (this.sceneListeners.size === 0) {
+      return
+    }
+
+    if (
+      this.pendingSceneEmitFrame !== null ||
+      this.pendingSceneEmitTimer !== null
+    ) {
+      return
+    }
+
+    this.scheduleEmit(
+      () => {
+        this.pendingSceneEmitFrame = null
+        this.pendingSceneEmitTimer = null
+      },
+      () => this.emit(this.sceneListeners),
+      (handle) => {
+        this.pendingSceneEmitFrame = handle
+      },
+      (timer) => {
+        this.pendingSceneEmitTimer = timer
+      },
+    )
+  }
+
+  private scheduleUiEmit() {
+    if (this.uiListeners.size === 0) {
+      return
+    }
+
+    if (this.pendingUiEmitFrame !== null || this.pendingUiEmitTimer !== null) {
+      return
+    }
+
+    this.scheduleEmit(
+      () => {
+        this.pendingUiEmitFrame = null
+        this.pendingUiEmitTimer = null
+      },
+      () => this.emit(this.uiListeners),
+      (handle) => {
+        this.pendingUiEmitFrame = handle
+      },
+      (timer) => {
+        this.pendingUiEmitTimer = timer
+      },
+    )
+  }
+
+  private scheduleCompatibilityEmit() {
+    if (this.compatibilityListeners.size === 0) {
+      return
+    }
+
+    if (
+      this.pendingCompatibilityEmitFrame !== null ||
+      this.pendingCompatibilityEmitTimer !== null
+    ) {
+      return
+    }
+
+    this.scheduleEmit(
+      () => {
+        this.pendingCompatibilityEmitFrame = null
+        this.pendingCompatibilityEmitTimer = null
+      },
+      () => this.emit(this.compatibilityListeners),
+      (handle) => {
+        this.pendingCompatibilityEmitFrame = handle
+      },
+      (timer) => {
+        this.pendingCompatibilityEmitTimer = timer
+      },
+    )
+  }
+
+  private scheduleEmit(
+    beforeEmit: () => void,
+    emit: () => void,
+    setFrame: (handle: number) => void,
+    setTimer: (timer: ReturnType<typeof setTimeout>) => void,
+  ) {
+    const flush = () => {
+      beforeEmit()
+      emit()
+    }
+
+    if (typeof requestAnimationFrame === 'function') {
+      setFrame(requestAnimationFrame(flush))
+      return
+    }
+
+    setTimer(setTimeout(flush, 0))
+  }
+
+  private cancelScheduledEmits() {
+    if (
+      this.pendingSceneEmitFrame !== null &&
+      typeof cancelAnimationFrame === 'function'
+    ) {
+      cancelAnimationFrame(this.pendingSceneEmitFrame)
+    }
+    if (
+      this.pendingUiEmitFrame !== null &&
+      typeof cancelAnimationFrame === 'function'
+    ) {
+      cancelAnimationFrame(this.pendingUiEmitFrame)
+    }
+    if (
+      this.pendingCompatibilityEmitFrame !== null &&
+      typeof cancelAnimationFrame === 'function'
+    ) {
+      cancelAnimationFrame(this.pendingCompatibilityEmitFrame)
+    }
+    if (this.pendingSceneEmitTimer !== null) {
+      clearTimeout(this.pendingSceneEmitTimer)
+    }
+    if (this.pendingUiEmitTimer !== null) {
+      clearTimeout(this.pendingUiEmitTimer)
+    }
+    if (this.pendingCompatibilityEmitTimer !== null) {
+      clearTimeout(this.pendingCompatibilityEmitTimer)
+    }
+
+    this.pendingSceneEmitFrame = null
+    this.pendingUiEmitFrame = null
+    this.pendingCompatibilityEmitFrame = null
+    this.pendingSceneEmitTimer = null
+    this.pendingUiEmitTimer = null
+    this.pendingCompatibilityEmitTimer = null
   }
 
   private emit(listeners: ReadonlySet<() => void>) {

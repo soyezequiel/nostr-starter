@@ -362,7 +362,7 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   assert.deepEqual(dragEnds, [{ x: 10, y: 20 }])
 })
 
-test('physics bridge syncs priority nodes while running and all nodes on settle', async () => {
+test('physics bridge syncs visible priority nodes while spreading background nodes across frames', async () => {
   const restoreAnimationFrame = installAnimationFrameStub()
   const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
   const originalWebGLRenderingContext = globalThis.WebGLRenderingContext
@@ -379,12 +379,109 @@ test('physics bridge syncs priority nodes while running and all nodes on settle'
     const ledger = new NodePositionLedger()
     const renderStore = new RenderGraphStore(ledger)
     const physicsStore = new PhysicsGraphStore(ledger)
-    renderStore.applyScene(scene.render)
-    physicsStore.applyScene(scene.physics)
+    const visiblePubkeys = Array.from(
+      { length: 800 },
+      (_value, index) => `visible-${index}`,
+    )
+    const physicsVisiblePubkey = 'physics-visible'
+    const offscreenPubkeys = Array.from(
+      { length: 900 },
+      (_value, index) => `offscreen-${index}`,
+    )
+    const sceneWithOffscreenNode: GraphSceneSnapshot = {
+      render: {
+        ...scene.render,
+        nodes: [
+          ...scene.render.nodes,
+          ...visiblePubkeys.map((pubkey) => ({
+            pubkey,
+            label: 'V',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: false,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'idle',
+          })),
+          {
+            pubkey: physicsVisiblePubkey,
+            label: 'PV',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: false,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'idle',
+          },
+          ...offscreenPubkeys.map((pubkey) => ({
+            pubkey,
+            label: 'E',
+            pictureUrl: null,
+            color: '#fff',
+            size: 10,
+            isRoot: false,
+            isSelected: false,
+            isPinned: false,
+            isNeighbor: false,
+            isDimmed: false,
+            focusState: 'idle',
+          })),
+        ],
+      },
+      physics: {
+        ...scene.physics,
+        nodes: [
+          ...scene.physics.nodes,
+          ...visiblePubkeys.map((pubkey) => ({
+            pubkey,
+            size: 10,
+            fixed: false,
+          })),
+          {
+            pubkey: physicsVisiblePubkey,
+            size: 10,
+            fixed: false,
+          },
+          ...offscreenPubkeys.map((pubkey) => ({
+            pubkey,
+            size: 10,
+            fixed: false,
+          })),
+        ],
+      },
+    }
+    renderStore.applyScene(sceneWithOffscreenNode.render)
+    physicsStore.applyScene(sceneWithOffscreenNode.physics)
     renderStore.setNodePosition('A', 0, 0)
     renderStore.setNodePosition('D', 10, 0)
     physicsStore.setNodePosition('A', 100, 0)
     physicsStore.setNodePosition('D', 200, 0)
+    visiblePubkeys.forEach((pubkey, index) => {
+      renderStore.setNodePosition(pubkey, 10, 0)
+      physicsStore.setNodePosition(pubkey, 300 + index, 0)
+    })
+    renderStore.setNodePosition(physicsVisiblePubkey, 500, 0)
+    physicsStore.setNodePosition(physicsVisiblePubkey, 20, 0)
+    offscreenPubkeys.forEach((pubkey, index) => {
+      renderStore.setNodePosition(pubkey, 500 + index, 0)
+      physicsStore.setNodePosition(pubkey, 700 + index, 0)
+    })
+    const countSyncedVisible = () =>
+      visiblePubkeys.filter((pubkey, index) => {
+        const position = renderStore.getNodePosition(pubkey)
+        return position?.x === 300 + index
+      }).length
+    const countSyncedOffscreen = () =>
+      offscreenPubkeys.filter((pubkey, index) => {
+        const position = renderStore.getNodePosition(pubkey)
+        return position?.x === 700 + index
+      }).length
 
     let running = true
     let suspended = false
@@ -397,12 +494,20 @@ test('physics bridge syncs priority nodes while running and all nodes on settle'
       forceRuntime: { isRunning: () => boolean; isSuspended: () => boolean }
       avatarOverlay: { getVisibleNodePubkeys: () => string[] }
       nodeHitTester: { markDirty: () => void }
-      sigma: { refresh: () => void }
+      sigma: {
+        refresh: () => void
+        getDimensions: () => { width: number; height: number }
+        viewportToGraph: (point: { x: number; y: number }) => {
+          x: number
+          y: number
+        }
+      }
+      physicsBridgeBackgroundCursor: number
       flushPhysicsPositionBridge: () => void
       cancelPhysicsPositionBridge: () => void
     }
 
-    adapter.scene = scene
+    adapter.scene = sceneWithOffscreenNode
     adapter.renderStore = renderStore
     adapter.physicsStore = physicsStore
     adapter.positionLedger = ledger
@@ -416,16 +521,40 @@ test('physics bridge syncs priority nodes while running and all nodes on settle'
         dirtyMarks += 1
       },
     }
-    adapter.sigma = { refresh: () => {} }
+    adapter.sigma = {
+      refresh: () => {},
+      getDimensions: () => ({ width: 100, height: 100 }),
+      viewportToGraph: (point) => ({
+        x: point.x - 50,
+        y: point.y - 50,
+      }),
+    }
 
     adapter.flushPhysicsPositionBridge()
 
     assert.deepEqual(renderStore.getNodePosition('A'), { x: 100, y: 0 })
-    assert.deepEqual(
-      renderStore.getNodePosition('D'),
-      { x: 10, y: 0 },
-      'non-priority nodes should not be walked on active layout frames',
+    assert.deepEqual(renderStore.getNodePosition('D'), { x: 200, y: 0 })
+    assert.equal(
+      countSyncedVisible(),
+      visiblePubkeys.length,
+      'all visible nodes should sync on the active frame instead of waiting for rotation',
     )
+    assert.deepEqual(renderStore.getNodePosition(physicsVisiblePubkey), {
+      x: 20,
+      y: 0,
+    })
+    const offscreenSyncedAfterFirstFrame = countSyncedOffscreen()
+    assert.ok(
+      offscreenSyncedAfterFirstFrame > 0,
+      'background sync should make progress on offscreen nodes',
+    )
+    assert.ok(
+      offscreenSyncedAfterFirstFrame < offscreenPubkeys.length,
+      'background sync should be spread across frames instead of doing a full active-layout sync',
+    )
+
+    adapter.flushPhysicsPositionBridge()
+    assert.ok(countSyncedOffscreen() > offscreenSyncedAfterFirstFrame)
 
     running = false
     suspended = true
@@ -434,7 +563,7 @@ test('physics bridge syncs priority nodes while running and all nodes on settle'
 
     assert.deepEqual(
       renderStore.getNodePosition('D'),
-      { x: 10, y: 0 },
+      { x: 200, y: 0 },
       'suspended physics should not force a settle sync',
     )
 
@@ -448,6 +577,43 @@ test('physics bridge syncs priority nodes while running and all nodes on settle'
     restoreAnimationFrame()
     globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
     globalThis.WebGLRenderingContext = originalWebGLRenderingContext
+  }
+})
+
+test('safeRefresh coalesces visible refresh requests into one animation frame', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+
+  try {
+    const { SigmaRendererAdapter } = await import(
+      '@/features/graph-v2/renderer/SigmaRendererAdapter'
+    )
+
+    let refreshCalls = 0
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: { refresh: () => void }
+      container: Pick<HTMLElement, 'offsetWidth' | 'offsetHeight'>
+      safeRefresh: () => void
+    }
+
+    adapter.sigma = {
+      refresh: () => {
+        refreshCalls += 1
+      },
+    }
+    adapter.container = {
+      offsetWidth: 800,
+      offsetHeight: 600,
+    }
+
+    adapter.safeRefresh()
+    adapter.safeRefresh()
+    adapter.safeRefresh()
+
+    assert.equal(refreshCalls, 0)
+    await wait(5)
+    assert.equal(refreshCalls, 1)
+  } finally {
+    restoreAnimationFrame()
   }
 })
 
