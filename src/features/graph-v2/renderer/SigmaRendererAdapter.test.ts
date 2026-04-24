@@ -97,18 +97,18 @@ test('sigma settings disable camera rotation while keeping regular camera contro
   }
 })
 
-test('initial graph update fits the camera once instead of only resetting it', async () => {
+test('graph updates do not fit the camera automatically', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
 
   let fitCalls = 0
   let refreshCalls = 0
-  const nextScene = createScene()
+  const scene = createScene()
   const previousScene: GraphSceneSnapshot = {
-    ...nextScene,
+    ...scene,
     render: {
-      ...nextScene.render,
+      ...scene.render,
       nodes: [],
       cameraHint: {
         focusPubkey: null,
@@ -116,7 +116,7 @@ test('initial graph update fits the camera once instead of only resetting it', a
       },
     },
     physics: {
-      ...nextScene.physics,
+      ...scene.physics,
       nodes: [],
     },
   }
@@ -131,9 +131,8 @@ test('initial graph update fits the camera once instead of only resetting it', a
     nodeHitTester: { markDirty: () => void }
     ensurePhysicsPositionBridge: () => void
     startSceneFocusTransition: (transition: null) => void
-    fitCameraToGraph: () => void
+    fitCameraToGraph: () => boolean
     safeRefresh: () => void
-    hasMountedCamera: boolean
     update: (scene: GraphSceneSnapshot) => void
   }
 
@@ -149,16 +148,15 @@ test('initial graph update fits the camera once instead of only resetting it', a
   adapter.startSceneFocusTransition = () => {}
   adapter.fitCameraToGraph = () => {
     fitCalls += 1
+    return true
   }
   adapter.safeRefresh = () => {
     refreshCalls += 1
   }
-  adapter.hasMountedCamera = false
 
-  adapter.update(nextScene)
+  adapter.update(scene)
 
-  assert.equal(fitCalls, 1)
-  assert.equal(adapter.hasMountedCamera, true)
+  assert.equal(fitCalls, 0)
   assert.equal(refreshCalls, 1)
 })
 
@@ -327,7 +325,7 @@ test('fitCameraToGraph frames the visible rendered nodes', async () => {
         ) => void
       }
     }
-    fitCameraToGraph: () => void
+    fitCameraToGraph: () => boolean
   }
   const currentCameraState = { x: 0, y: 0, ratio: 1, angle: 0 }
   const toViewport = (
@@ -371,13 +369,73 @@ test('fitCameraToGraph frames the visible rendered nodes', async () => {
     }),
   }
 
-  adapter.fitCameraToGraph()
+  assert.equal(adapter.fitCameraToGraph(), true)
 
   assert.equal(animatedStates.length, 1)
   assert.equal(animatedStates[0].x, 0)
   assert.equal(animatedStates[0].y, 0)
   assert.equal(animatedStates[0].angle, 0)
   assert.equal(animatedStates[0].ratio, 1000 / 760)
+})
+
+test('fitCameraToGraph does nothing when there are no measurable visible nodes', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let animated = false
+  let reset = false
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getDimensions: () => { width: number; height: number }
+      getCamera: () => {
+        animatedReset: (options: { duration: number }) => Promise<void>
+        animate: (
+          state: { x: number; y: number; ratio: number; angle: number },
+          options: { duration: number },
+        ) => Promise<void>
+      }
+    }
+    renderStore: {
+      getGraph: () => {
+        order: number
+        forEachNode: (
+          callback: (
+            pubkey: string,
+            attrs: { x: number; y: number; hidden?: boolean },
+          ) => void,
+        ) => void
+      }
+    }
+    fitCameraToGraph: () => boolean
+  }
+
+  adapter.sigma = {
+    getDimensions: () => ({ width: 1000, height: 800 }),
+    getCamera: () => ({
+      animatedReset: () => {
+        reset = true
+        return Promise.resolve()
+      },
+      animate: () => {
+        animated = true
+        return Promise.resolve()
+      },
+    }),
+  }
+  adapter.renderStore = {
+    getGraph: () => ({
+      order: 2,
+      forEachNode: (callback) => {
+        callback('hidden', { x: 0, y: 0, hidden: true })
+        callback('not-ready', { x: Number.NaN, y: Number.NaN })
+      },
+    }),
+  }
+
+  assert.equal(adapter.fitCameraToGraph(), false)
+  assert.equal(animated, false)
+  assert.equal(reset, false)
 })
 
 const createScene = (): GraphSceneSnapshot => ({
@@ -1517,6 +1575,99 @@ test('double click on a node prevents Sigma zoom and forwards the interaction', 
     assert.deepEqual(doubleClicks, ['alice'])
   } finally {
     globalThis.window = originalWindow
+  }
+})
+
+test('small pointer movement before click does not consume node clicks', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const originalWindow = globalThis.window
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const listeners = new Map<string, (event: unknown) => void>()
+  const clicks: string[] = []
+  let prevented = 0
+  let cameraDisabled = 0
+  let cameraEnabled = 0
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      on: (eventName: string, listener: (event: unknown) => void) => void
+      scheduleRender: () => void
+      getCamera: () => {
+        on: (eventName: string, listener: (event: unknown) => void) => void
+        disable: () => void
+        enable: () => void
+      }
+    } | null
+    renderStore: Record<string, never> | null
+    physicsStore: Record<string, never> | null
+    callbacks: GraphInteractionCallbacks | null
+    bindEvents: () => void
+  }
+
+  globalThis.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  } as Window & typeof globalThis
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0)
+    return 1
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+
+  try {
+    adapter.sigma = {
+      on: (eventName, listener) => {
+        listeners.set(eventName, listener)
+      },
+      scheduleRender: () => {},
+      getCamera: () => ({
+        on: () => {},
+        disable: () => {
+          cameraDisabled += 1
+        },
+        enable: () => {
+          cameraEnabled += 1
+        },
+      }),
+    }
+    adapter.renderStore = {}
+    adapter.physicsStore = {}
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onNodeClick: (pubkey) => {
+        clicks.push(pubkey)
+      },
+    }
+
+    adapter.bindEvents()
+
+    listeners.get('downNode')?.({
+      node: 'alice',
+      event: { x: 20, y: 20, original: { ctrlKey: false } },
+    })
+    listeners.get('moveBody')?.({
+      event: { x: 22, y: 20, original: { ctrlKey: false } },
+      preventSigmaDefault: () => {
+        prevented += 1
+      },
+    })
+    listeners.get('upNode')?.({
+      event: { x: 22, y: 20, original: { ctrlKey: false } },
+    })
+    listeners.get('clickNode')?.({ node: 'alice' })
+
+    assert.equal(prevented, 0)
+    assert.equal(cameraDisabled, 1)
+    assert.equal(cameraEnabled, 1)
+    assert.deepEqual(clicks, ['alice'])
+  } finally {
+    globalThis.window = originalWindow
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame
   }
 })
 

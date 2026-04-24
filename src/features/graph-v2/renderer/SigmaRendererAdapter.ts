@@ -375,8 +375,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private pendingHighlightTransitionFrame: number | null = null
 
-  private hasMountedCamera = false
-
   private isCameraLocked = false
 
   private isGraphBoundsLocked = false
@@ -686,17 +684,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const sigma = this.sigma
     const renderStore = this.renderStore
     if (!sigma || !renderStore) {
-      return
+      return false
     }
 
     const graph = renderStore.getGraph()
     if (graph.order === 0) {
-      return
+      return false
     }
 
     const dimensions = sigma.getDimensions()
     if (dimensions.width <= 0 || dimensions.height <= 0) {
-      return
+      return false
     }
 
     let minX = Infinity
@@ -714,8 +712,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     if (!Number.isFinite(minX)) {
-      this.recenterCamera()
-      return
+      return false
     }
 
     const centerGraph = {
@@ -756,8 +753,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const viewportWidth = maxViewportX - minViewportX
     const viewportHeight = maxViewportY - minViewportY
     if (!Number.isFinite(viewportWidth) || !Number.isFinite(viewportHeight)) {
-      this.recenterCamera()
-      return
+      return false
     }
 
     const paddingRatio = 0.12
@@ -777,6 +773,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     camera
       .animate({ ...baseState, ratio: nextRatio }, { duration: 250 })
       .catch(() => {})
+    return true
   }
 
   public zoomIn() {
@@ -1462,10 +1459,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.bindEvents()
     this.forceRuntime.sync(initialScene.physics)
     this.ensurePhysicsPositionBridge()
-    if (initialScene.render.nodes.length > 0) {
-      this.fitCameraToGraph()
-      this.hasMountedCamera = true
-    }
   }
 
   public update(scene: GraphSceneSnapshot) {
@@ -1531,19 +1524,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
       topologyChanged: physicsApplyResult.topologyChanged,
     })
     this.ensurePhysicsPositionBridge()
-
-    const previousRoot = previousScene?.render.cameraHint.rootPubkey ?? null
-    const nextRoot = scene.render.cameraHint.rootPubkey
-    const rootChangedToSomething =
-      previousRoot !== nextRoot && nextRoot !== null
-    if (!this.hasMountedCamera && scene.render.nodes.length > 0) {
-      this.fitCameraToGraph()
-      this.hasMountedCamera = true
-    } else if (rootChangedToSomething && previousRoot === null) {
-      // Initial root load: frame the graph once. Subsequent root changes
-      // should not steal the camera from the user.
-      this.fitCameraToGraph()
-    }
 
     this.safeRefresh()
   }
@@ -1949,8 +1929,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
         return
       }
 
-      preventSigmaDefault()
-
       if (!this.draggedNodePubkey) {
         if (
           !pendingDragGesture ||
@@ -1962,7 +1940,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
           return
         }
 
+        preventSigmaDefault()
         this.startDrag(pendingDragGesture.pubkey)
+      } else {
+        preventSigmaDefault()
       }
 
       const draggedNodePubkey = this.draggedNodePubkey

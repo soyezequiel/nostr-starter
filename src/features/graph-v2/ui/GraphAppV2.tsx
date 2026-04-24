@@ -49,7 +49,6 @@ import { buildNodeDetailProjection } from '@/features/graph-v2/projections/build
 import {
   applyPersonSearchHighlight,
   buildPersonSearchMatches,
-  type PersonSearchMatch,
 } from '@/features/graph-v2/projections/personSearchHighlight'
 import type {
   GraphInteractionCallbacks,
@@ -85,7 +84,6 @@ import {
   GearIcon,
   PinIcon,
   PulseIcon,
-  SearchIcon,
   TargetIcon,
   ZapIcon,
 } from '@/features/graph-v2/ui/SigmaIcons'
@@ -1260,102 +1258,6 @@ function mapCanonicalNodeToSavedRootProfile(node: CanonicalNode): SavedRootProfi
   }
 }
 
-function PersonSearchPanel({
-  query,
-  matches,
-  totalNodeCount,
-  onChange,
-  onClear,
-  onSelect,
-}: {
-  query: string
-  matches: readonly PersonSearchMatch[]
-  totalNodeCount: number
-  onChange: (value: string) => void
-  onClear: () => void
-  onSelect: (pubkey: string) => void
-}) {
-  const trimmedQuery = query.trim()
-  const visibleMatches = matches.slice(0, 8)
-  const hasMoreMatches = matches.length > visibleMatches.length
-  const status = !trimmedQuery
-    ? `Busca entre ${totalNodeCount} nodos visibles.`
-    : matches.length === 0
-      ? 'Sin coincidencias visibles.'
-      : `${matches.length} coincidencia${matches.length === 1 ? '' : 's'} visible${matches.length === 1 ? '' : 's'}.`
-
-  return (
-    <div className="sg-person-search">
-      <label className="sg-person-search__label" htmlFor="sigma-person-search">
-        Nombre
-      </label>
-      <div className="sg-person-search__row">
-        <input
-          aria-describedby="sigma-person-search-status"
-          autoComplete="off"
-          autoFocus
-          className="sg-person-search__field"
-          id="sigma-person-search"
-          inputMode="search"
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter') return
-            const firstMatch = visibleMatches[0]
-            if (!firstMatch) return
-            event.preventDefault()
-            onSelect(firstMatch.pubkey)
-          }}
-          placeholder="Ej: fiatjaf, la crypta, mari"
-          spellCheck={false}
-          type="search"
-          value={query}
-        />
-        <button
-          className="sg-btn"
-          disabled={!trimmedQuery}
-          onClick={onClear}
-          style={{ flex: 'none' }}
-          type="button"
-        >
-          Limpiar
-        </button>
-      </div>
-      <p
-        className="sg-person-search__status"
-        id="sigma-person-search-status"
-      >
-        {status}
-      </p>
-      {trimmedQuery ? (
-        <div className="sg-person-search__results">
-          {visibleMatches.map((match) => (
-            <button
-              className="sg-person-search__result"
-              key={match.pubkey}
-              onClick={() => onSelect(match.pubkey)}
-              type="button"
-            >
-              <span className="sg-person-search__result-name">{match.label}</span>
-              <span className="sg-person-search__result-key">
-                {match.pubkey.slice(0, 10)}...
-              </span>
-            </button>
-          ))}
-          {hasMoreMatches ? (
-            <div className="sg-person-search__more">
-              +{matches.length - visibleMatches.length} mas resaltadas en el grafo
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <p className="sg-person-search__hint">
-          Coincide por fragmento, sin importar mayusculas, minusculas o acentos.
-        </p>
-      )}
-    </div>
-  )
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface SigmaRootLoadChromeProps {
@@ -1524,6 +1426,7 @@ export default function GraphAppV2() {
   const [mobileUtilityPanel, setMobileUtilityPanel] = useState<MobileUtilityPanel>(null)
   const [mobilePanelSnap, setMobilePanelSnap] = useState<SigmaPanelSnap>('mid')
   const [personSearchQuery, setPersonSearchQuery] = useState('')
+  const personSearchInputRef = useRef<HTMLInputElement | null>(null)
   const [isRootLoadScreenOpen, setIsRootLoadScreenOpen] = useState(false)
   // Rail toggles — direct controls, decoupled from the settings panel
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
@@ -1763,6 +1666,9 @@ export default function GraphAppV2() {
           setIsNotificationsOpen(false)
           setMobileUtilityPanel(null)
           setIsPersonSearchOpen(true)
+          window.requestAnimationFrame(() => {
+            personSearchInputRef.current?.focus()
+          })
           return
         }
         setIsRootSheetOpen(true)
@@ -2643,14 +2549,9 @@ export default function GraphAppV2() {
     setIsRootSheetOpen(true)
   }, [])
 
-  const handleOpenPersonSearch = useCallback(() => {
+  const handleFocusPersonSearch = useCallback(() => {
     if (!sceneState.rootPubkey) {
       setIsRootSheetOpen(true)
-      return
-    }
-    if (isPersonSearchOpen) {
-      setIsPersonSearchOpen(false)
-      clearSelectedNode()
       return
     }
     setIsRootSheetOpen(false)
@@ -2661,10 +2562,26 @@ export default function GraphAppV2() {
     setMobileUtilityPanel(null)
     setMobilePanelSnap('mid')
     setIsPersonSearchOpen(true)
-  }, [clearSelectedNode, isPersonSearchOpen, sceneState.rootPubkey])
+  }, [sceneState.rootPubkey])
+
+  const handleChangePersonSearch = useCallback((value: string) => {
+    setPersonSearchQuery(value)
+    if (!sceneState.rootPubkey) {
+      return
+    }
+    setIsRootSheetOpen(false)
+    setIsSettingsOpen(false)
+    setIsZapsPanelOpen(false)
+    setIsNotificationsOpen(false)
+    setIsRuntimeInspectorOpen(false)
+    setMobileUtilityPanel(null)
+    setMobilePanelSnap('mid')
+    setIsPersonSearchOpen(true)
+  }, [sceneState.rootPubkey])
 
   const handleClearPersonSearch = useCallback(() => {
     setPersonSearchQuery('')
+    personSearchInputRef.current?.focus()
   }, [])
 
   const handleSelectPersonSearchMatch = useCallback((pubkey: string) => {
@@ -2676,6 +2593,19 @@ export default function GraphAppV2() {
     setIsPersonSearchOpen(false)
     setMobilePanelSnap('peek')
   }, [bridge, isFixtureMode, updateFixtureState])
+
+  const handleSubmitPersonSearch = useCallback(() => {
+    if (!sceneState.rootPubkey) {
+      setIsRootSheetOpen(true)
+      return
+    }
+    const firstMatch = personSearchMatches[0]
+    if (firstMatch) {
+      handleSelectPersonSearchMatch(firstMatch.pubkey)
+      return
+    }
+    setIsPersonSearchOpen(true)
+  }, [handleSelectPersonSearchMatch, personSearchMatches, sceneState.rootPubkey])
 
   const handleOpenSettings = useCallback(() => {
     if (isSettingsOpen) {
@@ -2931,52 +2861,25 @@ export default function GraphAppV2() {
       onClick: handleStaleRelays,
       dividerAfter: true,
     },
-    {
-      id: 'search',
-      tip: isPersonSearchOpen
-        ? 'Cerrar busqueda'
-        : personSearchQuery.trim()
-          ? `Buscar persona: ${personSearchMatches.length} coincidencia${personSearchMatches.length === 1 ? '' : 's'}`
-          : 'Buscar persona (/)',
-      icon: <SearchIcon />,
-      active: isPersonSearchOpen || personSearchQuery.trim().length > 0,
-      onClick: handleOpenPersonSearch,
-    },
   ], [
     canUseRuntimeInspector,
     handleOpenZapsPanel,
-    handleOpenPersonSearch,
     handleOpenNotifications,
     handleOpenRuntimeInspector,
     handleOpenSettings,
     handleFitView,
     handleStaleRelays,
     handleTogglePhysics,
-    isPersonSearchOpen,
     isNotificationsOpen,
     isRuntimeInspectorOpen,
     isSettingsOpen,
     isZapsPanelOpen,
     notificationHistory.length,
-    personSearchMatches.length,
-    personSearchQuery,
     physicsEnabled,
     relayState.isGraphStale,
   ])
 
   const mobileNavButtons: MobileNavButton[] = useMemo(() => [
-    {
-      id: 'search',
-      label: 'Buscar',
-      tip: isPersonSearchOpen
-        ? 'Cerrar busqueda'
-        : personSearchQuery.trim()
-          ? `Buscar persona: ${personSearchMatches.length} coincidencia${personSearchMatches.length === 1 ? '' : 's'}`
-          : 'Buscar persona',
-      icon: <SearchIcon />,
-      active: isPersonSearchOpen || personSearchQuery.trim().length > 0,
-      onClick: handleOpenPersonSearch,
-    },
     {
       id: 'filters',
       label: 'Filtros',
@@ -3013,15 +2916,11 @@ export default function GraphAppV2() {
     },
   ], [
     handleOpenMobileUtilityPanel,
-    handleOpenPersonSearch,
     handleOpenZapsPanel,
     handleOpenSettings,
-    isPersonSearchOpen,
     isSettingsOpen,
     isZapsPanelOpen,
     mobileUtilityPanel,
-    personSearchMatches.length,
-    personSearchQuery,
     handleFitView,
     zapActivityLog.length,
   ])
@@ -3839,7 +3738,7 @@ export default function GraphAppV2() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const isPersonSearchPanelOpen = isPersonSearchOpen && !isRootSheetOpen && hasRoot
+  const isPersonSearchDropdownOpen = isPersonSearchOpen && !isRootSheetOpen && hasRoot
   const isMobileUtilityPanelOpen = mobileUtilityPanel !== null && !isRootSheetOpen && hasRoot
   const isIdentityPanelOpen =
     detail.node !== null &&
@@ -3847,7 +3746,6 @@ export default function GraphAppV2() {
     !isSettingsOpen &&
     !isZapsPanelOpen &&
     !isNotificationsOpen &&
-    !isPersonSearchPanelOpen &&
     !isMobileUtilityPanelOpen
   const handleCloseSidePanel = useCallback(() => {
     if (isSettingsOpen) {
@@ -3858,9 +3756,6 @@ export default function GraphAppV2() {
     }
     if (isNotificationsOpen) {
       setIsNotificationsOpen(false)
-    }
-    if (isPersonSearchPanelOpen) {
-      setIsPersonSearchOpen(false)
     }
     if (isMobileUtilityPanelOpen) {
       setMobileUtilityPanel(null)
@@ -3877,7 +3772,6 @@ export default function GraphAppV2() {
     isIdentityPanelOpen,
     isMobileUtilityPanelOpen,
     isNotificationsOpen,
-    isPersonSearchPanelOpen,
     isSettingsOpen,
     isZapsPanelOpen,
   ])
@@ -3918,12 +3812,24 @@ export default function GraphAppV2() {
         sceneNodeCount={deferredScene.render.nodes.length}
       />
 
-      {/* Top bar: root chip (left) + brand (right) */}
+      {/* Top bar: search strip (left) + brand (right) */}
       <SigmaTopBar
         onSwitchRoot={handleOpenRootSheet}
         rootDisplayName={hasRoot ? (rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null) : null}
         rootNpub={rootNpubEncoded}
         rootPictureUrl={rootPictureUrl}
+        searchDisabled={!hasRoot}
+        searchExpanded={isPersonSearchDropdownOpen}
+        searchInputRef={personSearchInputRef}
+        searchMatches={personSearchMatches}
+        searchPlaceholder={hasRoot ? 'Buscar persona en el grafo' : 'Cargá una identidad para buscar'}
+        searchQuery={personSearchQuery}
+        searchTotalNodeCount={deferredScene.render.nodes.length}
+        onSearchChange={handleChangePersonSearch}
+        onSearchClear={handleClearPersonSearch}
+        onSearchFocus={handleFocusPersonSearch}
+        onSearchSelect={handleSelectPersonSearchMatch}
+        onSearchSubmit={handleSubmitPersonSearch}
       />
 
       {/* Filter bar + rail + HUD + minimap — only when a root is loaded */}
@@ -3938,7 +3844,6 @@ export default function GraphAppV2() {
           <SigmaMobileBottomNav buttons={mobileNavButtons} />
           <SigmaHud stats={hudStats} />
           {!isIdentityPanelOpen &&
-            !isPersonSearchPanelOpen &&
             !isNotificationsOpen &&
             !isMobileUtilityPanelOpen && (
             <SigmaMinimap
@@ -3956,7 +3861,7 @@ export default function GraphAppV2() {
         </>
       )}
 
-      {/* Side panel — search, detail, or settings (right), one at a time */}
+      {/* Side panel — detail or tools (right), one at a time */}
       {canUseRuntimeInspector && isRuntimeInspectorOpen && hasRoot ? (
         <RuntimeInspectorUiStateBridge bridge={bridge} fixtureUiState={fixtureUiState}>
           {(uiState) => (
@@ -3984,7 +3889,6 @@ export default function GraphAppV2() {
       {(isSettingsOpen ||
         isZapsPanelOpen ||
         isNotificationsOpen ||
-        isPersonSearchPanelOpen ||
         isIdentityPanelOpen ||
         isMobileUtilityPanelOpen) &&
         !isRuntimeInspectorOpen && (
@@ -3996,11 +3900,9 @@ export default function GraphAppV2() {
                 ? 'ZAPS'
                 : isNotificationsOpen
                   ? 'NOTIFICACIONES'
-                  : isPersonSearchPanelOpen
-                    ? 'BUSCAR PERSONA'
-                    : mobileUtilityPanel === 'filters'
-                      ? 'FILTROS'
-                      : 'IDENTIDAD'
+                  : mobileUtilityPanel === 'filters'
+                    ? 'FILTROS'
+                    : 'IDENTIDAD'
           }
           mobileSnap={mobilePanelSnap}
           onClose={handleCloseSidePanel}
@@ -4030,15 +3932,6 @@ export default function GraphAppV2() {
             renderZapsContent()
           ) : isNotificationsOpen ? (
             renderNotificationsContent()
-          ) : isPersonSearchPanelOpen ? (
-            <PersonSearchPanel
-              matches={personSearchMatches}
-              onChange={setPersonSearchQuery}
-              onClear={handleClearPersonSearch}
-              onSelect={handleSelectPersonSearchMatch}
-              query={personSearchQuery}
-              totalNodeCount={deferredScene.render.nodes.length}
-            />
           ) : mobileUtilityPanel === 'filters' ? (
             renderFilterContent()
           ) : (
