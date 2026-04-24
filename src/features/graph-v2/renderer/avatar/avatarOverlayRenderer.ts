@@ -274,20 +274,20 @@ export const selectAvatarDrawItemsForFrame = <
   cap: number,
   forcedPubkeys: ReadonlySet<string>,
 ): T[] => {
-  const forcedItems = items.filter((item) => forcedPubkeys.has(item.pubkey))
-  const persistentItems = items.filter(
-    (item) =>
-      item.isPersistentAvatar && !forcedPubkeys.has(item.pubkey),
-  )
-  const persistentPubkeys = new Set(
-    persistentItems.map((item) => item.pubkey),
-  )
-  for (const item of forcedItems) {
-    persistentPubkeys.add(item.pubkey)
+  const forcedItems: T[] = []
+  const persistentItems: T[] = []
+  const selectableItems: T[] = []
+
+  for (const item of items) {
+    if (forcedPubkeys.has(item.pubkey)) {
+      forcedItems.push(item)
+    } else if (item.isPersistentAvatar) {
+      persistentItems.push(item)
+    } else {
+      selectableItems.push(item)
+    }
   }
-  const selectableItems = items.filter(
-    (item) => !persistentPubkeys.has(item.pubkey),
-  )
+
   const normalizedCap = Math.max(0, cap)
   const selected =
     selectableItems.length <= normalizedCap
@@ -607,6 +607,17 @@ export class AvatarOverlayRenderer {
     return this.lastVisibleNodePubkeys.slice()
   }
 
+  public getVisibleNodePubkeyCount(): number {
+    return this.lastVisibleNodePubkeys.length
+  }
+
+  public forEachVisibleNodePubkey(callback: (pubkey: string) => void): number {
+    for (const pubkey of this.lastVisibleNodePubkeys) {
+      callback(pubkey)
+    }
+    return this.lastVisibleNodePubkeys.length
+  }
+
   private onAfterRender() {
     if (this.disposed) {
       return
@@ -886,29 +897,35 @@ export class AvatarOverlayRenderer {
     let drawnImageCount = 0
     let monogramDrawCount = 0
     let withPictureMonogramDrawCount = 0
-    const resolvedDrawItems = drawItems
-      .map((item) => {
-        const isPersistentAvatar =
-          item.isPersistentAvatar || forcedAvatarPubkeys.has(item.pubkey)
-        return {
-          ...item,
-          isPersistentAvatar,
-          monogramOnly:
-            !isPersistentAvatar &&
-            item.zoomedOutMonogram &&
-            !allowZoomedOutImages,
-        }
-      })
-      .filter(
-        (item) =>
-          budget.showZoomedOutMonograms ||
-          allowZoomedOutImages ||
-          item.isPersistentAvatar ||
-          !item.zoomedOutMonogram,
-      )
+    const resolvedDrawItems: AvatarDrawItem[] = []
     let visiblePhotoCount = 0
-    for (const item of resolvedDrawItems) {
-      if (item.hasSafePictureUrl) {
+    for (const item of drawItems) {
+      const isPersistentAvatar =
+        item.isPersistentAvatar || forcedAvatarPubkeys.has(item.pubkey)
+      if (
+        !budget.showZoomedOutMonograms &&
+        !allowZoomedOutImages &&
+        !isPersistentAvatar &&
+        item.zoomedOutMonogram
+      ) {
+        continue
+      }
+
+      const monogramOnly =
+        !isPersistentAvatar &&
+        item.zoomedOutMonogram &&
+        !allowZoomedOutImages
+      const resolvedItem =
+        item.isPersistentAvatar === isPersistentAvatar &&
+        item.monogramOnly === monogramOnly
+          ? item
+          : {
+              ...item,
+              isPersistentAvatar,
+              monogramOnly,
+            }
+      resolvedDrawItems.push(resolvedItem)
+      if (resolvedItem.hasSafePictureUrl) {
         visiblePhotoCount += 1
       }
     }
@@ -1007,8 +1024,8 @@ export class AvatarOverlayRenderer {
         y: item.y,
         r: item.r,
         monogram: this.cache.getMonogram(item.pubkey, item.monogramInput),
-        pubkey: item.pubkey,
         url: item.url,
+        urlKey,
         disableImageReason,
         hasVisibleMonogramPart,
       })
@@ -1237,8 +1254,8 @@ export class AvatarOverlayRenderer {
     y,
     r,
     monogram,
-    pubkey,
     url,
+    urlKey,
     disableImageReason,
     hasVisibleMonogramPart,
   }: {
@@ -1247,8 +1264,8 @@ export class AvatarOverlayRenderer {
     y: number
     r: number
     monogram: HTMLCanvasElement
-    pubkey: string
     url: string | null
+    urlKey: AvatarUrlKey | null
     disableImageReason?: string | null
     hasVisibleMonogramPart: boolean
   }): AvatarDrawResult {
@@ -1258,8 +1275,7 @@ export class AvatarOverlayRenderer {
     let cacheFailureReason: string | null = null
     let fallbackReason = disableImageReason ?? null
 
-    if (url) {
-      const urlKey = buildAvatarUrlKey(pubkey, url)
+    if (url && urlKey) {
       const entry = this.cache.get(urlKey)
       if (entry) {
         cacheState = entry.state

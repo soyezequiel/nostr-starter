@@ -1688,8 +1688,20 @@ export default function GraphAppV2() {
     [sceneState.sceneSignature],
   )
   const deferredScene = useDeferredValue(scene)
-  const latestVisibleWarmupRef = useRef({ deferredScene, sceneState })
-  latestVisibleWarmupRef.current = { deferredScene, sceneState }
+  const visiblePubkeys = useMemo(
+    () => deferredScene.render.nodes.map((node) => node.pubkey),
+    [deferredScene.render.nodes],
+  )
+  const latestVisibleWarmupRef = useRef({
+    deferredScene,
+    scenePubkeys: visiblePubkeys,
+    sceneState,
+  })
+  latestVisibleWarmupRef.current = {
+    deferredScene,
+    scenePubkeys: visiblePubkeys,
+    sceneState,
+  }
   const deferredPersonSearchQuery = useDeferredValue(personSearchQuery)
   const personSearchMatches = useMemo(
     () =>
@@ -1734,13 +1746,8 @@ export default function GraphAppV2() {
       const inflightPubkeys = visibleProfileWarmupInflightRef.current
       const viewportPubkeys =
         sigmaHostRef.current?.getVisibleNodePubkeys() ?? []
-      const {
-        deferredScene: latestDeferredScene,
-        sceneState: latestSceneState,
-      } = latestVisibleWarmupRef.current
-      const scenePubkeys = latestDeferredScene.render.nodes.map(
-        (node) => node.pubkey,
-      )
+      const { scenePubkeys, sceneState: latestSceneState } =
+        latestVisibleWarmupRef.current
       const selection = selectVisibleProfileWarmupPubkeys({
         viewportPubkeys,
         scenePubkeys,
@@ -1927,10 +1934,6 @@ export default function GraphAppV2() {
     key: K, value: DragNeighborhoodInfluenceTuning[K],
   ) { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }, [])
 
-  const visiblePubkeys = useMemo(
-    () => deferredScene.render.nodes.map((node) => node.pubkey),
-    [deferredScene.render.nodes],
-  )
   const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {

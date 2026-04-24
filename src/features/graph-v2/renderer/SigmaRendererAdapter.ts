@@ -2424,17 +2424,20 @@ export class SigmaRendererAdapter implements RendererAdapter {
     for (const pubkey of this.scene?.render.pins.pubkeys ?? []) {
       addPubkey(pubkey)
     }
-    const avatarVisiblePubkeys = this.avatarOverlay?.getVisibleNodePubkeys() ?? []
-    for (const pubkey of avatarVisiblePubkeys) {
-      addPubkey(pubkey)
-    }
+    const avatarVisibleNodeCount =
+      this.avatarOverlay?.forEachVisibleNodePubkey((pubkey) => {
+        addPubkey(pubkey)
+      }) ?? 0
     for (const pubkey of this.hoveredNeighbors) {
       addPubkey(pubkey)
     }
-    for (const [pubkey] of Array.from(this.dragHopDistances.entries()).sort(
-      (left, right) => left[1] - right[1] || left[0].localeCompare(right[0]),
-    )) {
-      addPubkey(pubkey)
+    const dragHopDistances = this.dragHopDistances
+    if (dragHopDistances.size > 0) {
+      for (const [pubkey] of Array.from(dragHopDistances.entries()).sort(
+        (left, right) => left[1] - right[1] || left[0].localeCompare(right[0]),
+      )) {
+        addPubkey(pubkey)
+      }
     }
     const viewportSync = this.collectViewportRenderPubkeys(addPubkey)
     const backgroundSyncedNodeCount =
@@ -2446,7 +2449,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       pubkeys,
       visibleRenderNodeCount: viewportSync.visibleNodeCount,
       visibleRenderSyncedNodeCount: viewportSync.addedNodeCount,
-      avatarVisibleNodeCount: avatarVisiblePubkeys.length,
+      avatarVisibleNodeCount,
       backgroundSyncedNodeCount,
     }
   }
@@ -2473,7 +2476,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
             physicsNodeCount: this.physicsStore?.getGraph().order ?? 0,
             physicsEdgeCount: this.physicsStore?.getGraph().size ?? 0,
             visibleNodeCount:
-              this.avatarOverlay?.getVisibleNodePubkeys().length ?? 0,
+              this.avatarOverlay?.getVisibleNodePubkeyCount() ?? 0,
             hasDraggedNode: Boolean(this.draggedNodePubkey),
             hasHoveredNode: Boolean(this.hoveredNodePubkey),
           }),

@@ -522,7 +522,11 @@ test('physics bridge syncs visible priority nodes while spreading background nod
       physicsStore: PhysicsGraphStore
       positionLedger: NodePositionLedger
       forceRuntime: { isRunning: () => boolean; isSuspended: () => boolean }
-      avatarOverlay: { getVisibleNodePubkeys: () => string[] }
+      avatarOverlay: {
+        forEachVisibleNodePubkey: (callback: (pubkey: string) => void) => number
+        getVisibleNodePubkeyCount: () => number
+        getVisibleNodePubkeys: () => string[]
+      }
       nodeHitTester: { markDirty: () => void }
       sigma: {
         refresh: () => void
@@ -545,7 +549,14 @@ test('physics bridge syncs visible priority nodes while spreading background nod
       isRunning: () => running,
       isSuspended: () => suspended,
     }
-    adapter.avatarOverlay = { getVisibleNodePubkeys: () => ['A'] }
+    adapter.avatarOverlay = {
+      forEachVisibleNodePubkey: (callback) => {
+        callback('A')
+        return 1
+      },
+      getVisibleNodePubkeyCount: () => 1,
+      getVisibleNodePubkeys: () => ['A'],
+    }
     adapter.nodeHitTester = {
       markDirty: () => {
         dirtyMarks += 1

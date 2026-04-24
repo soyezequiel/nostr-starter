@@ -88,9 +88,13 @@ export class LegacyKernelBridge {
     this.runtime = runtime ?? browserAppKernel
     this.store = store ?? browserAppStore
 
-    const initialSceneState = this.snapshotAdapter.adaptScene(this.store.getState())
-    this.uiState = this.snapshotAdapter.adaptUi(this.store.getState())
-    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    const initialStoreState = this.store.getState()
+    const initialSceneState = this.snapshotAdapter.adaptScene(initialStoreState)
+    this.uiState = this.snapshotAdapter.adaptUi(initialStoreState)
+    this.combinedState = this.snapshotAdapter.adaptCombined(
+      initialSceneState,
+      this.uiState,
+    )
     this.domainStore = domainStore ?? new GraphDomainStore(initialSceneState)
     this.connect()
   }
@@ -127,8 +131,9 @@ export class LegacyKernelBridge {
       return
     }
 
-    this.replaceSceneState(this.snapshotAdapter.adaptScene(this.store.getState()))
-    this.replaceUiState(this.snapshotAdapter.adaptUi(this.store.getState()))
+    const initialStoreState = this.store.getState()
+    this.replaceSceneState(this.snapshotAdapter.adaptScene(initialStoreState))
+    this.replaceUiState(this.snapshotAdapter.adaptUi(initialStoreState))
 
     const selectorStore = this.store as AppStoreApi & StoreWithSelector<AppStore>
     this.unsubscribeScene = selectorStore.subscribe(
@@ -217,7 +222,10 @@ export class LegacyKernelBridge {
     }
 
     this.domainStore.replaceState(nextSceneState)
-    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    this.combinedState = this.snapshotAdapter.adaptCombined(
+      nextSceneState,
+      this.uiState,
+    )
     this.scheduleSceneEmit()
     this.scheduleCompatibilityEmit()
   }
@@ -228,7 +236,10 @@ export class LegacyKernelBridge {
     }
 
     this.uiState = nextUiState
-    this.combinedState = this.snapshotAdapter.adapt(this.store.getState())
+    this.combinedState = this.snapshotAdapter.adaptCombined(
+      this.domainStore.getState(),
+      nextUiState,
+    )
     this.scheduleUiEmit()
     this.scheduleCompatibilityEmit()
   }

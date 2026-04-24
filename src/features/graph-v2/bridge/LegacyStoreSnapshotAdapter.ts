@@ -175,7 +175,13 @@ export class LegacyStoreSnapshotAdapter {
   public adapt(state: AppStore): CanonicalGraphState {
     const scene = this.adaptScene(state)
     const ui = this.adaptUi(state)
+    return this.adaptCombined(scene, ui)
+  }
 
+  public adaptCombined(
+    scene: CanonicalGraphSceneState,
+    ui: CanonicalGraphUiState,
+  ): CanonicalGraphState {
     if (
       this.previousCombinedSnapshot &&
       this.previousCombinedSnapshot.nodesByPubkey === scene.nodesByPubkey &&
