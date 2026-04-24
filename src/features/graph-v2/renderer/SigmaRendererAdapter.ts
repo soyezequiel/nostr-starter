@@ -1287,8 +1287,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.forceRuntime = new ForceAtlasRuntime(this.physicsStore.getGraph())
     this.sigma = new Sigma(this.renderStore.getGraph(), container, {
       renderEdgeLabels: false,
-      hideEdgesOnMove: false,
-      hideLabelsOnMove: false,
+      hideEdgesOnMove: true,
+      hideLabelsOnMove: true,
       labelDensity: 0.18,
       labelRenderedSizeThreshold: 10,
       labelFont:
