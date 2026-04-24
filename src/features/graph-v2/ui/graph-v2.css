@@ -3206,6 +3206,7 @@
 }
 
 [data-graph-v2] .sg-runtime__summary,
+[data-graph-v2] .sg-runtime__resource,
 [data-graph-v2] .sg-runtime__quick,
 [data-graph-v2] .sg-runtime__timeline,
 [data-graph-v2] .sg-runtime__panel-section {
@@ -3400,6 +3401,74 @@
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+[data-graph-v2] .sg-runtime__resource-list {
+  display: grid;
+  gap: 7px;
+}
+
+[data-graph-v2] .sg-runtime__resource-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto 54px;
+  gap: 9px;
+  align-items: center;
+  min-height: 54px;
+  padding: 8px 9px;
+  border: 1px solid var(--sg-stroke);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.025);
+}
+
+[data-graph-v2] .sg-runtime__resource-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--sg-fg-muted);
+  font-family: var(--sg-font-mono);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+[data-graph-v2] .sg-runtime__resource-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-graph-v2] .sg-runtime__resource-title {
+  overflow: hidden;
+  color: var(--sg-fg);
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-graph-v2] .sg-runtime__resource-detail {
+  color: var(--sg-fg-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+[data-graph-v2] .sg-runtime__resource-value {
+  justify-self: end;
+  color: var(--sg-fg);
+  font-family: var(--sg-font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+[data-graph-v2] .sg-runtime__resource-intensity {
+  justify-self: end;
+  color: var(--sg-fg-muted);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
 }
 
 [data-graph-v2] .sg-runtime__rows {

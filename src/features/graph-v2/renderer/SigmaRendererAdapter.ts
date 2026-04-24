@@ -439,6 +439,19 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.scheduleContainerRefresh()
   }
 
+  private safeRender() {
+    if (!this.sigma) {
+      return
+    }
+
+    if (!hasRenderableSigmaContainer(this.container)) {
+      this.pendingContainerRefresh = true
+      return
+    }
+
+    this.sigma.scheduleRender()
+  }
+
   private observeContainer(container: HTMLElement) {
     if (typeof ResizeObserver === 'undefined') {
       return
@@ -2485,7 +2498,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
       if (changed) {
         this.markMotion()
-        this.safeRefresh()
+        this.safeRender()
       }
       return
     }
@@ -2528,7 +2541,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         this.nodeHitTester?.markDirty()
       }
       this.markMotion()
-      this.safeRefresh()
+      this.safeRender()
     }
 
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(

@@ -153,6 +153,10 @@ import type { NostrProfile } from '@/lib/nostr'
 type SigmaSettingsTab = 'renderer' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
 type ZapFeedMode = 'live' | 'recent-hour'
+type SceneConnection = Pick<
+  CanonicalGraphSceneState['edgesById'][string],
+  'source' | 'target' | 'relation' | 'origin'
+>
 
 interface SigmaNotificationLogEntry {
   id: string
@@ -270,6 +274,7 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
   devicePerformanceProfile: state.devicePerformanceProfile,
   effectiveGraphCaps: state.effectiveGraphCaps,
   effectiveImageBudget: state.effectiveImageBudget,
+  imageQualityMode: state.renderConfig.imageQualityMode,
   zapStatus: state.zapLayer.status,
   zapEdgeCount: state.zapLayer.edges.length,
   zapSkippedReceipts: state.zapLayer.skippedReceipts,
@@ -282,6 +287,31 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
 
 const formatInteger = (value: number) => INTEGER_FORMATTER.format(value)
+
+const createSceneConnectionKey = (a: string, b: string) =>
+  a < b ? `${a}|${b}` : `${b}|${a}`
+
+const buildSceneConnectionIndex = (
+  edgesById: CanonicalGraphSceneState['edgesById'],
+) => {
+  const connections = new Map<string, SceneConnection>()
+  let edgeCount = 0
+
+  for (const edge of Object.values(edgesById)) {
+    edgeCount += 1
+    const key = createSceneConnectionKey(edge.source, edge.target)
+    if (!connections.has(key)) {
+      connections.set(key, {
+        source: edge.source,
+        target: edge.target,
+        relation: edge.relation,
+        origin: edge.origin,
+      })
+    }
+  }
+
+  return { connections, edgeCount }
+}
 
 const clampProgress = (value: number) => {
   if (!Number.isFinite(value)) return 0
@@ -1394,6 +1424,7 @@ export default function GraphAppV2() {
         effectiveGraphCaps: runtimeInspectorStoreSnapshot.effectiveGraphCaps,
         effectiveImageBudget: runtimeInspectorStoreSnapshot.effectiveImageBudget,
       },
+      imageQualityMode: runtimeInspectorStoreSnapshot.imageQualityMode,
       zapSummary: {
         status: runtimeInspectorStoreSnapshot.zapStatus,
         edgeCount: runtimeInspectorStoreSnapshot.zapEdgeCount,
@@ -1409,6 +1440,7 @@ export default function GraphAppV2() {
       runtimeInspectorStoreSnapshot.devicePerformanceProfile,
       runtimeInspectorStoreSnapshot.effectiveGraphCaps,
       runtimeInspectorStoreSnapshot.effectiveImageBudget,
+      runtimeInspectorStoreSnapshot.imageQualityMode,
       runtimeInspectorStoreSnapshot.linkCount,
       runtimeInspectorStoreSnapshot.maxNodes,
       runtimeInspectorStoreSnapshot.nodeCount,
@@ -1683,6 +1715,8 @@ export default function GraphAppV2() {
   })
 
   const deferredSceneState = useDeferredValue(sceneState)
+  const isSceneTransitionPending =
+    sceneState.sceneSignature !== deferredSceneState.sceneSignature
   const deferredScene = useMemo(
     () => buildGraphSceneSnapshot(deferredSceneState),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1695,12 +1729,12 @@ export default function GraphAppV2() {
   const latestVisibleWarmupRef = useRef({
     deferredScene,
     scenePubkeys: visiblePubkeys,
-    sceneState,
+    sceneState: deferredSceneState,
   })
   latestVisibleWarmupRef.current = {
     deferredScene,
     scenePubkeys: visiblePubkeys,
-    sceneState,
+    sceneState: deferredSceneState,
   }
   const deferredPersonSearchQuery = useDeferredValue(personSearchQuery)
   const personSearchMatches = useMemo(
@@ -1725,6 +1759,7 @@ export default function GraphAppV2() {
     const latest = latestVisibleWarmupRef.current
     if (
       isFixtureMode ||
+      isSceneTransitionPending ||
       !latest.sceneState.rootPubkey ||
       latest.deferredScene.render.nodes.length === 0
     ) {
@@ -1820,25 +1855,25 @@ export default function GraphAppV2() {
   }, [
     bridge,
     isFixtureMode,
-    sceneState.sceneSignature,
+    isSceneTransitionPending,
+    deferredSceneState.sceneSignature,
   ])
 
   // Pre-calcular la capa completa (graph) en segundo plano para que el
   // usuario no tenga penalidad de tiempo al alternar desde "mutuos"
   useEffect(() => {
-    const scheduledSceneState = latestSceneStateRef.current
     if (
       isFixtureMode ||
-      scheduledSceneState.activeLayer === 'graph' ||
-      !scheduledSceneState.rootPubkey
+      isSceneTransitionPending ||
+      deferredSceneState.activeLayer === 'graph' ||
+      !deferredSceneState.rootPubkey
     ) {
       return
     }
 
     const timeoutId = setTimeout(() => {
-      const currentSceneState = latestSceneStateRef.current
       const warmupState = withClientSceneSignature({
-        ...currentSceneState,
+        ...deferredSceneState,
         activeLayer: 'graph',
       })
       const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
@@ -1849,7 +1884,7 @@ export default function GraphAppV2() {
           'ui.fullGraphWarmup.snapshot',
           startedAtMs,
           () => ({
-            sourceLayer: currentSceneState.activeLayer,
+            sourceLayer: deferredSceneState.activeLayer,
             activeLayer: warmupState.activeLayer,
             nodeCount: snapshot.render.nodes.length,
             visibleEdgeCount: snapshot.render.visibleEdges.length,
@@ -1869,7 +1904,7 @@ export default function GraphAppV2() {
     return () => {
       clearTimeout(timeoutId)
     }
-  }, [isFixtureMode, sceneState.sceneSignature])
+  }, [deferredSceneState, isFixtureMode, isSceneTransitionPending])
 
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
@@ -1935,6 +1970,10 @@ export default function GraphAppV2() {
   ) { setDragInfluenceTuning((current) => ({ ...current, [key]: value })) }, [])
 
   const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
+  const sceneConnectionLookup = useMemo(
+    () => buildSceneConnectionIndex(sceneState.edgesById),
+    [sceneState.edgesById],
+  )
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     const shouldTrace = shouldTraceZapPair(zap)
@@ -1990,33 +2029,19 @@ export default function GraphAppV2() {
       return false
     }
     
-    // Verificar que exista una conexión estructurada, sin importar la dirección
-    let hasConnection = false
-    let matchedConnection: { source: string; target: string; relation: string; origin?: string } | null = null
-    for (const edge of Object.values(sceneState.edgesById)) {
-      if (
-        (edge.source === zap.fromPubkey && edge.target === zap.toPubkey) ||
-        (edge.source === zap.toPubkey && edge.target === zap.fromPubkey)
-      ) {
-        hasConnection = true
-        matchedConnection = {
-          source: edge.source,
-          target: edge.target,
-          relation: edge.relation,
-          origin: edge.origin,
-        }
-        break
-      }
-    }
+    const matchedConnection =
+      sceneConnectionLookup.connections.get(
+        createSceneConnectionKey(zap.fromPubkey, zap.toPubkey),
+      ) ?? null
     
-    if (!hasConnection) {
+    if (!matchedConnection) {
       if (shouldTrace) {
         traceZapFlow('uiZapGate.dropped', {
           reason: 'missing-scene-connection',
           fromPubkey: zap.fromPubkey,
           toPubkey: zap.toPubkey,
           sats: zap.sats,
-          sceneEdgeCount: Object.keys(sceneState.edgesById).length,
+          sceneEdgeCount: sceneConnectionLookup.edgeCount,
           visibleNodeCount: visibleNodeSet.size,
         })
       }
@@ -2035,7 +2060,7 @@ export default function GraphAppV2() {
     }
 
     return played
-  }, [sceneState.activeLayer, sceneState.edgesById, showZaps, visibleNodeSet])
+  }, [sceneConnectionLookup, sceneState.activeLayer, showZaps, visibleNodeSet])
 
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {
@@ -3568,6 +3593,7 @@ export default function GraphAppV2() {
               deviceSummary={runtimeInspectorStoreState.deviceSummary}
               graphSummary={runtimeInspectorStoreState.graphSummary}
               liveZapFeedback={liveZapFeedFeedback}
+              imageQualityMode={runtimeInspectorStoreState.imageQualityMode}
               onClose={() => setIsRuntimeInspectorOpen(false)}
               open={isRuntimeInspectorOpen}
               physicsEnabled={physicsEnabled}

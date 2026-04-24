@@ -2,6 +2,7 @@ import type {
   DevicePerformanceProfile,
   EffectiveGraphCaps,
   EffectiveImageBudget,
+  ImageQualityMode,
   RelayHealthStatus,
   ZapLayerStatus,
 } from '@/features/graph-runtime/app/store/types'
@@ -22,6 +23,22 @@ export interface RuntimeInspectorMetric {
   label: string
   value: string
   tone?: RuntimeInspectorTone
+}
+
+export interface RuntimeInspectorResourceMode {
+  id:
+    | 'graph-layer'
+    | 'physics'
+    | 'avatars'
+    | 'zaps'
+    | 'profiles'
+    | 'root-load'
+  rank: number
+  titulo: string
+  intensidad: 'alta' | 'media' | 'baja'
+  valor: string
+  detalle: string
+  tone: RuntimeInspectorTone
 }
 
 export interface RuntimeInspectorSummaryItem {
@@ -129,6 +146,7 @@ export interface RuntimeInspectorSnapshot {
   performance: RuntimeInspectorPerformanceSection
   relays: RuntimeInspectorRelaysSection
   load: RuntimeInspectorLoadSection
+  resourceTop: RuntimeInspectorResourceMode[]
 }
 
 export interface RuntimeInspectorBuildInput {
@@ -164,6 +182,7 @@ export interface RuntimeInspectorBuildInput {
   liveZapFeedback: string | null
   showZaps: boolean
   physicsEnabled: boolean
+  imageQualityMode: ImageQualityMode
   sceneUpdatesPerMinute: number
   uiUpdatesPerMinute: number
 }
@@ -194,6 +213,16 @@ const formatDecimal = (value: number | null | undefined, digits = 1) => {
     return 'sin dato'
   }
   return value.toFixed(digits)
+}
+
+const formatBytes = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'sin dato'
+  }
+  if (value < 1024 * 1024) {
+    return `${formatDecimal(value / 1024, 1)} KB`
+  }
+  return `${formatDecimal(value / (1024 * 1024), 1)} MB`
 }
 
 const compactPubkey = (value: string) =>
@@ -229,6 +258,21 @@ const translateLayer = (layer: string) => {
       return 'Camino'
     default:
       return layer
+  }
+}
+
+const translateImageQualityMode = (mode: ImageQualityMode) => {
+  switch (mode) {
+    case 'performance':
+      return 'performance'
+    case 'adaptive':
+      return 'adaptativa'
+    case 'quality':
+      return 'calidad'
+    case 'full-hd':
+      return 'full HD'
+    default:
+      return mode
   }
 }
 
@@ -1070,6 +1114,230 @@ const buildZapSection = (
   }
 }
 
+const intensityFromTone = (
+  tone: RuntimeInspectorTone,
+): RuntimeInspectorResourceMode['intensidad'] => {
+  if (tone === 'bad') {
+    return 'alta'
+  }
+  if (tone === 'warn') {
+    return 'media'
+  }
+  return 'baja'
+}
+
+const buildResourceTop = (
+  input: RuntimeInspectorBuildInput,
+): RuntimeInspectorResourceMode[] => {
+  const visibleNodeCount =
+    input.scene.render.diagnostics.nodeCount || input.scene.render.nodes.length
+  const visibleEdgeCount =
+    input.scene.render.diagnostics.visibleEdgeCount ||
+    input.scene.render.visibleEdges.length
+  const physicsNodeCount =
+    input.scene.physics.diagnostics.nodeCount || input.scene.physics.nodes.length
+  const physicsEdgeCount =
+    input.scene.physics.diagnostics.edgeCount || input.scene.physics.edges.length
+  const frameMs = input.avatarPerfSnapshot?.emaFrameMs ?? null
+  const avatarOverlay = input.avatarRuntimeSnapshot?.overlay ?? null
+  const avatarBudget = avatarOverlay?.resolvedBudget ?? null
+  const avatarCounts = avatarOverlay?.counts ?? null
+  const cacheBytes = input.avatarRuntimeSnapshot?.cache?.totalBytes ?? 0
+  const overlapCount = input.physicsDiagnostics?.approximateOverlapCount ?? 0
+  const visibleWarmup = input.visibleProfileWarmup
+  const rootProgress = input.uiState.rootLoad.visibleLinkProgress
+
+  const graphLayerScore =
+    visibleNodeCount * 2 +
+    visibleEdgeCount * 1.5 +
+    (input.sceneState.activeLayer === 'graph' ? input.graphSummary.nodeCount : 0)
+  const graphLayerTone: RuntimeInspectorTone =
+    visibleNodeCount > 1600 || visibleEdgeCount > 3600
+      ? 'bad'
+      : visibleNodeCount > 700 || visibleEdgeCount > 1400
+        ? 'warn'
+        : 'ok'
+
+  const physicsActive =
+    input.physicsEnabled &&
+    (input.physicsDiagnostics?.running ?? input.avatarRuntimeSnapshot?.physicsRunning ?? true)
+  const physicsScore = input.physicsEnabled
+    ? physicsNodeCount * 1.3 +
+      physicsEdgeCount * 2 +
+      overlapCount * 20 +
+      (physicsActive ? 650 : 160)
+    : 0
+  const physicsTone: RuntimeInspectorTone = !input.physicsEnabled
+    ? 'neutral'
+    : physicsEdgeCount > 2200 || overlapCount > 120
+      ? 'bad'
+      : physicsEdgeCount > 800 || overlapCount > 0 || physicsActive
+        ? 'warn'
+        : 'ok'
+
+  const drawnImages = avatarCounts?.drawnImages ?? 0
+  const loadCandidates = avatarCounts?.loadCandidates ?? 0
+  const pendingCandidates = avatarCounts?.pendingCandidates ?? 0
+  const avatarBucket = avatarBudget?.maxBucket ?? input.avatarPerfSnapshot?.budget.maxBucket ?? 0
+  const imageQualityWeight =
+    input.imageQualityMode === 'full-hd'
+      ? 650
+      : input.imageQualityMode === 'quality'
+        ? 420
+        : input.imageQualityMode === 'adaptive'
+          ? 180
+          : 70
+  const avatarScore =
+    drawnImages * 18 +
+    loadCandidates * 7 +
+    pendingCandidates * 10 +
+    avatarBucket * 2 +
+    cacheBytes / 32_768 +
+    (avatarBudget?.showAllVisibleImages ? 360 : 0) +
+    imageQualityWeight
+  const avatarTone: RuntimeInspectorTone =
+    drawnImages > 90 || avatarBucket >= 512 || (frameMs !== null && frameMs > 24)
+      ? 'bad'
+      : drawnImages > 45 || loadCandidates > 120 || pendingCandidates > 40
+        ? 'warn'
+        : avatarScore > 0
+          ? 'ok'
+          : 'neutral'
+
+  const zapsActive =
+    input.showZaps &&
+    (input.zapSummary.status === 'enabled' || input.zapSummary.status === 'loading')
+  const zapsScore = zapsActive
+    ? input.zapSummary.targetCount * 1.2 +
+      input.zapSummary.edgeCount * 2 +
+      input.zapSummary.skippedReceipts * 3 +
+      (input.zapSummary.loadedFrom === 'live' ? 260 : 90)
+    : 0
+  const zapsTone: RuntimeInspectorTone = !zapsActive
+    ? 'neutral'
+    : input.zapSummary.targetCount > 256 || input.zapSummary.edgeCount > 1800
+      ? 'bad'
+      : input.zapSummary.targetCount > 96 || input.zapSummary.edgeCount > 500
+        ? 'warn'
+        : 'ok'
+
+  const warmupLoading = visibleWarmup?.profileStates.loading ?? 0
+  const warmupIdle = visibleWarmup?.profileStates.idle ?? 0
+  const warmupEligible = visibleWarmup?.eligibleCount ?? 0
+  const profilesScore = visibleWarmup
+    ? warmupEligible * 4 +
+      visibleWarmup.inflightCount * 24 +
+      warmupLoading * 10 +
+      warmupIdle * 2 +
+      visibleWarmup.pubkeys.length * 16
+    : 0
+  const profilesTone: RuntimeInspectorTone = !visibleWarmup
+    ? 'neutral'
+    : visibleWarmup.inflightCount > 12 || warmupLoading > 180
+      ? 'bad'
+      : visibleWarmup.inflightCount > 0 || warmupEligible > 80
+        ? 'warn'
+        : 'ok'
+
+  const rootLoadedCount =
+    (rootProgress?.following.loadedCount ?? 0) +
+    (rootProgress?.followers.loadedCount ?? 0)
+  const rootLoadActive =
+    input.uiState.rootLoad.status === 'loading' ||
+    input.uiState.rootLoad.status === 'partial'
+  const rootLoadScore = rootLoadActive
+    ? rootLoadedCount * 0.7 +
+      (rootProgress?.contactListEventCount ?? 0) * 6 +
+      (rootProgress?.inboundCandidateEventCount ?? 0) * 0.4 +
+      220
+    : 0
+  const rootLoadTone: RuntimeInspectorTone = !rootLoadActive
+    ? 'neutral'
+    : rootLoadedCount > 2500 || (rootProgress?.inboundCandidateEventCount ?? 0) > 2500
+      ? 'bad'
+      : 'warn'
+
+  const rows = [
+    {
+      id: 'graph-layer' as const,
+      score: graphLayerScore,
+      titulo: `Capa ${translateLayer(input.sceneState.activeLayer)}`,
+      valor: `${formatInteger(visibleNodeCount)} nodos / ${formatInteger(visibleEdgeCount)} aristas`,
+      detalle:
+        input.sceneState.activeLayer === 'graph'
+          ? 'Renderiza la red completa visible; suele ser la capa mas pesada.'
+          : 'Renderiza una proyeccion filtrada; el costo sube con nodos y aristas visibles.',
+      tone: graphLayerTone,
+    },
+    {
+      id: 'physics' as const,
+      score: physicsScore,
+      titulo: 'Fisica del layout',
+      valor: input.physicsEnabled
+        ? `${formatInteger(physicsNodeCount)} nodos / ${formatInteger(physicsEdgeCount)} aristas`
+        : 'pausada',
+      detalle: input.physicsEnabled
+        ? `Estado ${physicsActive ? 'corriendo' : 'habilitado'}; overlap aprox. ${formatInteger(overlapCount)}.`
+        : 'Sin consumo activo mientras esta pausada.',
+      tone: physicsTone,
+    },
+    {
+      id: 'avatars' as const,
+      score: avatarScore,
+      titulo: 'Fotos y avatares',
+      valor: `${formatInteger(drawnImages)} fotos/frame`,
+      detalle: `Modo ${translateImageQualityMode(input.imageQualityMode)}, bucket ${avatarBucket || 'sin dato'} px, cache ${formatBytes(cacheBytes)}.`,
+      tone: avatarTone,
+    },
+    {
+      id: 'zaps' as const,
+      score: zapsScore,
+      titulo: 'Zaps live',
+      valor: zapsActive
+        ? `${formatInteger(input.zapSummary.targetCount)} targets`
+        : 'inactivo',
+      detalle: zapsActive
+        ? `${formatInteger(input.zapSummary.edgeCount)} aristas de zap, origen ${input.zapSummary.loadedFrom}.`
+        : 'No esta agregando subscripciones ni aristas visuales ahora.',
+      tone: zapsTone,
+    },
+    {
+      id: 'profiles' as const,
+      score: profilesScore,
+      titulo: 'Warmup de perfiles',
+      valor: visibleWarmup
+        ? `${formatInteger(visibleWarmup.inflightCount)} inflight / ${formatInteger(warmupEligible)} elegibles`
+        : 'sin muestra',
+      detalle: visibleWarmup
+        ? `${formatInteger(warmupLoading)} cargando, ${formatInteger(visibleWarmup.pubkeys.length)} seleccionados para warmup.`
+        : 'El inspector aun no recibio snapshot de perfiles visibles.',
+      tone: profilesTone,
+    },
+    {
+      id: 'root-load' as const,
+      score: rootLoadScore,
+      titulo: 'Carga root',
+      valor: rootLoadActive
+        ? `${formatInteger(rootLoadedCount)} contactos`
+        : input.uiState.rootLoad.status,
+      detalle: rootLoadActive
+        ? 'Discovery y merge todavia estan alimentando el grafo.'
+        : 'No hay carga root activa en este snapshot.',
+      tone: rootLoadTone,
+    },
+  ]
+
+  return rows
+    .sort((left, right) => right.score - left.score || left.titulo.localeCompare(right.titulo))
+    .slice(0, 5)
+    .map(({ score: _score, tone, ...row }, index) => ({
+      ...row,
+      rank: index + 1,
+      intensidad: intensityFromTone(tone),
+      tone,
+    }))
+}
+
 const buildPerformanceSection = (
   input: RuntimeInspectorBuildInput,
 ): RuntimeInspectorPerformanceSection => {
@@ -1417,6 +1685,7 @@ export function buildRuntimeInspectorSnapshot(
   const performance = buildPerformanceSection(input)
   const relays = buildRelaysSection(input)
   const load = buildLoadSection(input)
+  const resourceTop = buildResourceTop(input)
   const summary = buildSummary({
     coverage,
     profiles,
@@ -1449,5 +1718,6 @@ export function buildRuntimeInspectorSnapshot(
     performance,
     relays,
     load,
+    resourceTop,
   }
 }

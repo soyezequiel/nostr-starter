@@ -57,6 +57,7 @@ interface Props {
   liveZapFeedback: string | null
   showZaps: boolean
   physicsEnabled: boolean
+  imageQualityMode: RuntimeInspectorBuildInput['imageQualityMode']
   sigmaHostRef: RefObject<SigmaCanvasHostHandle | null>
 }
 
@@ -139,6 +140,25 @@ const renderMetricList = (metrics: RuntimeInspectorMetric[]) => (
   </div>
 )
 
+const renderResourceTop = (snapshot: RuntimeInspectorSnapshot) => (
+  <div className="sg-runtime__resource-list">
+    {snapshot.resourceTop.map((item) => (
+      <div
+        className={`sg-runtime__resource-row ${classForTone(item.tone)}`}
+        key={item.id}
+      >
+        <span className="sg-runtime__resource-rank">{item.rank}</span>
+        <span className="sg-runtime__resource-main">
+          <span className="sg-runtime__resource-title">{item.titulo}</span>
+          <span className="sg-runtime__resource-detail">{item.detalle}</span>
+        </span>
+        <span className="sg-runtime__resource-value">{item.valor}</span>
+        <span className="sg-runtime__resource-intensity">{item.intensidad}</span>
+      </div>
+    ))}
+  </div>
+)
+
 export function RuntimeInspectorDrawer({
   open,
   onClose,
@@ -153,6 +173,7 @@ export function RuntimeInspectorDrawer({
   liveZapFeedback,
   showZaps,
   physicsEnabled,
+  imageQualityMode,
   sigmaHostRef,
 }: Props) {
   const [mode, setMode] = useState<InspectorMode>('rapida')
@@ -276,6 +297,7 @@ export function RuntimeInspectorDrawer({
         liveZapFeedback,
         showZaps,
         physicsEnabled,
+        imageQualityMode,
         sceneUpdatesPerMinute,
         uiUpdatesPerMinute,
       }),
@@ -286,6 +308,7 @@ export function RuntimeInspectorDrawer({
       graphSummary,
       hostAvatarSnapshot,
       hostPhysicsDiagnostics,
+      imageQualityMode,
       liveZapFeedback,
       physicsEnabled,
       scene,
@@ -474,6 +497,11 @@ export function RuntimeInspectorDrawer({
           {summaryRows}
         </section>
 
+        <section className="sg-runtime__resource">
+          <div className="sg-runtime__section-title">Top consumo actual</div>
+          {renderResourceTop(snapshot)}
+        </section>
+
         {mode === 'rapida' ? (
           <>
             <section className="sg-runtime__quick">
@@ -607,6 +635,8 @@ export function RuntimeInspectorDrawer({
               section={snapshot.performance}
             >
               {renderMetricList(snapshot.performance.metricas)}
+              <div className="sg-runtime__subsection">Top consumo actual</div>
+              {renderResourceTop(snapshot)}
               <div className="sg-runtime__subsection">Sospechosos probables</div>
               <div className="sg-runtime__notes">
                 {snapshot.performance.sospechosos.map((note) => (
