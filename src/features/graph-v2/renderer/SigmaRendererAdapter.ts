@@ -1,4 +1,5 @@
 import Sigma from 'sigma'
+import type { Coordinates, TouchCoords } from 'sigma/types'
 
 import { hasRenderableSigmaContainer } from '@/features/graph-v2/renderer/containerDimensions'
 import type {
@@ -163,6 +164,14 @@ const mixColor = (from: string, to: string, amount: number) => {
     lerpNumber(fromRgb.g, toRgb.g, amount),
   )}${toHexChannel(lerpNumber(fromRgb.b, toRgb.b, amount))}`
 }
+
+const getMidpoint = (from: Coordinates, to: Coordinates): Coordinates => ({
+  x: (from.x + to.x) / 2,
+  y: (from.y + to.y) / 2,
+})
+
+const getDistance = (from: Coordinates, to: Coordinates) =>
+  Math.hypot(to.x - from.x, to.y - from.y)
 
 const resolveZoomOutNodeScale = (cameraRatio: number) =>
   clampNumber(
@@ -1350,6 +1359,76 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  private configureTouchInteraction(sigma: Sigma) {
+    const touchCaptor = sigma.getTouchCaptor()
+    touchCaptor.setSettings({
+      dragTimeout: sigma.getSetting('dragTimeout'),
+      inertiaDuration: 0,
+      inertiaRatio: 0,
+      doubleClickTimeout: sigma.getSetting('doubleClickTimeout'),
+      doubleClickZoomingRatio: 1.7,
+      doubleClickZoomingDuration: 180,
+      tapMoveTolerance: sigma.getSetting('tapMoveTolerance'),
+    })
+    touchCaptor.on('touchmove', this.handleNaturalTouchZoom)
+  }
+
+  private readonly handleNaturalTouchZoom = (event: TouchCoords) => {
+    const sigma = this.sigma
+    if (
+      !sigma ||
+      event.touches.length !== 2 ||
+      event.previousTouches.length !== 2
+    ) {
+      return
+    }
+
+    const previousDistance = getDistance(
+      event.previousTouches[0],
+      event.previousTouches[1],
+    )
+    const currentDistance = getDistance(event.touches[0], event.touches[1])
+    if (previousDistance <= 0 || currentDistance <= 0) {
+      return
+    }
+
+    event.preventSigmaDefault()
+
+    const previousMidpoint = getMidpoint(
+      event.previousTouches[0],
+      event.previousTouches[1],
+    )
+    const currentMidpoint = getMidpoint(event.touches[0], event.touches[1])
+    const camera = sigma.getCamera()
+    const cameraState = camera.getState()
+    const nextRatio = camera.getBoundedRatio(
+      cameraState.ratio * (previousDistance / currentDistance),
+    )
+    const graphPointBeforeZoom = sigma.viewportToFramedGraph(
+      previousMidpoint,
+      {
+        cameraState,
+      },
+    )
+    const zoomedState = sigma.getViewportZoomedState(
+      previousMidpoint,
+      nextRatio,
+    )
+    const graphPointAtCurrentMidpoint = sigma.viewportToFramedGraph(
+      currentMidpoint,
+      {
+        cameraState: zoomedState,
+      },
+    )
+
+    camera.setState({
+      ...zoomedState,
+      x: zoomedState.x + graphPointBeforeZoom.x - graphPointAtCurrentMidpoint.x,
+      y: zoomedState.y + graphPointBeforeZoom.y - graphPointAtCurrentMidpoint.y,
+      angle: cameraState.angle,
+    })
+  }
+
   public mount(
     container: HTMLElement,
     initialScene: GraphSceneSnapshot,
@@ -1371,6 +1450,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )
 
     const sigma = this.sigma
+    this.configureTouchInteraction(sigma)
     this.observeContainer(container)
     this.nodeHitTester = installStrictNodeHitTesting(
       sigma,
@@ -1381,10 +1461,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.forceRuntime.sync(initialScene.physics)
     this.ensurePhysicsPositionBridge()
     if (initialScene.render.nodes.length > 0) {
-      sigma
-        .getCamera()
-        .animatedReset({ duration: 250 })
-        .catch(() => {})
+      this.fitCameraToGraph()
       this.hasMountedCamera = true
     }
   }
@@ -1399,7 +1476,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
-    const sigma = this.sigma
     const previousScene = this.scene
     const shouldAnimateSceneFocus =
       (previousScene?.render.selection.selectedNodePubkey ?? null) !==
@@ -1459,12 +1535,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const rootChangedToSomething =
       previousRoot !== nextRoot && nextRoot !== null
     if (!this.hasMountedCamera && scene.render.nodes.length > 0) {
-      sigma.getCamera().animatedReset({ duration: 250 }).catch(() => {})
+      this.fitCameraToGraph()
       this.hasMountedCamera = true
     } else if (rootChangedToSomething && previousRoot === null) {
       // Initial root load: frame the graph once. Subsequent root changes
       // should not steal the camera from the user.
-      sigma.getCamera().animatedReset({ duration: 320 }).catch(() => {})
+      this.fitCameraToGraph()
     }
 
     this.safeRefresh()

@@ -76,6 +76,8 @@ test('sigma settings disable camera rotation while keeping regular camera contro
   try {
     const adapter = new SigmaRendererAdapter() as unknown as {
       createSigmaSettings: () => {
+        autoCenter?: boolean
+        autoRescale?: boolean
         enableCameraRotation?: boolean
         enableCameraPanning?: boolean
         enableCameraZooming?: boolean
@@ -84,9 +86,169 @@ test('sigma settings disable camera rotation while keeping regular camera contro
 
     const settings = adapter.createSigmaSettings()
 
+    assert.equal(settings.autoCenter, false)
+    assert.equal(settings.autoRescale, false)
     assert.equal(settings.enableCameraRotation, false)
     assert.equal(settings.enableCameraPanning, undefined)
     assert.equal(settings.enableCameraZooming, undefined)
+  } finally {
+    globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
+    globalThis.WebGLRenderingContext = originalWebGLRenderingContext
+  }
+})
+
+test('initial graph update fits the camera once instead of only resetting it', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let fitCalls = 0
+  let refreshCalls = 0
+  const nextScene = createScene()
+  const previousScene: GraphSceneSnapshot = {
+    ...nextScene,
+    render: {
+      ...nextScene.render,
+      nodes: [],
+      cameraHint: {
+        focusPubkey: null,
+        rootPubkey: null,
+      },
+    },
+    physics: {
+      ...nextScene.physics,
+      nodes: [],
+    },
+  }
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: Record<string, never>
+    scene: GraphSceneSnapshot
+    renderStore: { applyScene: (scene: GraphSceneSnapshot['render']) => void }
+    physicsStore: {
+      applyScene: (scene: GraphSceneSnapshot['physics']) => { topologyChanged: boolean }
+    }
+    forceRuntime: { sync: (scene: GraphSceneSnapshot['physics'], options?: { topologyChanged: boolean }) => void }
+    nodeHitTester: { markDirty: () => void }
+    ensurePhysicsPositionBridge: () => void
+    startSceneFocusTransition: (transition: null) => void
+    fitCameraToGraph: () => void
+    safeRefresh: () => void
+    hasMountedCamera: boolean
+    update: (scene: GraphSceneSnapshot) => void
+  }
+
+  adapter.sigma = {}
+  adapter.scene = previousScene
+  adapter.renderStore = { applyScene: () => {} }
+  adapter.physicsStore = {
+    applyScene: () => ({ topologyChanged: true }),
+  }
+  adapter.forceRuntime = { sync: () => {} }
+  adapter.nodeHitTester = { markDirty: () => {} }
+  adapter.ensurePhysicsPositionBridge = () => {}
+  adapter.startSceneFocusTransition = () => {}
+  adapter.fitCameraToGraph = () => {
+    fitCalls += 1
+  }
+  adapter.safeRefresh = () => {
+    refreshCalls += 1
+  }
+  adapter.hasMountedCamera = false
+
+  adapter.update(nextScene)
+
+  assert.equal(fitCalls, 1)
+  assert.equal(adapter.hasMountedCamera, true)
+  assert.equal(refreshCalls, 1)
+})
+
+test('natural touch zoom ignores two-finger rotation and keeps the pinch centered', async () => {
+  const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
+  const originalWebGLRenderingContext = globalThis.WebGLRenderingContext
+  globalThis.WebGL2RenderingContext ??= class {} as typeof WebGL2RenderingContext
+  globalThis.WebGLRenderingContext ??= class {} as typeof WebGLRenderingContext
+
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+  try {
+    const cameraState = { x: 0, y: 0, ratio: 1, angle: 0 }
+    const states: Array<{ x: number; y: number; ratio: number; angle: number }> = []
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: {
+        getCamera: () => {
+          getState: () => { x: number; y: number; ratio: number; angle: number }
+          getBoundedRatio: (ratio: number) => number
+          setState: (state: { x: number; y: number; ratio: number; angle: number }) => void
+        }
+        viewportToFramedGraph: (
+          point: { x: number; y: number },
+          options?: { cameraState?: { x: number; y: number; ratio: number; angle: number } },
+        ) => { x: number; y: number }
+        getViewportZoomedState: (
+          point: { x: number; y: number },
+          ratio: number,
+        ) => { x: number; y: number; ratio: number; angle: number }
+      }
+      handleNaturalTouchZoom: (event: {
+        touches: Array<{ x: number; y: number }>
+        previousTouches: Array<{ x: number; y: number }>
+        preventSigmaDefault: () => void
+      }) => void
+    }
+    const toGraph = (
+      point: { x: number; y: number },
+      state = cameraState,
+    ) => ({
+      x: state.x + ((point.x - 500) * state.ratio) / 100,
+      y: state.y + ((point.y - 400) * state.ratio) / 100,
+    })
+    const zoomAround = (point: { x: number; y: number }, ratio: number) => {
+      const focus = toGraph(point)
+      const center = toGraph({ x: 500, y: 400 })
+      const ratioDiff = ratio / cameraState.ratio
+      return {
+        angle: cameraState.angle,
+        x: (focus.x - center.x) * (1 - ratioDiff) + cameraState.x,
+        y: (focus.y - center.y) * (1 - ratioDiff) + cameraState.y,
+        ratio,
+      }
+    }
+
+    adapter.sigma = {
+      getCamera: () => ({
+        getState: () => cameraState,
+        getBoundedRatio: (ratio: number) => ratio,
+        setState: (state) => {
+          states.push(state)
+        },
+      }),
+      viewportToFramedGraph: (point, options) =>
+        toGraph(point, options?.cameraState ?? cameraState),
+      getViewportZoomedState: zoomAround,
+    }
+
+    let prevented = 0
+    adapter.handleNaturalTouchZoom({
+      previousTouches: [
+        { x: 450, y: 400 },
+        { x: 550, y: 400 },
+      ],
+      touches: [
+        { x: 500, y: 300 },
+        { x: 500, y: 500 },
+      ],
+      preventSigmaDefault: () => {
+        prevented += 1
+      },
+    })
+
+    assert.equal(prevented, 1)
+    assert.equal(states.length, 1)
+    assert.equal(states[0]?.ratio, 0.5)
+    assert.equal(states[0]?.angle, 0)
+    assert.equal(states[0]?.x, 0)
+    assert.equal(states[0]?.y, 0)
   } finally {
     globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
     globalThis.WebGLRenderingContext = originalWebGLRenderingContext
