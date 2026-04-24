@@ -2387,6 +2387,7 @@
     max-height: calc(100vh - 100px);
     max-height: calc(100dvh - 100px);
     border-radius: 20px 20px 16px 16px;
+    touch-action: none;
     transition: height 90ms linear;
     will-change: height;
   }
@@ -2404,6 +2405,10 @@
     padding: 7px 0 5px;
     touch-action: none;
     user-select: none;
+  }
+
+  [data-graph-v2] .sg-panel__body {
+    touch-action: none;
   }
 
   [data-graph-v2] .sg-panel__grabber > span {

@@ -1,7 +1,9 @@
 'use client'
 
 import { memo, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, PointerEvent, ReactNode, TouchEvent } from 'react'
+import type { CSSProperties, PointerEvent, ReactNode } from 'react'
+import { motion } from 'motion/react'
+import type { PanInfo } from 'motion/react'
 
 import { CloseIcon } from '@/features/graph-v2/ui/SigmaIcons'
 
@@ -49,15 +51,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const [mobileHeightPx, setMobileHeightPx] = useState<number | null>(null)
   const [isPanelDragging, setIsPanelDragging] = useState(false)
-  const pointerDragStartRef = useRef<{
-    y: number
-    pointerId: number
-    height: number
-    bodyScrollTop: number | null
-  } | null>(null)
-  const touchDragStartRef = useRef<{
-    y: number
-    identifier: number
+  const dragStartRef = useRef<{
     height: number
     bodyScrollTop: number | null
   } | null>(null)
@@ -80,16 +74,20 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     }, 250)
   }
 
+  const resolveBodyScrollTop = (target: EventTarget | null) => {
+    const node = target instanceof Node ? target : null
+    return node && bodyRef.current?.contains(node)
+      ? bodyRef.current.scrollTop
+      : null
+  }
+
   const canUsePanelDrag = (
-    start: {
-      bodyScrollTop: number | null
-    },
+    start: { bodyScrollTop: number | null },
     deltaY: number,
   ) => {
     if (start.bodyScrollTop === null) return true
-    if (deltaY > 0) return start.bodyScrollTop <= 0
-    if (deltaY < 0) return start.bodyScrollTop <= 0
-    return false
+    if (deltaY === 0) return false
+    return start.bodyScrollTop <= 0
   }
 
   const applyPanelDrag = (start: { height: number }, deltaY: number) => {
@@ -102,56 +100,50 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     return deltaY >= Math.min(proportionalThreshold, 220)
   }
 
-  const finishPanelDrag = () => {
-    pointerDragStartRef.current = null
-    touchDragStartRef.current = null
-    setIsPanelDragging(false)
-  }
-
-  const resolveBodyScrollTop = (target: EventTarget | null) => {
-    const node = target instanceof Node ? target : null
-    return node && bodyRef.current?.contains(node)
-      ? bodyRef.current.scrollTop
-      : null
-  }
-
   const handlePanelPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!event.isPrimary) return
-    if (event.pointerType === 'touch') return
+    const target = event.target
+    if (
+      target instanceof Element &&
+      target.closest('button, a, input, select, textarea, [data-panel-no-drag]')
+    ) {
+      return
+    }
 
-    pointerDragStartRef.current = {
-      y: event.clientY,
-      pointerId: event.pointerId,
+    dragStartRef.current = {
       height: mobileHeightPx ?? resolveInitialPanelHeight(mobileSnap, window.innerHeight),
       bodyScrollTop: resolveBodyScrollTop(event.target),
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    if (event.pointerType === 'touch') {
+      event.preventDefault()
+    }
   }
 
-  const handlePanelPointerMove = (event: PointerEvent<HTMLElement>) => {
-    const start = pointerDragStartRef.current
-    if (!start || start.pointerId !== event.pointerId) return
+  const handlePanelPan = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    const start = dragStartRef.current
+    if (!start) return
 
-    const deltaY = event.clientY - start.y
+    const deltaY = info.offset.y
     if (Math.abs(deltaY) < PANEL_DRAG_THRESHOLD_PX) return
     if (!canUsePanelDrag(start, deltaY)) return
 
-    event.preventDefault()
     setIsPanelDragging(true)
     applyPanelDrag(start, deltaY)
   }
 
-  const handlePanelPointerUp = (event: PointerEvent<HTMLElement>) => {
-    const start = pointerDragStartRef.current
-    finishPanelDrag()
-    if (!start || start.pointerId !== event.pointerId) return
+  const handlePanelPanEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    const start = dragStartRef.current
+    dragStartRef.current = null
+    setIsPanelDragging(false)
+    if (!start) return
 
-    const deltaY = event.clientY - start.y
-    if (Math.abs(deltaY) < PANEL_DRAG_THRESHOLD_PX) {
-      return
-    }
+    const deltaY = info.offset.y
+    if (Math.abs(deltaY) < PANEL_DRAG_THRESHOLD_PX) return
+    if (!canUsePanelDrag(start, deltaY)) return
 
-    if (!canUsePanelDrag(start, deltaY)) {
+    if (shouldClosePanelFromDrag(start, deltaY)) {
+      markPanelDragHandled()
+      onClose()
       return
     }
 
@@ -164,95 +156,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     }
 
     markPanelDragHandled()
-    if (shouldClosePanelFromDrag(start, deltaY)) {
-      onClose()
-      return
-    }
-
     applyPanelDrag(start, deltaY)
-  }
-
-  const handlePanelPointerCancel = (event: PointerEvent<HTMLElement>) => {
-    if (pointerDragStartRef.current?.pointerId === event.pointerId) {
-      finishPanelDrag()
-    }
-  }
-
-  const findTrackedTouch = (
-    touches: TouchList,
-    identifier: number,
-  ) => {
-    for (let index = 0; index < touches.length; index += 1) {
-      const touch = touches.item(index)
-      if (touch?.identifier === identifier) return touch
-    }
-    return null
-  }
-
-  const handlePanelTouchStart = (event: TouchEvent<HTMLElement>) => {
-    if (event.touches.length !== 1) {
-      touchDragStartRef.current = null
-      return
-    }
-
-    const touch = event.touches.item(0)
-    if (!touch) return
-
-    touchDragStartRef.current = {
-      y: touch.clientY,
-      identifier: touch.identifier,
-      height: mobileHeightPx ?? resolveInitialPanelHeight(mobileSnap, window.innerHeight),
-      bodyScrollTop: resolveBodyScrollTop(event.target),
-    }
-  }
-
-  const handlePanelTouchMove = (event: TouchEvent<HTMLElement>) => {
-    const start = touchDragStartRef.current
-    if (!start) return
-
-    const touch = findTrackedTouch(event.touches, start.identifier)
-    if (!touch) return
-
-    const deltaY = touch.clientY - start.y
-    if (Math.abs(deltaY) < PANEL_DRAG_THRESHOLD_PX) return
-    if (!canUsePanelDrag(start, deltaY)) return
-
-    event.preventDefault()
-    setIsPanelDragging(true)
-    applyPanelDrag(start, deltaY)
-  }
-
-  const handlePanelTouchEnd = (event: TouchEvent<HTMLElement>) => {
-    const start = touchDragStartRef.current
-    if (!start) return
-
-    const touch = findTrackedTouch(event.changedTouches, start.identifier)
-    finishPanelDrag()
-    if (!touch) return
-
-    const deltaY = touch.clientY - start.y
-    if (Math.abs(deltaY) < PANEL_DRAG_THRESHOLD_PX) return
-    if (!canUsePanelDrag(start, deltaY)) return
-
-    if (
-      start.bodyScrollTop !== null &&
-      bodyRef.current &&
-      bodyRef.current.scrollTop !== start.bodyScrollTop
-    ) {
-      return
-    }
-
-    markPanelDragHandled()
-    if (shouldClosePanelFromDrag(start, deltaY)) {
-      onClose()
-      return
-    }
-
-    applyPanelDrag(start, deltaY)
-  }
-
-  const handlePanelTouchCancel = () => {
-    finishPanelDrag()
   }
 
   const panelStyle = mobileHeightPx === null
@@ -262,7 +166,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
       } as CSSProperties)
 
   return (
-    <aside
+    <motion.aside
       className="sg-panel"
       data-mobile-dragging={isPanelDragging ? 'true' : undefined}
       data-mobile-snap={mobileSnap}
@@ -272,14 +176,9 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
         event.preventDefault()
         event.stopPropagation()
       }}
-      onPointerCancel={handlePanelPointerCancel}
+      onPan={handlePanelPan}
+      onPanEnd={handlePanelPanEnd}
       onPointerDown={handlePanelPointerDown}
-      onPointerMove={handlePanelPointerMove}
-      onPointerUp={handlePanelPointerUp}
-      onTouchCancel={handlePanelTouchCancel}
-      onTouchEnd={handlePanelTouchEnd}
-      onTouchMove={handlePanelTouchMove}
-      onTouchStart={handlePanelTouchStart}
       style={panelStyle}
     >
       <div
@@ -299,6 +198,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
         <button
           aria-label="Cerrar panel"
           className="sg-panel__close"
+          data-panel-no-drag
           onClick={onClose}
           type="button"
         >
@@ -307,6 +207,6 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
       </div>
       {tabs}
       <div className="sg-panel__body" ref={bodyRef}>{children}</div>
-    </aside>
+    </motion.aside>
   )
 })
