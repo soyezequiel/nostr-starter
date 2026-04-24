@@ -46,6 +46,7 @@ export interface SigmaCanvasHostHandle {
   playZap: (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => boolean
   playZapArrival: (zap: Pick<ParsedZap, 'toPubkey' | 'sats'>) => boolean
   recenterCamera: () => void
+  fitCameraToGraph: () => void
   zoomIn: () => void
   zoomOut: () => void
   setNodePinned: (pubkey: string, pinned: boolean) => void
@@ -225,6 +226,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       playZap: (zap) => overlayRef.current?.play(zap) ?? false,
       playZapArrival: (zap) => overlayRef.current?.playArrival(zap) ?? false,
       recenterCamera: () => adapterRef.current?.recenterCamera(),
+      fitCameraToGraph: () => adapterRef.current?.fitCameraToGraph(),
       zoomIn: () => adapterRef.current?.zoomIn(),
       zoomOut: () => adapterRef.current?.zoomOut(),
       setNodePinned: (pubkey, pinned) => adapterRef.current?.setNodePinned(pubkey, pinned),

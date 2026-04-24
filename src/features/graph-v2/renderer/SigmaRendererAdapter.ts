@@ -673,6 +673,103 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.sigma?.getCamera().animatedReset({ duration: 250 }).catch(() => {})
   }
 
+  public fitCameraToGraph() {
+    const sigma = this.sigma
+    const renderStore = this.renderStore
+    if (!sigma || !renderStore) {
+      return
+    }
+
+    const graph = renderStore.getGraph()
+    if (graph.order === 0) {
+      return
+    }
+
+    const dimensions = sigma.getDimensions()
+    if (dimensions.width <= 0 || dimensions.height <= 0) {
+      return
+    }
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    graph.forEachNode((_, attrs) => {
+      if (attrs.hidden || !Number.isFinite(attrs.x) || !Number.isFinite(attrs.y)) {
+        return
+      }
+      minX = Math.min(minX, attrs.x)
+      minY = Math.min(minY, attrs.y)
+      maxX = Math.max(maxX, attrs.x)
+      maxY = Math.max(maxY, attrs.y)
+    })
+
+    if (!Number.isFinite(minX)) {
+      this.recenterCamera()
+      return
+    }
+
+    const centerGraph = {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+    }
+    const centerViewport = sigma.graphToViewport(centerGraph)
+    const centerFramed = sigma.viewportToFramedGraph(centerViewport)
+    const camera = sigma.getCamera()
+    const baseState = {
+      ...camera.getState(),
+      x: centerFramed.x,
+      y: centerFramed.y,
+      ratio: 1,
+      angle: 0,
+    }
+
+    const corners = [
+      sigma.graphToViewport({ x: minX, y: minY }, { cameraState: baseState }),
+      sigma.graphToViewport({ x: maxX, y: minY }, { cameraState: baseState }),
+      sigma.graphToViewport({ x: maxX, y: maxY }, { cameraState: baseState }),
+      sigma.graphToViewport({ x: minX, y: maxY }, { cameraState: baseState }),
+    ]
+    let minViewportX = Infinity
+    let minViewportY = Infinity
+    let maxViewportX = -Infinity
+    let maxViewportY = -Infinity
+    for (const point of corners) {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        continue
+      }
+      minViewportX = Math.min(minViewportX, point.x)
+      minViewportY = Math.min(minViewportY, point.y)
+      maxViewportX = Math.max(maxViewportX, point.x)
+      maxViewportY = Math.max(maxViewportY, point.y)
+    }
+
+    const viewportWidth = maxViewportX - minViewportX
+    const viewportHeight = maxViewportY - minViewportY
+    if (!Number.isFinite(viewportWidth) || !Number.isFinite(viewportHeight)) {
+      this.recenterCamera()
+      return
+    }
+
+    const paddingRatio = 0.12
+    const availableWidth = Math.max(1, dimensions.width * (1 - paddingRatio * 2))
+    const availableHeight = Math.max(1, dimensions.height * (1 - paddingRatio * 2))
+    const nextRatio =
+      viewportWidth <= 0 && viewportHeight <= 0
+        ? 1
+        : camera.getBoundedRatio(
+            Math.max(
+              viewportWidth / availableWidth,
+              viewportHeight / availableHeight,
+              0.05,
+            ),
+          )
+
+    camera
+      .animate({ ...baseState, ratio: nextRatio }, { duration: 250 })
+      .catch(() => {})
+  }
+
   public zoomIn() {
     this.sigma?.getCamera().animatedZoom({ duration: 180 }).catch(() => {})
   }

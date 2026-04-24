@@ -2783,9 +2783,21 @@ export default function GraphAppV2() {
     })
   }, [])
 
-  const handleRecenter = useCallback(() => {
-    sigmaHostRef.current?.recenterCamera()
-  }, [])
+  const handleFitView = useCallback(() => {
+    closeCompetingSidePanels()
+    setMobilePanelSnap('mid')
+    if (detail.node !== null && !isIdentityHelpDismissed) {
+      dismissIdentityHelp()
+    }
+    clearSelectedNode()
+    sigmaHostRef.current?.fitCameraToGraph()
+  }, [
+    clearSelectedNode,
+    closeCompetingSidePanels,
+    detail.node,
+    dismissIdentityHelp,
+    isIdentityHelpDismissed,
+  ])
 
   const handleStaleRelays = useCallback(() => {
     if (!relayState.isGraphStale) {
@@ -2907,9 +2919,9 @@ export default function GraphAppV2() {
     },
     {
       id: 'recenter',
-      tip: 'Recentrar vista',
+      tip: 'Ajustar vista',
       icon: <TargetIcon />,
-      onClick: handleRecenter,
+      onClick: handleFitView,
     },
     {
       id: 'stale',
@@ -2937,7 +2949,7 @@ export default function GraphAppV2() {
     handleOpenNotifications,
     handleOpenRuntimeInspector,
     handleOpenSettings,
-    handleRecenter,
+    handleFitView,
     handleStaleRelays,
     handleTogglePhysics,
     isPersonSearchOpen,
@@ -2987,9 +2999,9 @@ export default function GraphAppV2() {
     {
       id: 'view',
       label: 'Vista',
-      tip: 'Centrar vista',
+      tip: 'Ajustar vista',
       icon: <TargetIcon />,
-      onClick: handleRecenter,
+      onClick: handleFitView,
     },
     {
       id: 'settings',
@@ -3010,7 +3022,7 @@ export default function GraphAppV2() {
     mobileUtilityPanel,
     personSearchMatches.length,
     personSearchQuery,
-    handleRecenter,
+    handleFitView,
     zapActivityLog.length,
   ])
 
@@ -3058,7 +3070,7 @@ export default function GraphAppV2() {
     [],
   )
   const handleMinimapFit = useCallback(() => {
-    sigmaHostRef.current?.recenterCamera()
+    sigmaHostRef.current?.fitCameraToGraph()
   }, [])
   const handleMinimapZoomIn = useCallback(() => {
     sigmaHostRef.current?.zoomIn()

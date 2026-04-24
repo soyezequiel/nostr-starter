@@ -99,6 +99,96 @@ const installAnimationFrameStub = () => {
   }
 }
 
+test('fitCameraToGraph frames the visible rendered nodes', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const animatedStates: Array<{ x: number; y: number; ratio: number; angle: number }> = []
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getDimensions: () => { width: number; height: number }
+      getCamera: () => {
+        getState: () => { x: number; y: number; ratio: number; angle: number }
+        getBoundedRatio: (ratio: number) => number
+        animate: (
+          state: { x: number; y: number; ratio: number; angle: number },
+          options: { duration: number },
+        ) => Promise<void>
+      }
+      graphToViewport: (
+        point: { x: number; y: number },
+        options?: { cameraState?: { x: number; y: number; ratio: number; angle: number } },
+      ) => { x: number; y: number }
+      viewportToFramedGraph: (
+        point: { x: number; y: number },
+        options?: { cameraState?: { x: number; y: number; ratio: number; angle: number } },
+      ) => { x: number; y: number }
+    }
+    renderStore: {
+      getGraph: () => {
+        order: number
+        forEachNode: (
+          callback: (
+            pubkey: string,
+            attrs: { x: number; y: number; hidden?: boolean },
+          ) => void,
+        ) => void
+      }
+    }
+    fitCameraToGraph: () => void
+  }
+  const currentCameraState = { x: 0, y: 0, ratio: 1, angle: 0 }
+  const toViewport = (
+    point: { x: number; y: number },
+    cameraState = currentCameraState,
+  ) => ({
+    x: 500 + ((point.x - cameraState.x) * 100) / cameraState.ratio,
+    y: 400 + ((point.y - cameraState.y) * 100) / cameraState.ratio,
+  })
+  const toGraph = (
+    point: { x: number; y: number },
+    cameraState = currentCameraState,
+  ) => ({
+    x: cameraState.x + ((point.x - 500) * cameraState.ratio) / 100,
+    y: cameraState.y + ((point.y - 400) * cameraState.ratio) / 100,
+  })
+
+  adapter.sigma = {
+    getDimensions: () => ({ width: 1000, height: 800 }),
+    getCamera: () => ({
+      getState: () => currentCameraState,
+      getBoundedRatio: (ratio) => ratio,
+      animate: (state) => {
+        animatedStates.push(state)
+        return Promise.resolve()
+      },
+    }),
+    graphToViewport: (point, options) =>
+      toViewport(point, options?.cameraState ?? currentCameraState),
+    viewportToFramedGraph: (point, options) =>
+      toGraph(point, options?.cameraState ?? currentCameraState),
+  }
+  adapter.renderStore = {
+    getGraph: () => ({
+      order: 3,
+      forEachNode: (callback) => {
+        callback('A', { x: -5, y: -2 })
+        callback('B', { x: 5, y: 2 })
+        callback('hidden-far-away', { x: 100, y: 100, hidden: true })
+      },
+    }),
+  }
+
+  adapter.fitCameraToGraph()
+
+  assert.equal(animatedStates.length, 1)
+  assert.equal(animatedStates[0].x, 0)
+  assert.equal(animatedStates[0].y, 0)
+  assert.equal(animatedStates[0].angle, 0)
+  assert.equal(animatedStates[0].ratio, 1000 / 760)
+})
+
 const createScene = (): GraphSceneSnapshot => ({
   render: {
     nodes: [
