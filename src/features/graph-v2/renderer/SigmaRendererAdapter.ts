@@ -1359,7 +1359,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
-  private configureTouchInteraction(sigma: Sigma) {
+  private configureTouchInteraction(
+    sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>,
+  ) {
     const touchCaptor = sigma.getTouchCaptor()
     touchCaptor.setSettings({
       dragTimeout: sigma.getSetting('dragTimeout'),
