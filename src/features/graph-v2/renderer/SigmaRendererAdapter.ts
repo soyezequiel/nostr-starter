@@ -176,20 +176,6 @@ const resolveZoomOutNodeScale = (cameraRatio: number) =>
     1,
   )
 
-const applySelectedLabelVisibility = (
-  data: RenderNodeAttributes,
-): RenderNodeAttributes =>
-  data.isSelected
-    ? {
-        ...data,
-        forceLabel: true,
-      }
-    : {
-        ...data,
-        label: '',
-        forceLabel: false,
-      }
-
 const isControlModifierPressed = (
   event: { original?: MouseEvent | TouchEvent } | null | undefined,
 ) =>
@@ -388,6 +374,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private hasMountedCamera = false
 
   private isCameraLocked = false
+
+  // Cached so the per-node-per-frame nodeReducer hot path doesn't call
+  // sigma.getCamera().getState() (which allocates a new state object) N times.
+  private cachedCameraRatio = 1
 
   private isGraphBoundsLocked = false
 
@@ -1321,6 +1311,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     const sigma = this.sigma
     this.observeContainer(container)
+    this.cachedCameraRatio = sigma.getCamera().getState().ratio
     this.nodeHitTester = installStrictNodeHitTesting(
       sigma,
       this.renderStore.getGraph(),
@@ -1851,6 +1842,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     sigma.getCamera().on('updated', (viewport) => {
+      this.cachedCameraRatio = viewport.ratio
       callbacks.onViewportChange(viewport)
     })
 
@@ -1862,18 +1854,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
     data: RenderNodeAttributes,
     focus: HoverFocusSnapshot,
   ): RenderNodeAttributes {
-    const cameraRatio = this.sigma?.getCamera().getState().ratio ?? 1
-    const zoomScaledSize = data.size * resolveZoomOutNodeScale(cameraRatio)
+    const zoomScaledSize = data.size * resolveZoomOutNodeScale(this.cachedCameraRatio)
 
     if (!focus.pubkey) {
-      return applySelectedLabelVisibility(
-        zoomScaledSize === data.size
-          ? data
-          : {
-              ...data,
-              size: zoomScaledSize,
-            },
-      )
+      // Hot path during pan/zoom with no hover: merge size + label visibility
+      // in a single spread instead of double-allocating via the helper.
+      const sizeChanged = zoomScaledSize !== data.size
+      if (data.isSelected) {
+        if (!sizeChanged && data.forceLabel) return data
+        return { ...data, size: zoomScaledSize, forceLabel: true }
+      }
+      if (!sizeChanged && data.label === '' && !data.forceLabel) return data
+      return { ...data, size: zoomScaledSize, label: '', forceLabel: false }
     }
 
     if (node === focus.pubkey) {
@@ -1887,23 +1879,44 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
     }
 
+    // Single spread (vs. helper) avoids per-node-per-frame double allocation.
     if (focus.neighbors.has(node)) {
-      return applySelectedLabelVisibility({
-        ...data,
-        size: zoomScaledSize,
-        color: data.color,
-        highlighted: true,
-        zIndex: Math.max(data.zIndex, 8),
-      })
+      return data.isSelected
+        ? {
+            ...data,
+            size: zoomScaledSize,
+            highlighted: true,
+            zIndex: Math.max(data.zIndex, 8),
+            forceLabel: true,
+          }
+        : {
+            ...data,
+            size: zoomScaledSize,
+            highlighted: true,
+            zIndex: Math.max(data.zIndex, 8),
+            label: '',
+            forceLabel: false,
+          }
     }
 
-    return applySelectedLabelVisibility({
-      ...data,
-      size: zoomScaledSize,
-      color: HOVER_DIM_NODE_COLOR,
-      highlighted: false,
-      zIndex: Math.min(data.zIndex, -3),
-    })
+    return data.isSelected
+      ? {
+          ...data,
+          size: zoomScaledSize,
+          color: HOVER_DIM_NODE_COLOR,
+          highlighted: false,
+          zIndex: Math.min(data.zIndex, -3),
+          forceLabel: true,
+        }
+      : {
+          ...data,
+          size: zoomScaledSize,
+          color: HOVER_DIM_NODE_COLOR,
+          highlighted: false,
+          zIndex: Math.min(data.zIndex, -3),
+          label: '',
+          forceLabel: false,
+        }
   }
 
   private resolveEdgeHoverAttributes(
