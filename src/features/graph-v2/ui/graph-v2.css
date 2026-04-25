@@ -144,7 +144,7 @@
 [data-graph-v2] .sg-top-search {
   position: relative;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto 40px;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto 40px;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -225,6 +225,25 @@
   border: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+[data-graph-v2] .sg-top-search__load-caption {
+  position: relative;
+  z-index: 1;
+  max-width: 152px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid oklch(100% 0 0 / 0.08);
+  border-radius: 999px;
+  background: oklch(100% 0 0 / 0.045);
+  color: var(--sg-fg-muted);
+  font-family: var(--sg-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2397,6 +2416,12 @@
     width: 100%;
     min-width: 0;
     flex: 1;
+  }
+
+  [data-graph-v2] .sg-top-search__load-caption {
+    max-width: 124px;
+    padding-inline: 6px;
+    font-size: 9px;
   }
 
   [data-graph-v2] .sg-top-search-menu {

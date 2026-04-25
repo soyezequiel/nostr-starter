@@ -22,6 +22,8 @@ interface SearchMatch {
 interface SearchLoadProgress {
   percent: number
   label: string
+  nodeDrawLabel?: string | null
+  nodeDrawTitle?: string | null
 }
 
 interface Props {
@@ -147,6 +149,14 @@ export const SigmaTopBar = memo(function SigmaTopBar({
             type="search"
             value={searchQuery}
           />
+          {searchLoadProgress?.nodeDrawLabel ? (
+            <span
+              className="sg-top-search__load-caption"
+              title={searchLoadProgress.nodeDrawTitle ?? searchLoadProgress.nodeDrawLabel}
+            >
+              {searchLoadProgress.nodeDrawLabel}
+            </span>
+          ) : null}
           {hasSearchQuery ? (
             <button
               aria-label="Limpiar busqueda"

@@ -6,6 +6,7 @@ import {
   createExpansionAutoFitRequest,
   shouldClearExpansionAutoFitRequest,
   shouldRunExpansionAutoFit,
+  shouldScheduleExpansionAutoFit,
 } from '@/features/graph-v2/ui/expansionAutoFit'
 
 const createSceneState = (
@@ -109,4 +110,33 @@ test('expansion auto-fit ignores unrelated expansions and clears failed requests
     },
   })
   assert.equal(shouldClearExpansionAutoFitRequest(request, failed), true)
+})
+
+test('expansion auto-fit scheduling stays disabled on mobile viewports', () => {
+  assert.equal(
+    shouldScheduleExpansionAutoFit({
+      isExpanded: false,
+      isFixtureMode: false,
+      isMobileViewport: false,
+    }),
+    true,
+  )
+
+  assert.equal(
+    shouldScheduleExpansionAutoFit({
+      isExpanded: false,
+      isFixtureMode: false,
+      isMobileViewport: true,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldScheduleExpansionAutoFit({
+      isExpanded: true,
+      isFixtureMode: false,
+      isMobileViewport: false,
+    }),
+    false,
+  )
 })

@@ -126,6 +126,7 @@ import {
   createExpansionAutoFitRequest,
   shouldClearExpansionAutoFitRequest,
   shouldRunExpansionAutoFit,
+  shouldScheduleExpansionAutoFit,
   type ExpansionAutoFitRequest,
 } from '@/features/graph-v2/ui/expansionAutoFit'
 import {
@@ -219,6 +220,15 @@ const NODE_EXPANSION_STATUS_LABELS: Record<
 type SearchLoadProgress = NonNullable<
   ComponentProps<typeof SigmaTopBar>['searchLoadProgress']
 >
+
+interface SearchNodeDrawProgress {
+  drawnNodeCount: number
+  loadedNodeCount: number
+  pendingDrawNodeCount: number
+  percent: number
+  label: string
+  detailLabel: string
+}
 
 const DEVICE_PROFILE_LABELS: Record<
   AppStore['devicePerformanceProfile'],
@@ -501,6 +511,70 @@ const resolveNodeExpansionSearchProgress = (
   }
 
   return null
+}
+
+const normalizeNodeCount = (value: number) => {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.floor(value))
+}
+
+const buildSearchNodeDrawProgress = ({
+  drawnNodeCount,
+  isSceneTransitionPending,
+  loadedNodeCount,
+}: {
+  drawnNodeCount: number
+  isSceneTransitionPending: boolean
+  loadedNodeCount: number
+}): SearchNodeDrawProgress | null => {
+  const loaded = normalizeNodeCount(loadedNodeCount)
+  if (loaded === 0) return null
+
+  const drawn = Math.min(loaded, normalizeNodeCount(drawnNodeCount))
+  const pending = isSceneTransitionPending ? Math.max(0, loaded - drawn) : 0
+  const percent =
+    pending > 0
+      ? clampPercentValue((drawn / loaded) * 100)
+      : 100
+  const label =
+    pending > 0
+      ? `${drawn}/${loaded} - faltan ${pending}`
+      : drawn === loaded
+        ? `${drawn}/${loaded} - 0 faltan`
+        : `${drawn} vis / ${loaded} - 0 faltan`
+  const detailLabel =
+    pending > 0
+      ? `${drawn} nodos dibujados de ${loaded}; faltan ${pending} por dibujar.`
+      : `${drawn} nodos visibles de ${loaded} cargados; sin pendientes de dibujo.`
+
+  return {
+    drawnNodeCount: drawn,
+    loadedNodeCount: loaded,
+    pendingDrawNodeCount: pending,
+    percent,
+    label,
+    detailLabel,
+  }
+}
+
+const includeNodeDrawProgress = (
+  progress: SearchLoadProgress | null,
+  drawProgress: SearchNodeDrawProgress | null,
+): SearchLoadProgress | null => {
+  if (!progress || !drawProgress) return progress
+
+  const percent =
+    drawProgress.pendingDrawNodeCount > 0
+      ? Math.min(progress.percent, drawProgress.percent)
+      : progress.percent
+
+  return {
+    ...progress,
+    percent,
+    label: `${progress.label} ${drawProgress.detailLabel}`,
+    nodeDrawLabel: drawProgress.label,
+    nodeDrawTitle: drawProgress.detailLabel,
+  }
 }
 
 const formatZapReplayTime = (timestamp: number | null) => (
@@ -1512,6 +1586,7 @@ interface SigmaTopBarRootLoadBridgeProps
   displayNodeCount: number
   fallbackMessage: string | null
   identityLabel?: string | null
+  nodeDrawProgress?: SearchNodeDrawProgress | null
   nodeExpansionLoadProgress?: SearchLoadProgress | null
   rootLoadOverride?: RootLoadState | null
 }
@@ -1521,6 +1596,7 @@ const SigmaTopBarRootLoadBridge = memo(function SigmaTopBarRootLoadBridge({
   displayNodeCount,
   fallbackMessage,
   identityLabel,
+  nodeDrawProgress = null,
   nodeExpansionLoadProgress = null,
   rootLoadOverride,
   ...topBarProps
@@ -1559,9 +1635,13 @@ const SigmaTopBarRootLoadBridge = memo(function SigmaTopBarRootLoadBridge({
     rootLoad,
     shouldShowSearchLoadProgress,
   ])
-  const searchLoadProgress = shouldPrioritizeRootLoad
+  const baseSearchLoadProgress = shouldPrioritizeRootLoad
     ? rootSearchLoadProgress
     : nodeExpansionLoadProgress ?? rootSearchLoadProgress
+  const searchLoadProgress = useMemo(
+    () => includeNodeDrawProgress(baseSearchLoadProgress, nodeDrawProgress),
+    [baseSearchLoadProgress, nodeDrawProgress],
+  )
 
   return (
     <SigmaTopBar
@@ -1944,13 +2024,23 @@ export default function GraphAppV2() {
     if (isExpanded) return
 
     if (!isFixtureMode) {
-      if (isMobileGraphViewport()) {
+      const isMobileViewport = isMobileGraphViewport()
+      if (isMobileViewport) {
         setMobilePanelSnap('peek')
+        pendingExpansionAutoFitRef.current = null
       }
-      pendingExpansionAutoFitRef.current = createExpansionAutoFitRequest(
-        pubkey,
-        latestSceneStateRef.current,
-      )
+      if (
+        shouldScheduleExpansionAutoFit({
+          isExpanded,
+          isFixtureMode,
+          isMobileViewport,
+        })
+      ) {
+        pendingExpansionAutoFitRef.current = createExpansionAutoFitRequest(
+          pubkey,
+          latestSceneStateRef.current,
+        )
+      }
     }
 
     startTransition(() => {
@@ -2126,7 +2216,6 @@ export default function GraphAppV2() {
 
     pendingExpansionAutoFitRef.current = null
     if (isMobileGraphViewport()) {
-      sigmaHostRef.current?.fitCameraToGraphWhilePhysicsSettles()
       return
     }
     sigmaHostRef.current?.fitCameraToGraphAfterPhysicsSettles()
@@ -2712,6 +2801,18 @@ export default function GraphAppV2() {
   const nodeExpansionLoadProgress = useMemo(
     () => resolveNodeExpansionSearchProgress(sceneState.nodesByPubkey),
     [sceneState.nodesByPubkey],
+  )
+  const searchNodeDrawProgress = useMemo(
+    () => buildSearchNodeDrawProgress({
+      drawnNodeCount: displayScene.render.nodes.length,
+      isSceneTransitionPending,
+      loadedNodeCount: Object.keys(sceneState.nodesByPubkey).length,
+    }),
+    [
+      displayScene.render.nodes.length,
+      isSceneTransitionPending,
+      sceneState.nodesByPubkey,
+    ],
   )
 
   // Saved-roots profile snapshot as fallback while the kernel is still
@@ -4129,6 +4230,7 @@ export default function GraphAppV2() {
         displayNodeCount={displayScene.render.nodes.length}
         fallbackMessage={loadFeedback}
         identityLabel={rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null}
+        nodeDrawProgress={searchNodeDrawProgress}
         nodeExpansionLoadProgress={nodeExpansionLoadProgress}
         onSwitchRoot={handleOpenRootSheet}
         rootDisplayName={hasRoot ? (rootDisplayName ?? sceneState.rootPubkey?.slice(0, 10) ?? null) : null}

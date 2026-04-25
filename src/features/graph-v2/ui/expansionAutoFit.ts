@@ -10,6 +10,19 @@ export interface ExpansionAutoFitRequest {
   connectionsLinksRevision: number
 }
 
+interface ExpansionAutoFitScheduleInput {
+  isExpanded: boolean
+  isFixtureMode: boolean
+  isMobileViewport: boolean
+}
+
+export const shouldScheduleExpansionAutoFit = ({
+  isExpanded,
+  isFixtureMode,
+  isMobileViewport,
+}: ExpansionAutoFitScheduleInput) =>
+  !isExpanded && !isFixtureMode && !isMobileViewport
+
 export const createExpansionAutoFitRequest = (
   pubkey: string,
   sceneState: CanonicalGraphSceneState,
