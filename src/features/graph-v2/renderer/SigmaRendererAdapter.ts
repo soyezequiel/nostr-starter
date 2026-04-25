@@ -80,6 +80,7 @@ const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
 const HOVER_DIM_EDGE_COLOR = '#10171f'
 const HIGHLIGHT_TRANSITION_MS = 180
 const HOVER_FOCUS_DWELL_MS = 500
+const TOUCH_TAP_MOVE_TOLERANCE_PX = 16
 const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const OUTSIDE_NODE_CLICK_DEDUP_MS = 500
@@ -1395,7 +1396,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       doubleClickTimeout: sigma.getSetting('doubleClickTimeout'),
       doubleClickZoomingRatio: 1.7,
       doubleClickZoomingDuration: 180,
-      tapMoveTolerance: sigma.getSetting('tapMoveTolerance'),
+      tapMoveTolerance: Math.max(
+        sigma.getSetting('tapMoveTolerance'),
+        TOUCH_TAP_MOVE_TOLERANCE_PX,
+      ),
     })
     touchCaptor.on('touchmove', this.handleNaturalTouchZoom)
   }

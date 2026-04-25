@@ -19,7 +19,7 @@ interface Props {
   mobileSnapResetKey?: string | number
 }
 
-const PANEL_DRAG_THRESHOLD_PX = 42
+const PANEL_DRAG_THRESHOLD_PX = 24
 const PANEL_CLOSE_THRESHOLD_PX = 120
 const PANEL_MIN_HEIGHT_PX = 180
 const PANEL_TOP_CLEARANCE_PX = 100
@@ -87,7 +87,10 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
   mobileSnapResetKey,
 }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const [mobileHeightPx, setMobileHeightPx] = useState<number | null>(null)
+  const [mobileHeightPx, setMobileHeightPx] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null
+    return resolveInitialPanelHeight(mobileSnap, window.innerHeight)
+  })
   const [isPanelDragging, setIsPanelDragging] = useState(false)
   const dragStartRef = useRef<{
     height: number
@@ -170,9 +173,6 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
       height,
       snap: resolveClosestPanelSnap(height, window.innerHeight),
       bodyScrollTop: startedOnBodyDragHandle ? null : resolveBodyScrollTop(event.target),
-    }
-    if (event.pointerType === 'touch') {
-      event.preventDefault()
     }
   }
 

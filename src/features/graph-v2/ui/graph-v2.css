@@ -783,9 +783,7 @@
   right: 16px;
   bottom: 16px;
   width: 360px;
-  background: var(--sg-bg-panel);
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  background: var(--sg-bg-panel-solid);
   border: 1px solid var(--sg-stroke);
   border-radius: 16px;
   box-shadow: var(--sg-shadow-panel);
@@ -2497,8 +2495,8 @@
 
   [data-graph-v2] .sg-panel {
     bottom: 78px;
-    height: var(--sg-panel-mobile-height, 56vh);
-    height: var(--sg-panel-mobile-height, 56dvh);
+    height: var(--sg-panel-mobile-height, min(32vh, 260px));
+    height: var(--sg-panel-mobile-height, min(32dvh, 260px));
     min-height: 180px;
     max-height: calc(100vh - 100px);
     max-height: calc(100dvh - 100px);

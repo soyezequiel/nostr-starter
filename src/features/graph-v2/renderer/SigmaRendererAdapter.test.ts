@@ -97,6 +97,50 @@ test('sigma settings disable camera rotation while keeping regular camera contro
   }
 })
 
+test('touch taps tolerate small finger drift when selecting nodes', async () => {
+  const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
+  const originalWebGLRenderingContext = globalThis.WebGLRenderingContext
+  globalThis.WebGL2RenderingContext ??= class {} as typeof WebGL2RenderingContext
+  globalThis.WebGLRenderingContext ??= class {} as typeof WebGLRenderingContext
+
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+  try {
+    let appliedSettings: { tapMoveTolerance?: number; inertiaDuration?: number } | null = null
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      configureTouchInteraction: (sigma: {
+        getTouchCaptor: () => {
+          setSettings: (settings: { tapMoveTolerance?: number; inertiaDuration?: number }) => void
+          on: () => void
+        }
+        getSetting: (key: string) => number
+      }) => void
+    }
+
+    adapter.configureTouchInteraction({
+      getTouchCaptor: () => ({
+        setSettings: (settings) => {
+          appliedSettings = settings
+        },
+        on: () => undefined,
+      }),
+      getSetting: (key) => {
+        if (key === 'tapMoveTolerance') return 4
+        if (key === 'dragTimeout') return 200
+        if (key === 'doubleClickTimeout') return 300
+        return 1
+      },
+    })
+
+    assert.equal(appliedSettings?.tapMoveTolerance, 16)
+    assert.equal(appliedSettings?.inertiaDuration, 0)
+  } finally {
+    globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
+    globalThis.WebGLRenderingContext = originalWebGLRenderingContext
+  }
+})
+
 test('graph updates do not fit the camera automatically', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
