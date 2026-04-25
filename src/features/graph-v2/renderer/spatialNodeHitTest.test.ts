@@ -68,6 +68,27 @@ test('only picks a node when the pointer is inside the rendered radius', () => {
   assert.equal(tester.pick({ x: 110.1, y: 100 }), null)
 })
 
+test('uses a larger hit radius for touch taps without changing mouse precision', () => {
+  const tester = createTester([
+    {
+      pubkey: 'alice',
+      x: 100,
+      y: 100,
+      radius: 10,
+    },
+  ])
+
+  assert.equal(tester.pick({ x: 122, y: 100 }), null)
+  assert.equal(
+    tester.pick({
+      x: 122,
+      y: 100,
+      original: { touches: [] },
+    } as Parameters<typeof tester.pick>[0]),
+    'alice',
+  )
+})
+
 test('prefers the closest overlapping node and ignores hidden nodes', () => {
   const tester = createTester([
     {

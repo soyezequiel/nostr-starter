@@ -27,6 +27,7 @@ interface HitCandidate {
 }
 
 const DEFAULT_CELL_SIZE_PX = 64
+const TOUCH_HIT_RADIUS_PX = 24
 
 const toCell = (value: number, cellSize: number) => Math.floor(value / cellSize)
 
@@ -34,6 +35,15 @@ const toCellKey = (x: number, y: number) => `${x}:${y}`
 
 const isFinitePoint = (point: Coordinates) =>
   Number.isFinite(point.x) && Number.isFinite(point.y)
+
+const isTouchPointer = (position: Coordinates) => {
+  const original = (position as { original?: unknown }).original
+  return (
+    typeof original === 'object' &&
+    original !== null &&
+    ('touches' in original || 'changedTouches' in original)
+  )
+}
 
 export class SpatialNodeHitTester {
   private readonly cells = new Map<string, HitCandidate[]>()
@@ -91,7 +101,10 @@ export class SpatialNodeHitTester {
       const dx = position.x - candidate.x
       const dy = position.y - candidate.y
       const distanceSq = dx * dx + dy * dy
-      const radiusSq = candidate.radius * candidate.radius
+      const interactionRadius = isTouchPointer(position)
+        ? Math.max(candidate.radius, TOUCH_HIT_RADIUS_PX)
+        : candidate.radius
+      const radiusSq = interactionRadius * interactionRadius
 
       if (distanceSq > radiusSq) {
         continue
@@ -155,10 +168,11 @@ export class SpatialNodeHitTester {
   }
 
   private addCandidate(candidate: HitCandidate) {
-    const minCellX = toCell(candidate.x - candidate.radius, this.cellSize)
-    const maxCellX = toCell(candidate.x + candidate.radius, this.cellSize)
-    const minCellY = toCell(candidate.y - candidate.radius, this.cellSize)
-    const maxCellY = toCell(candidate.y + candidate.radius, this.cellSize)
+    const cellRadius = Math.max(candidate.radius, TOUCH_HIT_RADIUS_PX)
+    const minCellX = toCell(candidate.x - cellRadius, this.cellSize)
+    const maxCellX = toCell(candidate.x + cellRadius, this.cellSize)
+    const minCellY = toCell(candidate.y - cellRadius, this.cellSize)
+    const maxCellY = toCell(candidate.y + cellRadius, this.cellSize)
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
       for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
