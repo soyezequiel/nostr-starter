@@ -324,3 +324,214 @@ test('loadRoot expone metricas de inboundDiscovery en visibleLinkProgress', asyn
     `expected contributingRelayCount >= 1, got ${discovery.contributingRelayCount}`,
   )
 })
+
+test('loadRoot dispara inbound suplementario sobre relays nuevos descubiertos en hints del contact list live (cold-start)', async () => {
+  // Cold-start: no cache de contact list ni de relay list. El contact list live
+  // trae un relay hint que no existe en defaults; esperamos que se dispare un
+  // adapter suplementario consultando ese relay nuevo.
+  const defaultRelays = ['wss://default-1.example', 'wss://default-2.example']
+  const liveOnlyRelay = 'wss://live-hint.example'
+  const supplementaryFollower = 'inbound-via-live-hint'
+
+  const store = createBaseStore()
+  store.getState().setRelayUrls([])
+
+  const captured: {
+    calls: Array<{
+      filters: Array<Record<string, unknown>>
+      relayUrls: readonly string[] | undefined
+    }>
+  } = { calls: [] }
+  const adapterRelayUrls: string[][] = []
+
+  const adapterFactory = (options: { relayUrls: string[] }) => {
+    adapterRelayUrls.push(options.relayUrls.slice())
+    return {
+      subscribe(
+        filters: Array<Record<string, unknown>>,
+        subscribeOptions?: { relayUrls?: string[] },
+      ) {
+        captured.calls.push({ filters, relayUrls: subscribeOptions?.relayUrls })
+        return {
+          subscribe(observer: {
+            next?: (value: unknown) => void
+            complete?: (summary: unknown) => void
+          }) {
+            queueMicrotask(() => {
+              const firstFilter = filters[0] ?? {}
+              const isContactList =
+                Array.isArray(firstFilter.authors) &&
+                Array.isArray(firstFilter.kinds) &&
+                (firstFilter.kinds as number[]).includes(3)
+              const isInbound =
+                !Array.isArray(firstFilter.authors) &&
+                Array.isArray(firstFilter['#p']) &&
+                Array.isArray(firstFilter.kinds) &&
+                (firstFilter.kinds as number[]).includes(3)
+              const targetRelay = subscribeOptions?.relayUrls?.[0]
+
+              if (isContactList) {
+                observer.next?.({
+                  event: {
+                    id: 'live-contact-list',
+                    pubkey: 'root',
+                    kind: 3,
+                    created_at: 999,
+                    tags: [['p', 'follow-a', liveOnlyRelay]],
+                  },
+                  relayUrl: defaultRelays[0],
+                  receivedAtMs: 999,
+                })
+              } else if (isInbound && targetRelay === liveOnlyRelay) {
+                // Solo el relay nuevo (consultado por el supplementary
+                // discovery) devuelve este follower.
+                observer.next?.({
+                  event: {
+                    id: 'inbound-from-live-hint',
+                    pubkey: supplementaryFollower,
+                    kind: 3,
+                    created_at: 1000,
+                    tags: [['p', 'root']],
+                  },
+                  relayUrl: liveOnlyRelay,
+                  receivedAtMs: 1000,
+                })
+              }
+              observer.complete?.({
+                relayHealth: {},
+                stats: {
+                  acceptedEvents: 1,
+                  duplicateRelayEvents: 0,
+                  rejectedEvents: 0,
+                },
+                filters,
+                startedAtMs: 1,
+                finishedAtMs: 2,
+              })
+            })
+            return () => {}
+          },
+        }
+      },
+      count: async () => [],
+      getRelayHealth: () => ({}),
+      subscribeToRelayHealth: () => () => {},
+      close: () => {},
+    }
+  }
+
+  const ctx = {
+    store,
+    repositories: {
+      contactLists: { get: async () => null },
+      profiles: { get: async () => null },
+      inboundFollowerSnapshots: {
+        get: async () => null,
+        upsert: async () => {},
+      },
+      relayLists: {
+        get: async () => null,
+        upsert: async () => {},
+      },
+      relayDiscoveryStats: {
+        getMany: async () => [],
+        recordCountResults: async () => {},
+        recordInboundFetch: async () => {},
+      },
+    },
+    eventsWorker: {
+      invoke: async (action: string, payload: { event: { tags: string[][] } }) => {
+        if (action !== 'PARSE_CONTACT_LIST') {
+          throw new Error(`unexpected action ${action}`)
+        }
+        const followPubkeys = payload.event.tags
+          .filter((tag) => tag[0] === 'p' && typeof tag[1] === 'string')
+          .map((tag) => tag[1] as string)
+        const relayHints = payload.event.tags
+          .filter(
+            (tag) =>
+              tag[0] === 'p' &&
+              typeof tag[2] === 'string' &&
+              tag[2].length > 0,
+          )
+          .map((tag) => tag[2] as string)
+        return {
+          followPubkeys: Array.from(new Set(followPubkeys)).sort(),
+          relayHints: Array.from(new Set(relayHints)).sort(),
+          diagnostics: [],
+          nodes: [],
+          links: [],
+        }
+      },
+    },
+    graphWorker: {
+      invoke: async () => {
+        throw new Error('graph worker should not be used in this test')
+      },
+      dispose: () => {},
+    },
+    createRelayAdapter: adapterFactory,
+    defaultRelayUrls: defaultRelays,
+    now: (() => {
+      let now = 1_000
+      return () => ++now
+    })(),
+    emitter: createKernelEventEmitter(),
+  }
+  const collaborators = {
+    analysis: { schedule: () => {} },
+    persistence: {
+      persistContactListEvent: async () => {},
+      persistProfileEvent: async () => {},
+    },
+    profileHydration: { hydrateNodeProfiles: async () => {} },
+    relaySession: {
+      clearPendingOverride: () => {},
+      publishRelayHealth: () => {},
+      resolveRelayHealthSnapshot: () => ({}),
+    },
+    zapLayer: {
+      cancelActiveZapLoad: () => {},
+      getZapTargetPubkeys: () => [],
+      prefetchZapLayer: async () => {},
+    },
+  }
+
+  const rootLoader = createRootLoaderModule(ctx, collaborators)
+  await rootLoader.loadRoot('root', { useDefaultRelays: true })
+  await flushMicrotasks(20)
+
+  // Verifica que se haya creado un adapter suplementario que incluye el live hint.
+  assert.ok(
+    adapterRelayUrls.some((urls) => urls.includes(liveOnlyRelay)),
+    `expected at least one adapter to include ${liveOnlyRelay}, got ${JSON.stringify(adapterRelayUrls)}`,
+  )
+
+  // Verifica que se haya hecho una consulta inbound dirigida al relay nuevo.
+  const supplementaryInboundCall = captured.calls.find((call) => {
+    const filter = call.filters[0] as
+      | (Record<string, unknown> & { '#p'?: unknown; authors?: unknown })
+      | undefined
+    return (
+      filter !== undefined &&
+      Array.isArray(filter['#p']) &&
+      !Array.isArray(filter.authors) &&
+      call.relayUrls?.includes(liveOnlyRelay) === true
+    )
+  })
+  assert.ok(
+    supplementaryInboundCall,
+    `expected a supplementary inbound subscription targeting ${liveOnlyRelay}, captured ${JSON.stringify(
+      captured.calls.map((c) => ({ relayUrls: c.relayUrls })),
+    )}`,
+  )
+
+  // El follower devuelto por el relay nuevo debe quedar en el grafo.
+  const inboundAdjacency = (
+    store.getState() as { inboundAdjacency: Record<string, string[]> }
+  ).inboundAdjacency
+  assert.ok(
+    (inboundAdjacency.root ?? []).includes(supplementaryFollower),
+    `expected supplementary follower ${supplementaryFollower} in inbound adjacency of root, got ${JSON.stringify(inboundAdjacency.root)}`,
+  )
+})

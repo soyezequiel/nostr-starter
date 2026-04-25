@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+## Idioma
+
+Responde siempre en español. Usa lenguaje claro y directo, evitando jerga innecesaria.
+Cuando menciones términos técnicos en inglés (nombres de funciones, librerías, patrones, etc.), agrega su traducción o explicación en español entre paréntesis para que el programador entienda qué hace cada cosa. Ejemplo: "el `store` (almacén de estado)" o "`kernel` (núcleo de procesamiento del grafo)".
+Si sospechás que el programador puede no saber qué es un concepto técnico (ya sea un patrón de diseño, una herramienta, un término de arquitectura, etc.), explicá brevemente qué es y para qué sirve en el contexto del proyecto, sin asumir conocimiento previo. La meta es que el programador entienda qué está haciendo y por qué, no solo que copie código.
+
 ## Project overview
 
 Nostr Explorer is a Sigma-first identity app for La Crypta IDENTITY Hackathon 2026.

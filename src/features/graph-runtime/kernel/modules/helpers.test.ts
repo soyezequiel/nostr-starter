@@ -127,6 +127,92 @@ test('mapProfileRecordToNodeProfile normaliza URLs cacheadas antes de renderizar
   assert.equal(profile.fetchedAt, 456)
 })
 
+test('collectTargetedReciprocalFollowerEvidence pagina con cursor until cuando un chunk llena el limit', async () => {
+  const rootPubkey = 'root'
+  // 30 authors -> limit = max(50, 30) = 50. Page 1 returns exactly 50 events
+  // (all newer ones for the first half of authors), forcing a second page.
+  const followPubkeys = Array.from({ length: 30 }, (_, index) =>
+    `follow-${String(index).padStart(3, '0')}`,
+  )
+
+  // Page 1: 50 events from first 25 authors (each twice with different ts).
+  const firstPageEnvelopes = followPubkeys.slice(0, 25).flatMap((pubkey) => [
+    createContactListEnvelope(pubkey, ['root'], `event-${pubkey}-recent`, {
+      createdAt: 2_000,
+    }),
+    createContactListEnvelope(pubkey, ['root'], `event-${pubkey}-older`, {
+      createdAt: 1_500,
+    }),
+  ])
+  // Page 2: events for last 5 authors (older than page 1 oldest).
+  const secondPageEnvelopes = followPubkeys.slice(25, 30).map((pubkey) =>
+    createContactListEnvelope(pubkey, ['root'], `event-${pubkey}-recent`, {
+      createdAt: 1_000,
+    }),
+  )
+
+  const capturedFilters: Filter[][] = []
+  const adapter: RelayAdapterInstance = {
+    subscribe(filters) {
+      capturedFilters.push(filters)
+      const filter = filters[0] as (Filter & { until?: number }) | undefined
+      const isFirstPage = filter?.until === undefined
+      return {
+        subscribe(observer) {
+          queueMicrotask(() => {
+            observer.nextBatch?.(
+              isFirstPage ? firstPageEnvelopes : secondPageEnvelopes,
+            )
+            observer.complete?.(createRelaySummary(filters))
+          })
+          return () => {}
+        },
+      }
+    },
+    count: async () => [],
+    getRelayHealth: () => ({}),
+    subscribeToRelayHealth: () => () => {},
+    close: () => {},
+  }
+  const eventsWorker: WorkerClient<EventsWorkerActionMap> = {
+    invoke: async (action, payload) => {
+      assert.equal(action, 'PARSE_CONTACT_LIST')
+      return {
+        followPubkeys: payload.event.tags
+          .filter((tag) => tag[0] === 'p' && tag[1])
+          .map((tag) => tag[1]),
+        relayHints: [],
+        diagnostics: [],
+      }
+    },
+    dispose: () => {},
+  }
+
+  const evidence = await collectTargetedReciprocalFollowerEvidence({
+    adapter,
+    eventsWorker,
+    followPubkeys,
+    targetPubkey: rootPubkey,
+  })
+
+  assert.equal(evidence.followerPubkeys.length, 30)
+  assert.equal(evidence.partial, false)
+
+  // Should have made at least 2 pages: first without `until`, then with cursor.
+  assert.ok(
+    capturedFilters.length >= 2,
+    `expected at least 2 paginated calls, got ${capturedFilters.length}`,
+  )
+  const firstFilter = capturedFilters[0][0] as Filter & { until?: number }
+  const secondFilter = capturedFilters[1][0] as Filter & { until?: number }
+  assert.equal(firstFilter.until, undefined)
+  assert.equal(typeof secondFilter.until, 'number')
+  assert.ok(
+    (secondFilter.until ?? Infinity) < 1_500,
+    `expected second page until to be older than first page oldest, got ${secondFilter.until}`,
+  )
+})
+
 test('collectTargetedReciprocalFollowerEvidence consulta follows por author y valida reciprocidad', async () => {
   const rootPubkey = 'root'
   const envelopes = [

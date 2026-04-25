@@ -32,6 +32,9 @@ import {
   ROOT_INBOUND_DISCOVERY_MAX_PAGES_PER_RELAY,
   ROOT_INBOUND_DISCOVERY_PAGE_CONCURRENCY,
   ROOT_INBOUND_DISCOVERY_RELAY_LIMIT,
+  TARGETED_RECIPROCAL_AUTHOR_CHUNK_SIZE,
+  TARGETED_RECIPROCAL_MAX_PAGES_PER_CHUNK,
+  TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
 } from '@/features/graph-runtime/kernel/modules/constants'
 import type { RelayAdapterInstance } from '@/features/graph-runtime/kernel/modules/context'
 import type {
@@ -42,8 +45,6 @@ import type {
 import type { WorkerClient } from '@/features/graph-runtime/workers/shared/runtime'
 import { normalizeMediaUrl } from '@/lib/media'
 
-const RECIPROCAL_AUTHOR_CHUNK_SIZE = 100
-const RECIPROCAL_QUERY_CONCURRENCY = 2
 
 export interface MergedRelayEventEnvelope {
   event: Event
@@ -738,50 +739,130 @@ export async function collectTargetedReciprocalFollowerEvidence({
   let partial = false
 
   await runWithConcurrencyLimit(
-    chunkIntoBatches(candidatePubkeys, RECIPROCAL_AUTHOR_CHUNK_SIZE),
-    RECIPROCAL_QUERY_CONCURRENCY,
+    chunkIntoBatches(candidatePubkeys, TARGETED_RECIPROCAL_AUTHOR_CHUNK_SIZE),
+    TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
     async (authorPubkeys) => {
-      const result = await collectRelayEvents(adapter, [
-        {
+      const pageLimit = Math.min(
+        NODE_EXPAND_INBOUND_QUERY_LIMIT,
+        Math.max(50, authorPubkeys.length),
+      )
+      const seenEventIds = new Set<string>()
+      let until: number | null = null
+      let totalEventCount = 0
+      let pageCount = 0
+      let chunkPartial = false
+
+      for (
+        let pageIndex = 0;
+        pageIndex < TARGETED_RECIPROCAL_MAX_PAGES_PER_CHUNK;
+        pageIndex += 1
+      ) {
+        const filter: Filter & { '#p': string[] } = {
           authors: authorPubkeys,
           kinds: [3],
           '#p': [targetPubkey],
-          limit: Math.min(
-            NODE_EXPAND_INBOUND_QUERY_LIMIT,
-            Math.max(50, authorPubkeys.length),
-          ),
-        } satisfies Filter & { '#p': string[] },
-      ])
+          limit: pageLimit,
+        }
+        if (until !== null) {
+          filter.until = until
+        }
 
-      reciprocalEnvelopes.push(...result.events)
-      partial = partial || result.error !== null
-      const traceTargetEvents = traceThisRoot
-        ? result.events.filter((envelope) => isAccountTraceTarget(envelope.event.pubkey))
-        : []
+        const result = await collectRelayEvents(adapter, [filter])
+        pageCount += 1
+
+        let newEventCount = 0
+        let oldestCreatedAt: number | null = null
+        for (const envelope of result.events) {
+          if (seenEventIds.has(envelope.event.id)) {
+            continue
+          }
+          seenEventIds.add(envelope.event.id)
+          reciprocalEnvelopes.push(envelope)
+          newEventCount += 1
+          if (
+            oldestCreatedAt === null ||
+            envelope.event.created_at < oldestCreatedAt
+          ) {
+            oldestCreatedAt = envelope.event.created_at
+          }
+        }
+        totalEventCount += newEventCount
+
+        const traceTargetEvents = traceThisRoot
+          ? result.events.filter((envelope) =>
+              isAccountTraceTarget(envelope.event.pubkey),
+            )
+          : []
+
+        if (debugEnabled) {
+          console.info(
+            '[graph-v2:debug] collectTargetedReciprocalFollowerEvidence: chunk page',
+            {
+              targetPubkey,
+              authorCount: authorPubkeys.length,
+              pageIndex,
+              eventCount: result.events.length,
+              newEventCount,
+              partial: result.error !== null,
+              until: filter.until ?? null,
+            },
+          )
+        }
+        if (
+          traceThisRoot &&
+          traceConfig &&
+          authorPubkeys.includes(traceConfig.targetPubkey)
+        ) {
+          traceAccountFlow(
+            'collectTargetedReciprocalFollowerEvidence.chunkPageTraceTarget',
+            {
+              targetPubkey,
+              authorCount: authorPubkeys.length,
+              pageIndex,
+              eventCount: result.events.length,
+              newEventCount,
+              partial: result.error !== null,
+              until: filter.until ?? null,
+              hasTraceTargetEvent: traceTargetEvents.length > 0,
+              traceTargetEventIds: traceTargetEvents.map(
+                (envelope) => envelope.event.id,
+              ),
+              traceTargetRelayUrls: Array.from(
+                new Set(traceTargetEvents.map((envelope) => envelope.relayUrl)),
+              ),
+            },
+          )
+        }
+
+        if (result.error !== null) {
+          chunkPartial = true
+          break
+        }
+        if (newEventCount === 0) {
+          break
+        }
+        if (result.events.length < pageLimit) {
+          break
+        }
+        if (oldestCreatedAt === null || oldestCreatedAt <= 0) {
+          break
+        }
+        until = oldestCreatedAt - 1
+      }
+
+      partial = partial || chunkPartial
 
       if (debugEnabled) {
         console.info(
-          '[graph-v2:debug] collectTargetedReciprocalFollowerEvidence: chunk',
+          '[graph-v2:debug] collectTargetedReciprocalFollowerEvidence: chunk summary',
           {
             targetPubkey,
             authorCount: authorPubkeys.length,
-            eventCount: result.events.length,
-            partial: result.error !== null,
+            pageCount,
+            totalEventCount,
+            partial: chunkPartial,
           },
         )
-      }
-      if (traceThisRoot && traceConfig && authorPubkeys.includes(traceConfig.targetPubkey)) {
-        traceAccountFlow('collectTargetedReciprocalFollowerEvidence.chunkTraceTarget', {
-          targetPubkey,
-          authorCount: authorPubkeys.length,
-          eventCount: result.events.length,
-          partial: result.error !== null,
-          hasTraceTargetEvent: traceTargetEvents.length > 0,
-          traceTargetEventIds: traceTargetEvents.map((envelope) => envelope.event.id),
-          traceTargetRelayUrls: Array.from(
-            new Set(traceTargetEvents.map((envelope) => envelope.relayUrl)),
-          ),
-        })
       }
     },
   )

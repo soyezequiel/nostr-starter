@@ -905,6 +905,150 @@ export function createRootLoaderModule(
             targetedAdapter.close()
           })
       }
+      let supplementaryInboundDiscoveryStarted = false
+      const scheduleSupplementaryInboundDiscovery = (
+        contactListRelayHints: readonly string[],
+      ) => {
+        if (supplementaryInboundDiscoveryStarted) {
+          return
+        }
+        if (isStaleLoad(loadId)) {
+          return
+        }
+
+        const currentRelaySet = new Set(relayUrls)
+        const newHints = Array.from(new Set(contactListRelayHints)).filter(
+          (hint) => hint && !currentRelaySet.has(hint),
+        )
+        if (newHints.length === 0) {
+          return
+        }
+
+        supplementaryInboundDiscoveryStarted = true
+        const supplementaryRelayUrls = mergeBoundedRelayUrlSets(
+          MAX_SESSION_RELAYS,
+          relayUrls,
+          newHints,
+        )
+
+        let supplementaryAdapter: RelayAdapterInstance
+        try {
+          supplementaryAdapter = ctx.createRelayAdapter({
+            relayUrls: supplementaryRelayUrls,
+            connectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+            pageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+            retryCount: NODE_EXPAND_RETRY_COUNT,
+            stragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+          })
+        } catch (error) {
+          logTerminalWarning(
+            'Discovery',
+            'No se pudo abrir adapter suplementario',
+            { motivo: summarizeHumanTerminalError(error) },
+          )
+          return
+        }
+
+        if (traceThisRoot) {
+          traceAccountFlow('rootLoader.supplementaryInbound.start', {
+            newHints,
+            supplementaryRelayUrls,
+          })
+        }
+
+        void (async () => {
+          try {
+            const seedResult = await collectRelayEvents(
+              supplementaryAdapter,
+              [
+                {
+                  kinds: [3],
+                  '#p': [rootPubkey],
+                  limit: NODE_EXPAND_INBOUND_QUERY_LIMIT,
+                } satisfies Filter & { '#p': string[] },
+              ],
+              {
+                relayUrls: newHints,
+              },
+            )
+            recordContributingEnvelopes(seedResult.events)
+            if (isStaleLoad(loadId)) {
+              return
+            }
+
+            const paginatedResult =
+              await collectAdditionalPaginatedInboundFollowerEvents({
+                adapter: supplementaryAdapter,
+                countResults: [],
+                isStale: () => isStaleLoad(loadId),
+                relayUrls: newHints,
+                seedEnvelopes: seedResult.events,
+                targetPubkey: rootPubkey,
+              })
+            recordContributingEnvelopes(paginatedResult.events)
+            if (isStaleLoad(loadId)) {
+              return
+            }
+
+            const allEnvelopes = [
+              ...seedResult.events,
+              ...paginatedResult.events,
+            ]
+            if (allEnvelopes.length === 0) {
+              return
+            }
+
+            const evidence = await collectInboundFollowerEvidence(
+              ctx.eventsWorker,
+              selectLatestReplaceableEventsByPubkey(allEnvelopes),
+              rootPubkey,
+            )
+            if (
+              evidence.followerPubkeys.length === 0 ||
+              isStaleLoad(loadId)
+            ) {
+              return
+            }
+
+            const accepted =
+              followerDiscovery.mergeProgressiveInboundFollowers(
+                rootPubkey,
+                evidence.followerPubkeys,
+                () => isStaleLoad(loadId),
+              )
+            followersLoadedCount =
+              getCurrentInboundFollowerPubkeys(rootPubkey).length
+
+            const hydrationTargets = accepted.filter((pubkey) => {
+              if (progressivelyHydratedInboundPubkeys.has(pubkey)) {
+                return false
+              }
+              progressivelyHydratedInboundPubkeys.add(pubkey)
+              return true
+            })
+            followerDiscovery.hydrateInboundFollowerProfiles(
+              hydrationTargets,
+              supplementaryRelayUrls,
+              () => isStaleLoad(loadId),
+            )
+            if (traceThisRoot) {
+              traceAccountFlow('rootLoader.supplementaryInbound.merged', {
+                acceptedCount: accepted.length,
+                followersLoadedCount,
+              })
+            }
+            publishVisibleLinkProgress(true)
+          } catch (error) {
+            logTerminalWarning(
+              'Discovery',
+              'No se pudo ejecutar inbound suplementario por hints',
+              { motivo: summarizeHumanTerminalError(error) },
+            )
+          } finally {
+            supplementaryAdapter.close()
+          }
+        })()
+      }
       const applyFastContactListGraph = (
         envelope: RelayEventEnvelope,
         parsedContactList: ParseContactListResult,
@@ -1014,6 +1158,7 @@ export function createRootLoaderModule(
           parsedContactList.followPubkeys,
           parsedContactList.relayHints,
         )
+        scheduleSupplementaryInboundDiscovery(parsedContactList.relayHints)
 
         return true
       }
@@ -1493,6 +1638,7 @@ export function createRootLoaderModule(
           parsedContactList.followPubkeys,
           parsedContactList.relayHints,
         )
+        scheduleSupplementaryInboundDiscovery(parsedContactList.relayHints)
         if (traceThisRoot && traceConfig) {
           traceAccountFlow('rootLoader.finalTargetedEvidence.backgroundQueued', {
             hasTargetedReciprocalCandidates,
