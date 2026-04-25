@@ -1162,7 +1162,6 @@ const buildResourceTop = (
     input.scene.physics.diagnostics.nodeCount || input.scene.physics.nodes.length
   const physicsEdgeCount =
     input.scene.physics.diagnostics.edgeCount || input.scene.physics.edges.length
-  const frameMs = input.avatarPerfSnapshot?.emaFrameMs ?? null
   const avatarOverlay = input.avatarRuntimeSnapshot?.overlay ?? null
   const avatarBudget = avatarOverlay?.resolvedBudget ?? null
   const avatarCounts = avatarOverlay?.counts ?? null
@@ -1220,7 +1219,7 @@ const buildResourceTop = (
     (avatarBudget?.showAllVisibleImages ? 360 : 0) +
     imageQualityWeight
   const avatarTone: RuntimeInspectorTone =
-    drawnImages > 90 || avatarBucket >= 512 || (frameMs !== null && frameMs > 24)
+    drawnImages > 90 || avatarBucket >= 512
       ? 'bad'
       : drawnImages > 45 || loadCandidates > 120 || pendingCandidates > 40
         ? 'warn'
@@ -1374,7 +1373,7 @@ const buildPerformanceSection = (
   const suspects: string[] = []
 
   let tone: RuntimeInspectorTone = 'ok'
-  const resumen = 'Rendimiento estable'
+  let resumen = 'Rendimiento estable'
   let quePasaAhora =
     'No aparece un cuello dominante en el resumen actual de frame, scene churn y avatar overlay.'
   let queLeerAhora =
@@ -1382,6 +1381,7 @@ const buildPerformanceSection = (
 
   if (frameMs !== null && frameMs > 24) {
     tone = 'bad'
+    resumen = 'FPS bajo'
     suspects.push('FPS bajo')
     if (avatarDraws > 60) {
       suspects.push('Avatar overlay cargado')
@@ -1389,14 +1389,27 @@ const buildPerformanceSection = (
     if (input.sceneUpdatesPerMinute > input.uiUpdatesPerMinute + 10) {
       suspects.push('La escena invalida seguido')
     }
-    quePasaAhora =
-      avatarDraws > 60
-        ? 'El frame promedio esta alto y el overlay de avatares esta dibujando mucho por frame.'
-        : 'El frame promedio esta alto y la escena sigue recibiendo bastante actividad.'
+    if (avatarDraws > 60) {
+      resumen = 'Avatar overlay cargado'
+      quePasaAhora =
+        'El frame promedio esta alto y el overlay de avatares esta dibujando mucho por frame.'
+    } else if (input.sceneUpdatesPerMinute > input.uiUpdatesPerMinute + 10) {
+      resumen = 'FPS bajo por churn de escena'
+      quePasaAhora =
+        'El frame promedio esta alto y la escena invalida mucho mas que la UI.'
+    } else if (input.physicsEnabled && overlapCount > 0) {
+      resumen = 'FPS bajo con fisica activa'
+      quePasaAhora =
+        'El frame promedio esta alto mientras la fisica sigue activa y reporta densidad visible.'
+    } else {
+      quePasaAhora =
+        'El frame promedio esta alto, pero el snapshot no muestra churn de UI, churn de escena ni overlay de avatares como causa unica.'
+    }
     queLeerAhora =
       'Abre Rendimiento y Avatares para separar si el cuello esta en draw, escena o fisica.'
   } else if (input.uiUpdatesPerMinute > Math.max(16, input.sceneUpdatesPerMinute * 1.3)) {
     tone = 'warn'
+    resumen = 'Churn de UI elevado'
     suspects.push('La UI cambia mas de lo deseable')
     quePasaAhora =
       'La UI cambia seguido frente al ritmo de invalidacion de escena. Puede haber churn de estado o progreso.'
@@ -1404,6 +1417,7 @@ const buildPerformanceSection = (
       'Abre Rendimiento y Carga Root para ver si el churn viene del progreso de carga.'
   } else if (input.physicsEnabled && overlapCount > 0) {
     tone = 'warn'
+    resumen = 'Fisica activa con densidad visible'
     suspects.push('Fisica activa con densidad visible')
     quePasaAhora =
       'La fisica sigue activa y reporta densidad suficiente como para seguir moviendo el layout.'

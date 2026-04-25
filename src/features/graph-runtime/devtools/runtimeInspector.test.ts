@@ -6,6 +6,7 @@ import {
   type RuntimeInspectorBuildInput,
 } from '@/features/graph-runtime/devtools/runtimeInspector'
 import type { AvatarRuntimeStateDebugSnapshot } from '@/features/graph-v2/renderer/avatar/avatarDebug'
+import { DEFAULT_BUDGETS } from '@/features/graph-v2/renderer/avatar/types'
 
 const createBaseInput = (
   avatarRuntimeSnapshot: AvatarRuntimeStateDebugSnapshot,
@@ -522,6 +523,43 @@ test('runtime inspector ranks high quality avatar mode above small graph work', 
   assert.equal(snapshot.resourceTop[0]?.id, 'avatars')
   assert.equal(snapshot.resourceTop[0]?.intensidad, 'alta')
   assert.match(snapshot.resourceTop[0]?.detalle ?? '', /full HD/)
+})
+
+test('runtime inspector does not call bad FPS stable or blame modest avatar work', () => {
+  const runtimeSnapshot = createAvatarRuntimeSnapshot()
+  if (!runtimeSnapshot.overlay) {
+    throw new Error('Expected avatar overlay fixture.')
+  }
+  runtimeSnapshot.overlay.counts.drawnImages = 27
+  runtimeSnapshot.overlay.counts.loadCandidates = 27
+  runtimeSnapshot.overlay.counts.pendingCandidates = 0
+  runtimeSnapshot.overlay.resolvedBudget.maxBucket = 32
+  runtimeSnapshot.cache!.totalBytes = 620 * 1024
+
+  const input = createBaseInput(runtimeSnapshot)
+  input.avatarPerfSnapshot = {
+    baseTier: 'mid',
+    tier: 'low',
+    isDegraded: true,
+    emaFrameMs: 112.4,
+    budget: DEFAULT_BUDGETS.low,
+  }
+  input.physicsEnabled = true
+  input.scene.render.diagnostics.nodeCount = 76
+  input.scene.render.diagnostics.visibleEdgeCount = 152
+  input.scene.physics.diagnostics.nodeCount = 76
+  input.scene.physics.diagnostics.edgeCount = 152
+  input.sceneUpdatesPerMinute = 2
+  input.uiUpdatesPerMinute = 1
+
+  const snapshot = buildRuntimeInspectorSnapshot(input)
+  const avatarResource = snapshot.resourceTop.find((row) => row.id === 'avatars')
+
+  assert.equal(snapshot.performance.tone, 'bad')
+  assert.equal(snapshot.performance.resumen, 'FPS bajo')
+  assert.notEqual(snapshot.primary.titulo, 'Rendimiento estable')
+  assert.equal(avatarResource?.tone, 'ok')
+  assert.equal(avatarResource?.intensidad, 'baja')
 })
 
 test('runtime inspector does not surface layer-filter coverage as the primary issue', () => {

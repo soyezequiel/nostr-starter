@@ -268,6 +268,47 @@ export function mergeBoundedRelayUrlSets(
   return mergeRelayUrlSets(...relayGroups).slice(0, limit)
 }
 
+export function parseRelayListEvent(envelope: RelayEventEnvelope): {
+  readRelays: string[]
+  writeRelays: string[]
+  relays: string[]
+} {
+  const readRelays = new Set<string>()
+  const writeRelays = new Set<string>()
+  const relays = new Set<string>()
+
+  for (const tag of envelope.event.tags) {
+    if (tag[0] !== 'r' || !tag[1]) {
+      continue
+    }
+
+    let relayUrl: string
+    try {
+      relayUrl = normalizeRelayUrl(tag[1])
+    } catch {
+      continue
+    }
+
+    const marker = tag[2]?.trim().toLowerCase()
+    relays.add(relayUrl)
+
+    if (marker === 'read') {
+      readRelays.add(relayUrl)
+    } else if (marker === 'write') {
+      writeRelays.add(relayUrl)
+    } else {
+      readRelays.add(relayUrl)
+      writeRelays.add(relayUrl)
+    }
+  }
+
+  return {
+    readRelays: Array.from(readRelays).sort(),
+    writeRelays: Array.from(writeRelays).sort(),
+    relays: Array.from(relays).sort(),
+  }
+}
+
 export function createIdleRelayHealthSnapshotMap(
   relayUrls: readonly string[],
   now: number,

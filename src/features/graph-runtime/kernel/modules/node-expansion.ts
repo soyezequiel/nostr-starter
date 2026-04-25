@@ -6,6 +6,7 @@ import type {
   NodeExpansionPhase,
   NodeExpansionState,
 } from '@/features/graph-runtime/app/store'
+import type { RelayListRecord } from '@/features/graph-runtime/db/entities'
 import type { ExpandNodeResult } from '@/features/graph-runtime/kernel/runtime'
 import type { KernelContext, RelayAdapterInstance } from '@/features/graph-runtime/kernel/modules/context'
 import {
@@ -22,6 +23,7 @@ import {
   collectRelayEvents,
   collectTargetedReciprocalFollowerEvidence,
   mergeBoundedRelayUrlSets,
+  parseRelayListEvent,
   selectLatestReplaceableEvent,
   selectLatestReplaceableEventsByPubkey,
   serializeContactListEvent,
@@ -42,9 +44,11 @@ import {
   logTerminalWarning,
   summarizeHumanTerminalError,
 } from '@/features/graph-runtime/debug/humanTerminalLog'
+import type { RelayEventEnvelope } from '@/features/graph-runtime/nostr'
 
 const NODE_EXPANSION_TOTAL_STEPS = 4
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
+const NODE_RELAY_LIST_KIND = 10002
 
 export function createNodeExpansionModule(
   ctx: KernelContext,
@@ -122,6 +126,122 @@ export function createNodeExpansionModule(
         motivo: summarizeHumanTerminalError(error),
       })
       return null
+    }
+  }
+
+  const getCachedRelayList = async (targetPubkey: string) => {
+    try {
+      return await ctx.repositories.relayLists.get(targetPubkey)
+    } catch (error) {
+      logTerminalWarning('Relays', 'No se pudo leer cache de relays del nodo', {
+        nodo: targetPubkey.slice(0, 12),
+        motivo: summarizeHumanTerminalError(error),
+      })
+      return null
+    }
+  }
+
+  const relayUrlListsEqual = (
+    currentRelayUrls: readonly string[],
+    nextRelayUrls: readonly string[],
+  ) =>
+    currentRelayUrls.length === nextRelayUrls.length &&
+    currentRelayUrls.every((relayUrl, index) => relayUrl === nextRelayUrls[index])
+
+  const publishExpansionRelayUrls = (relayUrls: readonly string[]) => {
+    const currentRelayUrls = ctx.store.getState().relayUrls
+    if (!relayUrlListsEqual(currentRelayUrls, relayUrls)) {
+      ctx.store.getState().setRelayUrls(relayUrls.slice())
+    }
+  }
+
+  const mergeExpansionRelayHints = (
+    ...relayHintGroups: Array<readonly string[] | undefined>
+  ) => mergeBoundedRelayUrlSets(MAX_SESSION_RELAYS, ...relayHintGroups)
+
+  const persistExpandedNodeRelayList = async (
+    envelope: RelayEventEnvelope,
+  ): Promise<RelayListRecord | null> => {
+    if (envelope.event.kind !== NODE_RELAY_LIST_KIND) {
+      return null
+    }
+
+    const parsedRelayList = parseRelayListEvent(envelope)
+    if (parsedRelayList.relays.length === 0) {
+      return null
+    }
+
+    try {
+      return await ctx.repositories.relayLists.upsert({
+        pubkey: envelope.event.pubkey,
+        eventId: envelope.event.id,
+        createdAt: envelope.event.created_at,
+        fetchedAt: envelope.receivedAtMs,
+        readRelays: parsedRelayList.readRelays,
+        writeRelays: parsedRelayList.writeRelays,
+        relays: parsedRelayList.relays,
+      })
+    } catch (error) {
+      logTerminalWarning('Persistencia', 'No se pudo guardar relays del nodo', {
+        nodo: envelope.event.pubkey.slice(0, 12),
+        motivo: summarizeHumanTerminalError(error),
+      })
+      return {
+        pubkey: envelope.event.pubkey,
+        eventId: envelope.event.id,
+        createdAt: envelope.event.created_at,
+        fetchedAt: envelope.receivedAtMs,
+        readRelays: parsedRelayList.readRelays,
+        writeRelays: parsedRelayList.writeRelays,
+        relays: parsedRelayList.relays,
+      }
+    }
+  }
+
+  const refreshExpandedNodeRelayList = async (
+    adapter: RelayAdapterInstance,
+    pubkey: string,
+    relayUrls: readonly string[],
+  ): Promise<{
+    relayUrls: string[]
+    relayHints: string[]
+  }> => {
+    const relayListResult = await collectExpansionRelayEvents(adapter, [
+      {
+        authors: [pubkey],
+        kinds: [NODE_RELAY_LIST_KIND],
+        limit: 1,
+      } satisfies Filter,
+    ], {
+      hardTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+    })
+    const latestRelayListEvent = selectLatestReplaceableEvent(
+      relayListResult.events,
+    )
+
+    if (!latestRelayListEvent) {
+      return {
+        relayUrls: relayUrls.slice(),
+        relayHints: [],
+      }
+    }
+
+    const relayList = await persistExpandedNodeRelayList(latestRelayListEvent)
+    if (!relayList) {
+      return {
+        relayUrls: relayUrls.slice(),
+        relayHints: [],
+      }
+    }
+
+    return {
+      relayUrls: mergeBoundedRelayUrlSets(
+        MAX_SESSION_RELAYS,
+        relayUrls,
+        relayList.readRelays,
+        relayList.writeRelays,
+      ),
+      relayHints: relayList.readRelays,
     }
   }
 
@@ -487,10 +607,22 @@ export function createNodeExpansionModule(
       }
     }
 
-    const relayUrls =
+    let relayUrls =
       state.relayUrls.length > 0
         ? state.relayUrls.slice()
         : ctx.defaultRelayUrls.slice()
+    let expandedNodeRelayHints: string[] = []
+    const cachedRelayList = await getCachedRelayList(pubkey)
+    if (cachedRelayList) {
+      expandedNodeRelayHints = cachedRelayList.readRelays.slice()
+      relayUrls = mergeBoundedRelayUrlSets(
+        MAX_SESSION_RELAYS,
+        relayUrls,
+        cachedRelayList.readRelays,
+        cachedRelayList.writeRelays,
+      )
+      publishExpansionRelayUrls(relayUrls)
+    }
 
     const startedAt = ctx.now()
     setLoadingState(
@@ -539,7 +671,10 @@ export function createNodeExpansionModule(
           [],
           {
             relayUrls,
-            relayHints: cachedContactList.relayHints,
+            relayHints: mergeExpansionRelayHints(
+              expandedNodeRelayHints,
+              cachedContactList.relayHints,
+            ),
             authoredHasPartialSignals: true,
             inboundHasPartialSignals: false,
             authoredDiagnostics: [],
@@ -574,9 +709,31 @@ export function createNodeExpansionModule(
         pubkey,
         'fetching-structure',
         2,
-        'Consultando relays activos para recuperar follows y followers...',
+        'Consultando relays activos y relays declarados del nodo...',
         startedAt,
       )
+      const relayListResolution = await refreshExpandedNodeRelayList(
+        adapter,
+        pubkey,
+        relayUrls,
+      )
+      expandedNodeRelayHints = mergeExpansionRelayHints(
+        expandedNodeRelayHints,
+        relayListResolution.relayHints,
+      )
+      if (!relayUrlListsEqual(relayUrls, relayListResolution.relayUrls)) {
+        adapter.close()
+        adapter = null
+        relayUrls = relayListResolution.relayUrls
+        publishExpansionRelayUrls(relayUrls)
+        adapter = ctx.createRelayAdapter({
+          relayUrls,
+          connectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+          pageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+          retryCount: NODE_EXPAND_RETRY_COUNT,
+          stragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+        })
+      }
       const contactListResult = await collectExpansionRelayEvents(adapter, [
         { authors: [pubkey], kinds: [3] } satisfies Filter,
       ], {
@@ -617,7 +774,10 @@ export function createNodeExpansionModule(
             [],
             {
               relayUrls,
-              relayHints: cachedContactList.relayHints,
+              relayHints: mergeExpansionRelayHints(
+                expandedNodeRelayHints,
+                cachedContactList.relayHints,
+              ),
               authoredHasPartialSignals: true,
               inboundHasPartialSignals: false,
               authoredDiagnostics: [],
@@ -694,7 +854,10 @@ export function createNodeExpansionModule(
             [],
             {
               relayUrls,
-              relayHints: cachedContactList.relayHints,
+              relayHints: mergeExpansionRelayHints(
+                expandedNodeRelayHints,
+                cachedContactList.relayHints,
+              ),
               authoredHasPartialSignals: true,
               inboundHasPartialSignals: false,
               authoredDiagnostics: [],
@@ -788,7 +951,10 @@ export function createNodeExpansionModule(
           [],
           {
             relayUrls,
-            relayHints: cachedContactListBeforePersist.relayHints,
+            relayHints: mergeExpansionRelayHints(
+              expandedNodeRelayHints,
+              cachedContactListBeforePersist.relayHints,
+            ),
             authoredHasPartialSignals: true,
             inboundHasPartialSignals: false,
             authoredDiagnostics: [],
@@ -818,7 +984,10 @@ export function createNodeExpansionModule(
         [],
         {
           relayUrls,
-          relayHints: parsedContactList.relayHints,
+          relayHints: mergeExpansionRelayHints(
+            expandedNodeRelayHints,
+            parsedContactList.relayHints,
+          ),
           authoredHasPartialSignals:
             authoredRelayHadPartialSignals ||
             persistFailed ||

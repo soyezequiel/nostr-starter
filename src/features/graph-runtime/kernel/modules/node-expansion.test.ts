@@ -93,6 +93,11 @@ const createBaseCollaborators = () => ({
   },
 })
 
+const createRelayListsRepositoryStub = () => ({
+  get: async () => undefined,
+  upsert: async (record: unknown) => record,
+})
+
 test('expandNode resolves before reciprocal enrichment finishes and merges late inbound followers afterwards', async () => {
   const store = createStore<Record<string, unknown>>()((...args) => ({
     ...createGraphSlice(...args),
@@ -179,6 +184,7 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async (action: string) => {
@@ -296,6 +302,7 @@ test('expandNode reports partial when relays fail without cached contact list', 
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async () => {
@@ -380,6 +387,7 @@ test('expandNode reports partial when live contact list parsing fails', async ()
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async () => {
@@ -430,6 +438,7 @@ test('expandNode reports partial when the foreground relay adapter cannot be cre
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async () => {
@@ -473,6 +482,7 @@ test('expandNode explains how to raise the graph cap when expansion is blocked b
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async () => {
@@ -559,6 +569,7 @@ test('expandNode does not let background enrichment adapter failures overwrite s
       contactLists: {
         get: async () => null,
       },
+      relayLists: createRelayListsRepositoryStub(),
     },
     eventsWorker: {
       invoke: async (action: string) => {
@@ -603,4 +614,156 @@ test('expandNode does not let background enrichment adapter failures overwrite s
   assert.equal(store.getState().expandedNodePubkeys.has('target'), true)
   assert.equal(store.getState().selectedNodePubkey, null)
   assert.ok(createRelayAdapterCallCount > 1)
+})
+
+test('expandNode loads the expanded node relay list before fetching its structure', async () => {
+  const store = createExpandableStore()
+  const createdRelayUrlSets: string[][] = []
+  const persistedRelayLists: Array<{
+    pubkey: string
+    readRelays: string[]
+    writeRelays: string[]
+    relays: string[]
+  }> = []
+
+  const createRelayAdapter = (options: { relayUrls: string[] }) => {
+    const relayUrls = options.relayUrls.slice()
+    createdRelayUrlSets.push(relayUrls)
+
+    return {
+      subscribe(filters: Array<Record<string, unknown>>) {
+        return {
+          subscribe(observer: {
+            next?: (value: unknown) => void
+            complete?: (summary: unknown) => void
+          }) {
+            queueMicrotask(() => {
+              const firstFilter = filters[0] ?? {}
+              const kinds = firstFilter.kinds as number[] | undefined
+
+              if (kinds?.includes(10002)) {
+                observer.next?.({
+                  event: {
+                    id: 'relay-list-event',
+                    pubkey: 'target',
+                    kind: 10002,
+                    created_at: 124,
+                    tags: [['r', 'wss://expanded.example', 'read']],
+                  },
+                  relayUrl: 'wss://relay.example',
+                  receivedAtMs: 124,
+                })
+              }
+
+              if (
+                kinds?.includes(3) &&
+                relayUrls.includes('wss://expanded.example')
+              ) {
+                observer.next?.({
+                  event: {
+                    id: 'contact-list-event',
+                    pubkey: 'target',
+                    kind: 3,
+                    created_at: 125,
+                    tags: [['p', 'visible-follow']],
+                  },
+                  relayUrl: 'wss://expanded.example',
+                  receivedAtMs: 125,
+                })
+              }
+
+              observer.complete?.({
+                relayCount: relayUrls.length,
+              })
+            })
+
+            return () => {}
+          },
+        }
+      },
+      count: async () => [],
+      getRelayHealth: () => ({}),
+      subscribeToRelayHealth: () => () => {},
+      close: () => {},
+    }
+  }
+
+  const ctx = {
+    store,
+    repositories: {
+      contactLists: {
+        get: async () => null,
+      },
+      relayLists: {
+        get: async () => undefined,
+        upsert: async (record: {
+          pubkey: string
+          readRelays: string[]
+          writeRelays: string[]
+          relays: string[]
+        }) => {
+          persistedRelayLists.push(record)
+          return record
+        },
+      },
+    },
+    eventsWorker: {
+      invoke: async (action: string) => {
+        if (action !== 'PARSE_CONTACT_LIST') {
+          throw new Error(`unexpected action ${action}`)
+        }
+
+        return {
+          followPubkeys: ['visible-follow'],
+          relayHints: [],
+          diagnostics: [],
+        }
+      },
+    },
+    graphWorker: {
+      invoke: async () => {
+        throw new Error('graph worker should not be used in this test')
+      },
+      dispose: () => {},
+    },
+    createRelayAdapter,
+    defaultRelayUrls: ['wss://relay.example'],
+    now: (() => {
+      let now = 1_000
+      return () => ++now
+    })(),
+    emitter: createKernelEventEmitter(),
+  }
+
+  const expansion = createNodeExpansionModule(ctx, {
+    ...createBaseCollaborators(),
+    loadDirectInboundFollowerEvidence: async () => ({
+      followerPubkeys: [],
+      partial: false,
+    }),
+  })
+
+  const result = await expansion.expandNode('target')
+
+  assert.equal(result.status, 'ready')
+  assert.deepEqual(persistedRelayLists, [
+    {
+      pubkey: 'target',
+      eventId: 'relay-list-event',
+      createdAt: 124,
+      fetchedAt: 124,
+      readRelays: ['wss://expanded.example'],
+      writeRelays: [],
+      relays: ['wss://expanded.example'],
+    },
+  ])
+  assert.deepEqual(store.getState().relayUrls, [
+    'wss://relay.example',
+    'wss://expanded.example',
+  ])
+  assert.ok(
+    createdRelayUrlSets.some((relayUrls) =>
+      relayUrls.includes('wss://expanded.example'),
+    ),
+  )
 })

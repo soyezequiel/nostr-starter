@@ -13,13 +13,13 @@ import {
 import type { KernelContext, RelayAdapterInstance } from '@/features/graph-runtime/kernel/modules/context'
 import {
   collectRelayEvents,
+  parseRelayListEvent,
   selectLatestReplaceableEvent,
 } from '@/features/graph-runtime/kernel/modules/helpers'
 import type { AnalysisModule } from '@/features/graph-runtime/kernel/modules/analysis'
 import type { PersistenceModule } from '@/features/graph-runtime/kernel/modules/persistence'
 import type { ProfileHydrationModule } from '@/features/graph-runtime/kernel/modules/profile-hydration'
 import {
-  normalizeRelayUrl,
   type RelayCountResult,
   type RelayEventEnvelope,
 } from '@/features/graph-runtime/nostr'
@@ -361,47 +361,6 @@ export function createFollowerDiscoveryModule(
     persistInboundFollowerSnapshot,
     probeInboundFollowerCounts,
     refreshRelayList,
-  }
-}
-
-function parseRelayListEvent(envelope: RelayEventEnvelope): {
-  readRelays: string[]
-  writeRelays: string[]
-  relays: string[]
-} {
-  const readRelays = new Set<string>()
-  const writeRelays = new Set<string>()
-  const relays = new Set<string>()
-
-  for (const tag of envelope.event.tags) {
-    if (tag[0] !== 'r' || !tag[1]) {
-      continue
-    }
-
-    let relayUrl: string
-    try {
-      relayUrl = normalizeRelayUrl(tag[1])
-    } catch {
-      continue
-    }
-
-    const marker = tag[2]?.trim().toLowerCase()
-    relays.add(relayUrl)
-
-    if (marker === 'read') {
-      readRelays.add(relayUrl)
-    } else if (marker === 'write') {
-      writeRelays.add(relayUrl)
-    } else {
-      readRelays.add(relayUrl)
-      writeRelays.add(relayUrl)
-    }
-  }
-
-  return {
-    readRelays: Array.from(readRelays).sort(),
-    writeRelays: Array.from(writeRelays).sort(),
-    relays: Array.from(relays).sort(),
   }
 }
 
