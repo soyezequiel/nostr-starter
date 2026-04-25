@@ -535,3 +535,219 @@ test('loadRoot dispara inbound suplementario sobre relays nuevos descubiertos en
     `expected supplementary follower ${supplementaryFollower} in inbound adjacency of root, got ${JSON.stringify(inboundAdjacency.root)}`,
   )
 })
+
+test('loadRoot dispara inbound suplementario tambien con read relays NIP-65 (kind:10002) del root en cold-start', async () => {
+  // Cold-start: sin cache. El kind:10002 del root anuncia un read relay que no
+  // esta en defaults. Esperamos que el discovery suplementario use ese relay.
+  const defaultRelays = ['wss://default-1.example', 'wss://default-2.example']
+  const nip65ReadRelay = 'wss://nip65-only.example'
+  const supplementaryFollower = 'inbound-via-nip65'
+
+  const store = createBaseStore()
+  store.getState().setRelayUrls([])
+
+  const captured: {
+    calls: Array<{
+      filters: Array<Record<string, unknown>>
+      relayUrls: readonly string[] | undefined
+    }>
+  } = { calls: [] }
+  const adapterRelayUrls: string[][] = []
+
+  const adapterFactory = (options: { relayUrls: string[] }) => {
+    adapterRelayUrls.push(options.relayUrls.slice())
+    return {
+      subscribe(
+        filters: Array<Record<string, unknown>>,
+        subscribeOptions?: { relayUrls?: string[] },
+      ) {
+        captured.calls.push({ filters, relayUrls: subscribeOptions?.relayUrls })
+        return {
+          subscribe(observer: {
+            next?: (value: unknown) => void
+            complete?: (summary: unknown) => void
+          }) {
+            queueMicrotask(() => {
+              const firstFilter = filters[0] ?? {}
+              const kinds = (firstFilter.kinds as number[] | undefined) ?? []
+              const isContactList =
+                Array.isArray(firstFilter.authors) && kinds.includes(3)
+              const isRelayList =
+                Array.isArray(firstFilter.authors) && kinds.includes(10002)
+              const isInbound =
+                !Array.isArray(firstFilter.authors) &&
+                Array.isArray(firstFilter['#p']) &&
+                kinds.includes(3)
+              const targetRelay = subscribeOptions?.relayUrls?.[0]
+
+              if (isRelayList) {
+                // Devolvemos un kind:10002 que declara un read relay nuevo.
+                observer.next?.({
+                  event: {
+                    id: 'root-relay-list',
+                    pubkey: 'root',
+                    kind: 10002,
+                    created_at: 998,
+                    tags: [['r', nip65ReadRelay, 'read']],
+                  },
+                  relayUrl: defaultRelays[0],
+                  receivedAtMs: 998,
+                })
+              } else if (isContactList) {
+                observer.next?.({
+                  event: {
+                    id: 'live-contact-list',
+                    pubkey: 'root',
+                    kind: 3,
+                    created_at: 999,
+                    tags: [['p', 'follow-a']],
+                  },
+                  relayUrl: defaultRelays[0],
+                  receivedAtMs: 999,
+                })
+              } else if (isInbound && targetRelay === nip65ReadRelay) {
+                observer.next?.({
+                  event: {
+                    id: 'inbound-from-nip65',
+                    pubkey: supplementaryFollower,
+                    kind: 3,
+                    created_at: 1000,
+                    tags: [['p', 'root']],
+                  },
+                  relayUrl: nip65ReadRelay,
+                  receivedAtMs: 1000,
+                })
+              }
+              observer.complete?.({
+                relayHealth: {},
+                stats: {
+                  acceptedEvents: 1,
+                  duplicateRelayEvents: 0,
+                  rejectedEvents: 0,
+                },
+                filters,
+                startedAtMs: 1,
+                finishedAtMs: 2,
+              })
+            })
+            return () => {}
+          },
+        }
+      },
+      count: async () => [],
+      getRelayHealth: () => ({}),
+      subscribeToRelayHealth: () => () => {},
+      close: () => {},
+    }
+  }
+
+  const ctx = {
+    store,
+    repositories: {
+      contactLists: { get: async () => null },
+      profiles: { get: async () => null },
+      inboundFollowerSnapshots: {
+        get: async () => null,
+        upsert: async () => {},
+      },
+      relayLists: {
+        get: async () => null,
+        upsert: async () => {},
+      },
+      relayDiscoveryStats: {
+        getMany: async () => [],
+        recordCountResults: async () => {},
+        recordInboundFetch: async () => {},
+      },
+    },
+    eventsWorker: {
+      invoke: async (
+        action: string,
+        payload: { event: { tags: string[][] } },
+      ) => {
+        if (action !== 'PARSE_CONTACT_LIST') {
+          throw new Error(`unexpected action ${action}`)
+        }
+        const followPubkeys = payload.event.tags
+          .filter((tag) => tag[0] === 'p' && typeof tag[1] === 'string')
+          .map((tag) => tag[1] as string)
+        return {
+          followPubkeys: Array.from(new Set(followPubkeys)).sort(),
+          relayHints: [],
+          diagnostics: [],
+          nodes: [],
+          links: [],
+        }
+      },
+    },
+    graphWorker: {
+      invoke: async () => {
+        throw new Error('graph worker should not be used in this test')
+      },
+      dispose: () => {},
+    },
+    createRelayAdapter: adapterFactory,
+    defaultRelayUrls: defaultRelays,
+    now: (() => {
+      let now = 1_000
+      return () => ++now
+    })(),
+    emitter: createKernelEventEmitter(),
+  }
+  const collaborators = {
+    analysis: { schedule: () => {} },
+    persistence: {
+      persistContactListEvent: async () => {},
+      persistProfileEvent: async () => {},
+    },
+    profileHydration: { hydrateNodeProfiles: async () => {} },
+    relaySession: {
+      clearPendingOverride: () => {},
+      publishRelayHealth: () => {},
+      resolveRelayHealthSnapshot: () => ({}),
+    },
+    zapLayer: {
+      cancelActiveZapLoad: () => {},
+      getZapTargetPubkeys: () => [],
+      prefetchZapLayer: async () => {},
+    },
+  }
+
+  const rootLoader = createRootLoaderModule(ctx, collaborators)
+  await rootLoader.loadRoot('root', { useDefaultRelays: true })
+  await flushMicrotasks(20)
+
+  // El supplementary adapter debe incluir el read relay del NIP-65.
+  assert.ok(
+    adapterRelayUrls.some((urls) => urls.includes(nip65ReadRelay)),
+    `expected supplementary adapter to include ${nip65ReadRelay}, got ${JSON.stringify(adapterRelayUrls)}`,
+  )
+
+  // Debe haber una consulta inbound dirigida a ese relay nuevo.
+  const supplementaryInboundCall = captured.calls.find((call) => {
+    const filter = call.filters[0] as
+      | (Record<string, unknown> & { '#p'?: unknown; authors?: unknown })
+      | undefined
+    return (
+      filter !== undefined &&
+      Array.isArray(filter['#p']) &&
+      !Array.isArray(filter.authors) &&
+      call.relayUrls?.includes(nip65ReadRelay) === true
+    )
+  })
+  assert.ok(
+    supplementaryInboundCall,
+    `expected supplementary inbound subscription targeting ${nip65ReadRelay}, captured ${JSON.stringify(
+      captured.calls.map((c) => ({ relayUrls: c.relayUrls })),
+    )}`,
+  )
+
+  // El follower devuelto por el relay NIP-65 debe quedar en el grafo.
+  const inboundAdjacency = (
+    store.getState() as { inboundAdjacency: Record<string, string[]> }
+  ).inboundAdjacency
+  assert.ok(
+    (inboundAdjacency.root ?? []).includes(supplementaryFollower),
+    `expected supplementary follower ${supplementaryFollower} in inbound adjacency of root, got ${JSON.stringify(inboundAdjacency.root)}`,
+  )
+})

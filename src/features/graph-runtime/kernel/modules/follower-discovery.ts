@@ -39,7 +39,7 @@ export function createFollowerDiscoveryModule(
     adapter: RelayAdapterInstance,
     rootPubkey: string,
     isStale: () => boolean,
-  ): Promise<void> {
+  ): Promise<{ readRelays: string[]; writeRelays: string[] } | null> {
     try {
       const relayListResult = await collectRelayEvents(adapter, [
         {
@@ -51,21 +51,27 @@ export function createFollowerDiscoveryModule(
       })
 
       if (isStale()) {
-        return
+        return null
       }
 
       const latestRelayListEvent = selectLatestReplaceableEvent(
         relayListResult.events,
       )
       if (!latestRelayListEvent) {
-        return
+        return null
       }
 
+      const parsedRelayList = parseRelayListEvent(latestRelayListEvent)
       await persistRelayListEvent(latestRelayListEvent)
+      return {
+        readRelays: parsedRelayList.readRelays,
+        writeRelays: parsedRelayList.writeRelays,
+      }
     } catch (error) {
       logTerminalWarning('Relays', 'No se pudo actualizar la lista', {
         motivo: summarizeHumanTerminalError(error),
       })
+      return null
     }
   }
 

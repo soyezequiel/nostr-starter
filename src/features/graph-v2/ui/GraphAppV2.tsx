@@ -151,6 +151,10 @@ import {
   traceGraphPerfDuration,
 } from '@/features/graph-runtime/debug/perfTrace'
 import { downloadBlob } from '@/features/graph-runtime/export/download'
+import {
+  clearSiteCache,
+  requestBrowserSiteDataClear,
+} from '@/lib/dev/clearSiteCache'
 import type { NostrProfile } from '@/lib/nostr'
 
 type SigmaSettingsTab = 'performance' | 'visuals' | 'relays' | 'dev'
@@ -1129,14 +1133,17 @@ function PerformanceOptionsPanel({
   avatarPhotosEnabled,
   avatarRuntimeOptions,
   capReached,
+  cacheClearMessage,
   devicePerformanceProfile,
   hideConnectionsOnLowPerformance,
+  isClearingSiteCache,
   isRuntimeInspectorButtonLocked,
   lowPerformanceConnectionStatusLabel,
   maxNodes,
   nodeCount,
   runtimeInspectorButtonVisible,
   recommendedMaxNodes,
+  onClearSiteCache,
   onToggleRuntimeInspectorButton,
   onGraphMaxNodesChange,
   onToggleAvatarPhotos,
@@ -1146,14 +1153,17 @@ function PerformanceOptionsPanel({
   avatarPhotosEnabled: boolean
   avatarRuntimeOptions: AvatarRuntimeOptions
   capReached: boolean
+  cacheClearMessage: string | null
   devicePerformanceProfile: AppStore['devicePerformanceProfile']
   hideConnectionsOnLowPerformance: boolean
+  isClearingSiteCache: boolean
   isRuntimeInspectorButtonLocked: boolean
   lowPerformanceConnectionStatusLabel: string
   maxNodes: number
   nodeCount: number
   runtimeInspectorButtonVisible: boolean
   recommendedMaxNodes: number
+  onClearSiteCache: () => void
   onToggleRuntimeInspectorButton: () => void
   onGraphMaxNodesChange: (maxNodes: number) => void
   onToggleAvatarPhotos: () => void
@@ -1218,6 +1228,26 @@ function PerformanceOptionsPanel({
             }
             type="button"
           />
+        </div>
+      </div>
+      <div className="sg-settings-section">
+        <h4>Datos locales</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">Cache del navegador</div>
+            <div className="sg-setting-row__desc">
+              Borra datos persistidos de esta pagina y recarga el explorador.
+              {cacheClearMessage ? ` ${cacheClearMessage}` : ''}
+            </div>
+          </div>
+          <button
+            className="sg-mini-action sg-mini-action--danger"
+            disabled={isClearingSiteCache}
+            onClick={onClearSiteCache}
+            type="button"
+          >
+            {isClearingSiteCache ? 'Borrando...' : 'Borrar cache'}
+          </button>
         </div>
       </div>
       <div className="sg-settings-section">
@@ -1723,6 +1753,9 @@ export default function GraphAppV2() {
     useState<AvatarRuntimeOptions>(DEFAULT_AVATAR_RUNTIME_OPTIONS)
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
   const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('performance')
+  const [cacheClearStatus, setCacheClearStatus] =
+    useState<'idle' | 'running' | 'failed'>('idle')
+  const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null)
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isZapsPanelOpen, setIsZapsPanelOpen] = useState(false)
@@ -3369,6 +3402,45 @@ export default function GraphAppV2() {
     setZapFeedback(null)
   }, [])
 
+  const handleClearSiteCache = useCallback(async () => {
+    if (cacheClearStatus === 'running') {
+      return
+    }
+
+    const confirmed = window.confirm(
+      'Borrar todo el cache local de esta pagina? Se limpiaran IndexedDB, Cache Storage, localStorage y sessionStorage, y la pagina se recargara.',
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setCacheClearStatus('running')
+    setCacheClearMessage('Borrando datos locales...')
+
+    try {
+      const summary = await clearSiteCache()
+      const browserSiteDataCleared = await requestBrowserSiteDataClear()
+      setCacheClearMessage(
+        browserSiteDataCleared
+          ? `Datos del sitio borrados: ${summary.indexedDbDatabases} IndexedDB, ${summary.indexedDbStores} stores, ${summary.cacheStorageCaches} caches. Recargando...`
+          : `Cache local borrado: ${summary.indexedDbDatabases} IndexedDB, ${summary.indexedDbStores} stores, ${summary.cacheStorageCaches} caches. Recargando...`,
+      )
+
+      window.setTimeout(() => {
+        window.location.reload()
+      }, 650)
+    } catch (error) {
+      const nextMessage =
+        error instanceof Error
+          ? error.message
+          : 'No se pudo borrar el cache local.'
+      setCacheClearStatus('failed')
+      setCacheClearMessage(nextMessage)
+      window.alert(nextMessage)
+    }
+  }, [cacheClearStatus])
+
   // Minimap viewport info
   const viewportRatio = isFixtureMode
     ? lastViewportRatio
@@ -3418,15 +3490,18 @@ export default function GraphAppV2() {
             avatarPhotosEnabled={avatarPhotosEnabled}
             avatarRuntimeOptions={avatarRuntimeOptions}
             capReached={runtimeInspectorStoreSnapshot.capReached}
+            cacheClearMessage={cacheClearMessage}
             devicePerformanceProfile={
               runtimeInspectorStoreSnapshot.devicePerformanceProfile
             }
             hideConnectionsOnLowPerformance={hideConnectionsOnLowPerformance}
+            isClearingSiteCache={cacheClearStatus === 'running'}
             isRuntimeInspectorButtonLocked={isDev}
             lowPerformanceConnectionStatusLabel={lowPerformanceConnectionStatusLabel}
             maxNodes={runtimeInspectorStoreSnapshot.maxNodes}
             nodeCount={runtimeInspectorStoreSnapshot.nodeCount}
             onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+            onClearSiteCache={handleClearSiteCache}
             onGraphMaxNodesChange={setGraphMaxNodes}
             onToggleRuntimeInspectorButton={() => {
               setRuntimeInspectorButtonEnabled((current) => !current)

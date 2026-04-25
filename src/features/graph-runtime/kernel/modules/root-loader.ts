@@ -509,7 +509,7 @@ export function createRootLoaderModule(
     }
     let handoffToBackground = false
     let inboundCountProbeResults: RelayCountResult[] = []
-    void followerDiscovery.refreshRelayList(
+    const refreshRootRelayListPromise = followerDiscovery.refreshRelayList(
       adapter,
       rootPubkey,
       () => isStaleLoad(loadId),
@@ -905,26 +905,28 @@ export function createRootLoaderModule(
             targetedAdapter.close()
           })
       }
-      let supplementaryInboundDiscoveryStarted = false
+      const supplementarilyQueriedRelayUrls = new Set<string>()
       const scheduleSupplementaryInboundDiscovery = (
-        contactListRelayHints: readonly string[],
+        hintRelayUrls: readonly string[],
       ) => {
-        if (supplementaryInboundDiscoveryStarted) {
-          return
-        }
         if (isStaleLoad(loadId)) {
           return
         }
 
         const currentRelaySet = new Set(relayUrls)
-        const newHints = Array.from(new Set(contactListRelayHints)).filter(
-          (hint) => hint && !currentRelaySet.has(hint),
+        const newHints = Array.from(new Set(hintRelayUrls)).filter(
+          (hint) =>
+            hint &&
+            !currentRelaySet.has(hint) &&
+            !supplementarilyQueriedRelayUrls.has(hint),
         )
         if (newHints.length === 0) {
           return
         }
 
-        supplementaryInboundDiscoveryStarted = true
+        for (const hint of newHints) {
+          supplementarilyQueriedRelayUrls.add(hint)
+        }
         const supplementaryRelayUrls = mergeBoundedRelayUrlSets(
           MAX_SESSION_RELAYS,
           relayUrls,
@@ -1049,6 +1051,26 @@ export function createRootLoaderModule(
           }
         })()
       }
+      void refreshRootRelayListPromise
+        .then((rootRelayList) => {
+          if (!rootRelayList || isStaleLoad(loadId)) {
+            return
+          }
+          // El NIP-65 (kind:10002) del root expone los read/write relays donde
+          // publica. Sus followers suelen converger a un set similar, asi que
+          // los usamos como fuente extra de discovery inbound en cold-start.
+          scheduleSupplementaryInboundDiscovery([
+            ...rootRelayList.readRelays,
+            ...rootRelayList.writeRelays,
+          ])
+        })
+        .catch((error) => {
+          logTerminalWarning(
+            'Discovery',
+            'Fallo al consumir NIP-65 del root para discovery suplementario',
+            { motivo: summarizeHumanTerminalError(error) },
+          )
+        })
       const applyFastContactListGraph = (
         envelope: RelayEventEnvelope,
         parsedContactList: ParseContactListResult,
