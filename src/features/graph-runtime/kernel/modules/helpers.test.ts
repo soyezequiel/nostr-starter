@@ -11,12 +11,82 @@ import type {
 import type { EventsWorkerActionMap } from '@/features/graph-runtime/workers/events/contracts'
 import type { WorkerClient } from '@/features/graph-runtime/workers/shared/runtime'
 import {
+  analyzeRelayUrlSetUsage,
   collectRelayEvents,
   collectAdditionalPaginatedInboundFollowerEvents,
   collectTargetedReciprocalFollowerEvidence,
   mapProfileRecordToNodeProfile,
   safeParseProfile,
 } from './helpers'
+
+test('analyzeRelayUrlSetUsage incluye relay hints del cache de contactos antes del baseline y respeta el cap', () => {
+  const bootstrapRelays = ['wss://bootstrap.example']
+  const cachedReadRelays = ['wss://nip65-read.example']
+  const cachedContactRelayHints = [
+    'wss://hint-1.example',
+    'wss://hint-2.example',
+  ]
+  const baseRelays = [
+    'wss://default-1.example',
+    'wss://default-2.example',
+    'wss://default-3.example',
+  ]
+  const cachedWriteRelays = ['wss://nip65-write.example']
+
+  const limited = analyzeRelayUrlSetUsage(
+    4,
+    bootstrapRelays,
+    cachedReadRelays,
+    cachedContactRelayHints,
+    baseRelays,
+    cachedWriteRelays,
+  )
+
+  assert.deepEqual(limited.usedRelayUrls, [
+    'wss://bootstrap.example',
+    'wss://nip65-read.example',
+    'wss://hint-1.example',
+    'wss://hint-2.example',
+  ])
+  assert.deepEqual(limited.droppedRelayUrls, [
+    'wss://default-1.example',
+    'wss://default-2.example',
+    'wss://default-3.example',
+    'wss://nip65-write.example',
+  ])
+  assert.equal(limited.discoveredRelayUrls.length, 8)
+
+  const generous = analyzeRelayUrlSetUsage(
+    16,
+    bootstrapRelays,
+    cachedReadRelays,
+    cachedContactRelayHints,
+    baseRelays,
+    cachedWriteRelays,
+  )
+
+  assert.equal(generous.droppedRelayUrls.length, 0)
+  assert.deepEqual(generous.usedRelayUrls, generous.discoveredRelayUrls)
+  assert.ok(generous.usedRelayUrls.includes('wss://hint-1.example'))
+  assert.ok(generous.usedRelayUrls.includes('wss://hint-2.example'))
+})
+
+test('analyzeRelayUrlSetUsage deduplica relays repetidos entre fuentes', () => {
+  const usage = analyzeRelayUrlSetUsage(
+    8,
+    ['wss://shared.example'],
+    ['wss://shared.example', 'wss://only-read.example'],
+    undefined,
+    ['wss://shared.example', 'wss://only-base.example'],
+  )
+
+  assert.deepEqual(usage.usedRelayUrls, [
+    'wss://shared.example',
+    'wss://only-read.example',
+    'wss://only-base.example',
+  ])
+  assert.equal(usage.droppedRelayUrls.length, 0)
+})
 
 test('safeParseProfile acepta image y normaliza URLs de media', () => {
   const parsed = safeParseProfile(

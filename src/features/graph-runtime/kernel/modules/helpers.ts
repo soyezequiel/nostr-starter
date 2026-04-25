@@ -268,6 +268,32 @@ export function mergeBoundedRelayUrlSets(
   return mergeRelayUrlSets(...relayGroups).slice(0, limit)
 }
 
+export interface RelayUrlSetUsage {
+  discoveredRelayUrls: string[]
+  usedRelayUrls: string[]
+  droppedRelayUrls: string[]
+}
+
+export function analyzeRelayUrlSetUsage(
+  limit: number,
+  ...relayGroups: Array<readonly string[] | undefined>
+): RelayUrlSetUsage {
+  const discoveredRelayUrls = mergeRelayUrlSets(...relayGroups)
+  if (limit <= 0) {
+    return {
+      discoveredRelayUrls,
+      usedRelayUrls: [],
+      droppedRelayUrls: discoveredRelayUrls.slice(),
+    }
+  }
+
+  return {
+    discoveredRelayUrls,
+    usedRelayUrls: discoveredRelayUrls.slice(0, limit),
+    droppedRelayUrls: discoveredRelayUrls.slice(limit),
+  }
+}
+
 export function parseRelayListEvent(envelope: RelayEventEnvelope): {
   readRelays: string[]
   writeRelays: string[]

@@ -1549,6 +1549,7 @@ const buildLoadSection = (
   input: RuntimeInspectorBuildInput,
 ): RuntimeInspectorLoadSection => {
   const progress = input.uiState.rootLoad.visibleLinkProgress
+  const inboundDiscovery = progress?.inboundDiscovery ?? null
   const tone: RuntimeInspectorTone =
     input.uiState.rootLoad.status === 'error'
       ? 'bad'
@@ -1558,6 +1559,17 @@ const buildLoadSection = (
         : input.uiState.rootLoad.status === 'ready'
           ? 'ok'
           : 'neutral'
+  const droppedTone: RuntimeInspectorTone =
+    inboundDiscovery && inboundDiscovery.droppedByCapCount > 0 ? 'warn' : 'neutral'
+  const contributingTone: RuntimeInspectorTone =
+    inboundDiscovery && inboundDiscovery.usedRelayCount > 0
+      ? inboundDiscovery.contributingRelayCount === 0
+        ? 'bad'
+        : inboundDiscovery.contributingRelayCount <
+            Math.max(2, Math.ceil(inboundDiscovery.usedRelayCount / 2))
+          ? 'warn'
+          : 'ok'
+      : 'neutral'
 
   return {
     tone,
@@ -1590,6 +1602,10 @@ const buildLoadSection = (
       { label: 'Followers', value: progress ? formatInteger(progress.followers.loadedCount) : 'sin dato', tone: 'neutral' },
       { label: 'Eventos kind:3', value: progress ? formatInteger(progress.contactListEventCount) : 'sin dato', tone: 'neutral' },
       { label: 'Evidencia inbound', value: progress ? formatInteger(progress.inboundCandidateEventCount) : 'sin dato', tone: 'neutral' },
+      { label: 'Relays descubiertos', value: inboundDiscovery ? formatInteger(inboundDiscovery.discoveredRelayCount) : 'sin dato', tone: 'neutral' },
+      { label: 'Relays usados', value: inboundDiscovery ? formatInteger(inboundDiscovery.usedRelayCount) : 'sin dato', tone: 'neutral' },
+      { label: 'Descartados por cap', value: inboundDiscovery ? formatInteger(inboundDiscovery.droppedByCapCount) : 'sin dato', tone: droppedTone },
+      { label: 'Aportaron eventos', value: inboundDiscovery ? formatInteger(inboundDiscovery.contributingRelayCount) : 'sin dato', tone: contributingTone },
     ],
   }
 }

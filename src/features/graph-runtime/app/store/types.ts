@@ -234,6 +234,13 @@ export interface RootCollectionProgress {
   isTotalKnown: boolean
 }
 
+export interface RootInboundDiscoveryRelayMetrics {
+  discoveredRelayCount: number
+  usedRelayCount: number
+  droppedByCapCount: number
+  contributingRelayCount: number
+}
+
 export interface RootVisibleLinkProgress {
   visibleLinkCount: number | null
   contactListEventCount: number
@@ -242,6 +249,7 @@ export interface RootVisibleLinkProgress {
   updatedAt: number | null
   following: RootCollectionProgress
   followers: RootCollectionProgress
+  inboundDiscovery?: RootInboundDiscoveryRelayMetrics | null
 }
 
 export interface RootLoadState {

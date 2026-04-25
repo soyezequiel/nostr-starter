@@ -767,3 +767,130 @@ test('expandNode loads the expanded node relay list before fetching its structur
     ),
   )
 })
+
+test('expandNode keeps multiple expanded-node relays when defaults already fill the old cap', async () => {
+  const store = createExpandableStore()
+  store.getState().setRelayUrls([
+    'wss://relay-1.example',
+    'wss://relay-2.example',
+    'wss://relay-3.example',
+    'wss://relay-4.example',
+    'wss://relay-5.example',
+    'wss://relay-6.example',
+    'wss://relay-7.example',
+  ])
+  const createdRelayUrlSets: string[][] = []
+
+  const createRelayAdapter = (options: { relayUrls: string[] }) => {
+    const relayUrls = options.relayUrls.slice()
+    createdRelayUrlSets.push(relayUrls)
+
+    return {
+      subscribe(filters: Array<Record<string, unknown>>) {
+        return {
+          subscribe(observer: {
+            next?: (value: unknown) => void
+            complete?: (summary: unknown) => void
+          }) {
+            queueMicrotask(() => {
+              const firstFilter = filters[0] ?? {}
+              const kinds = firstFilter.kinds as number[] | undefined
+
+              if (kinds?.includes(10002)) {
+                observer.next?.({
+                  event: {
+                    id: 'relay-list-event',
+                    pubkey: 'target',
+                    kind: 10002,
+                    created_at: 124,
+                    tags: [
+                      ['r', 'wss://expanded-a.example', 'read'],
+                      ['r', 'wss://expanded-b.example', 'read'],
+                    ],
+                  },
+                  relayUrl: 'wss://relay-1.example',
+                  receivedAtMs: 124,
+                })
+              }
+
+              observer.complete?.({
+                relayCount: relayUrls.length,
+              })
+            })
+
+            return () => {}
+          },
+        }
+      },
+      count: async () => [],
+      getRelayHealth: () => ({}),
+      subscribeToRelayHealth: () => () => {},
+      close: () => {},
+    }
+  }
+
+  const ctx = {
+    store,
+    repositories: {
+      contactLists: {
+        get: async () => null,
+      },
+      relayLists: createRelayListsRepositoryStub(),
+    },
+    eventsWorker: {
+      invoke: async (action: string) => {
+        if (action !== 'PARSE_CONTACT_LIST') {
+          throw new Error(`unexpected action ${action}`)
+        }
+
+        return {
+          followPubkeys: [],
+          relayHints: [],
+          diagnostics: [],
+        }
+      },
+    },
+    graphWorker: {
+      invoke: async () => {
+        throw new Error('graph worker should not be used in this test')
+      },
+      dispose: () => {},
+    },
+    createRelayAdapter,
+    defaultRelayUrls: ['wss://relay-1.example'],
+    now: (() => {
+      let now = 1_000
+      return () => ++now
+    })(),
+    emitter: createKernelEventEmitter(),
+  }
+
+  const expansion = createNodeExpansionModule(ctx, {
+    ...createBaseCollaborators(),
+    loadDirectInboundFollowerEvidence: async () => ({
+      followerPubkeys: [],
+      partial: false,
+    }),
+  })
+
+  await expansion.expandNode('target')
+
+  assert.deepEqual(store.getState().relayUrls, [
+    'wss://relay-1.example',
+    'wss://relay-2.example',
+    'wss://relay-3.example',
+    'wss://relay-4.example',
+    'wss://relay-5.example',
+    'wss://relay-6.example',
+    'wss://relay-7.example',
+    'wss://expanded-a.example',
+    'wss://expanded-b.example',
+  ])
+  assert.ok(
+    createdRelayUrlSets.some(
+      (relayUrls) =>
+        relayUrls.includes('wss://expanded-a.example') &&
+        relayUrls.includes('wss://expanded-b.example'),
+    ),
+  )
+})

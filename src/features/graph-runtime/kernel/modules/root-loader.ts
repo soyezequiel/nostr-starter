@@ -42,6 +42,7 @@ import {
   ROOT_LOADING_MESSAGE,
 } from '@/features/graph-runtime/kernel/modules/constants'
 import {
+  analyzeRelayUrlSetUsage,
   collectAdditionalPaginatedInboundFollowerEvents,
   collectInboundFollowerEvidence,
   collectRelayEvents,
@@ -93,6 +94,13 @@ interface ActiveLoadSession {
 
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
 const INITIAL_ROOT_DISCOVERY_RELAY_COUNT = 6
+const EMPTY_CACHED_ROOT_SNAPSHOT: CachedRootSnapshot = {
+  rootLabel: null,
+  rootProfile: null,
+  followPubkeys: [],
+  inboundFollowerPubkeys: [],
+  relayHints: [],
+}
 
 function summarizeRelayCountResults(countResults: readonly RelayCountResult[]) {
   const supportedResults = countResults.filter(
@@ -299,16 +307,33 @@ export function createRootLoaderModule(
         (storeState.relayUrls.length > 0
           ? storeState.relayUrls.slice()
           : ctx.defaultRelayUrls.slice())
-    const cachedRelayList = preserveExistingGraph
-      ? null
-      : await ctx.repositories.relayLists.get(rootPubkey)
-    const relayUrlCandidates = mergeBoundedRelayUrlSets(
+    const [cachedRelayList, cachedSnapshot] = preserveExistingGraph
+      ? ([null, EMPTY_CACHED_ROOT_SNAPSHOT] as const)
+      : await Promise.all([
+          ctx.repositories.relayLists.get(rootPubkey),
+          loadCachedSnapshot(rootPubkey),
+        ])
+    const relayUrlAnalysis = analyzeRelayUrlSetUsage(
       MAX_SESSION_RELAYS,
       bootstrapRelayUrls,
       cachedRelayList?.readRelays,
+      cachedSnapshot.relayHints,
       baseRelayUrls,
       cachedRelayList?.writeRelays,
     )
+    const relayUrlCandidates = relayUrlAnalysis.usedRelayUrls
+    const discoveredRelayCount = relayUrlAnalysis.discoveredRelayUrls.length
+    const droppedByCapCount = relayUrlAnalysis.droppedRelayUrls.length
+    const contributingRelayUrls = new Set<string>()
+    const recordContributingEnvelopes = (
+      envelopes: readonly RelayEventEnvelope[],
+    ) => {
+      for (const envelope of envelopes) {
+        if (envelope.relayUrl) {
+          contributingRelayUrls.add(envelope.relayUrl)
+        }
+      }
+    }
     const relayDiscoveryStats =
       await ctx.repositories.relayDiscoveryStats.getMany(relayUrlCandidates)
     const relayUrls = orderRelayUrlsByDiscoveryStats(
@@ -387,6 +412,12 @@ export function createRootLoaderModule(
         totalCount: followersTotalCount,
         isTotalKnown: followersTotalKnown,
       }),
+      inboundDiscovery: {
+        discoveredRelayCount,
+        usedRelayCount: relayUrls.length,
+        droppedByCapCount,
+        contributingRelayCount: contributingRelayUrls.size,
+      },
     })
     setRootLoadState('start', {
       message: preserveExistingGraph
@@ -397,15 +428,6 @@ export function createRootLoaderModule(
         visibleLinkCount: preserveExistingGraph ? followingLoadedCount : null,
       }),
     })
-    const cachedSnapshot = preserveExistingGraph
-      ? {
-          rootLabel: null,
-          rootProfile: null,
-          followPubkeys: [],
-          inboundFollowerPubkeys: [],
-          relayHints: [],
-        }
-      : await loadCachedSnapshot(rootPubkey)
     if (traceThisRoot && traceConfig) {
       traceAccountFlow('rootLoader.cacheSnapshot', {
         followCount: cachedSnapshot.followPubkeys.length,
@@ -1037,6 +1059,7 @@ export function createRootLoaderModule(
           ], {
             relayUrls: waveRelayUrls,
             onProgress: (progress) => {
+              recordContributingEnvelopes(progress.latestBatchEnvelopes)
               if (!enableProgress) {
                 return
               }
@@ -1056,6 +1079,7 @@ export function createRootLoaderModule(
           ], {
             relayUrls: waveRelayUrls,
             onProgress: (progress) => {
+              recordContributingEnvelopes(progress.latestBatchEnvelopes)
               if (!enableProgress) {
                 return
               }
@@ -1067,6 +1091,8 @@ export function createRootLoaderModule(
             },
           }),
         ])
+        recordContributingEnvelopes(contactListResult.events)
+        recordContributingEnvelopes(inboundFollowerResult.events)
 
         if (traceThisRoot) {
           traceAccountFlow('rootLoader.discoveryWave.result', {
@@ -1130,6 +1156,7 @@ export function createRootLoaderModule(
                 seedEnvelopes: finalInboundFollowerResult.events,
                 targetPubkey: rootPubkey,
               })
+            recordContributingEnvelopes(paginatedInboundFollowerResult.events)
 
             if (
               paginatedInboundFollowerResult.events.length > 0 ||
@@ -1254,6 +1281,7 @@ export function createRootLoaderModule(
             countResults: inboundCountProbeResults,
             isStale: () => isStaleLoad(loadId),
             onPage: (progress) => {
+              recordContributingEnvelopes(progress.newEnvelopes)
               inboundCandidateEventCount =
                 inboundFollowerResult.events.length + progress.totalNewEventCount
               lastRelayUrl = progress.relayUrl
@@ -1280,6 +1308,7 @@ export function createRootLoaderModule(
             seedEnvelopes: inboundFollowerResult.events,
             targetPubkey: rootPubkey,
           })
+        recordContributingEnvelopes(paginatedInboundFollowerResult.events)
 
         if (
           paginatedInboundFollowerResult.events.length > 0 ||

@@ -8,7 +8,7 @@ export const DEFAULT_SESSION_RELAY_URLS = [
   'wss://purplepag.es',
 ] as const
 
-export const MAX_SESSION_RELAYS = 8
+export const MAX_SESSION_RELAYS = 16
 
 export const ROOT_LOADING_MESSAGE =
   'Preparando relays, cache local y contact list kind:3 del root...'
