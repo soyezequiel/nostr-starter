@@ -84,6 +84,7 @@ const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const PHYSICS_BRIDGE_BACKGROUND_SYNC_CAP = 96
 const PHYSICS_BRIDGE_VIEWPORT_PADDING_RATIO = 0.12
+const PHYSICS_AUTO_FIT_INTERVAL_MS = 120
 const NODE_ZOOM_OUT_MIN_SCALE = 0.42
 const NODE_ZOOM_OUT_SCALE_EXPONENT = 0.55
 const AVATAR_MIN_SIZE_THRESHOLD = 4
@@ -324,6 +325,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private pendingDragFrame: number | null = null
 
   private pendingPhysicsBridgeFrame: number | null = null
+
+  private pendingFitCameraAfterPhysicsFrame: number | null = null
+
+  private shouldRepeatFitCameraUntilPhysicsSettles = false
+
+  private lastPhysicsAutoFitAtMs: number | null = null
 
   private physicsBridgeViewportCursor = 0
 
@@ -774,6 +781,24 @@ export class SigmaRendererAdapter implements RendererAdapter {
       .animate({ ...baseState, ratio: nextRatio }, { duration: 250 })
       .catch(() => {})
     return true
+  }
+
+  public fitCameraToGraphAfterPhysicsSettles() {
+    this.cancelPendingFitCameraAfterPhysics()
+    this.shouldRepeatFitCameraUntilPhysicsSettles = false
+    this.lastPhysicsAutoFitAtMs = null
+    this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(
+      this.flushFitCameraAfterPhysicsSettles,
+    )
+  }
+
+  public fitCameraToGraphWhilePhysicsSettles() {
+    this.cancelPendingFitCameraAfterPhysics()
+    this.shouldRepeatFitCameraUntilPhysicsSettles = true
+    this.lastPhysicsAutoFitAtMs = null
+    this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(
+      this.flushFitCameraAfterPhysicsSettles,
+    )
   }
 
   public zoomIn() {
@@ -1540,6 +1565,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       cancelAnimationFrame(this.pendingHighlightTransitionFrame)
       this.pendingHighlightTransitionFrame = null
     }
+    this.cancelPendingFitCameraAfterPhysics()
     this.cancelPendingHoverFocus()
     if (this.pendingContainerRefreshFrame !== null) {
       cancelAnimationFrame(this.pendingContainerRefreshFrame)
@@ -2703,6 +2729,55 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(
       this.flushPhysicsPositionBridge,
     )
+  }
+
+  private readonly flushFitCameraAfterPhysicsSettles = (timestampMs: number) => {
+    this.pendingFitCameraAfterPhysicsFrame = null
+
+    if (this.forceRuntime?.isSuspended() || this.draggedNodePubkey) {
+      this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(
+        this.flushFitCameraAfterPhysicsSettles,
+      )
+      return
+    }
+
+    if (this.forceRuntime?.isRunning()) {
+      const shouldRunIntermediateFit =
+        this.shouldRepeatFitCameraUntilPhysicsSettles &&
+        (this.lastPhysicsAutoFitAtMs === null ||
+          timestampMs - this.lastPhysicsAutoFitAtMs >=
+            PHYSICS_AUTO_FIT_INTERVAL_MS)
+      if (shouldRunIntermediateFit) {
+        this.lastPhysicsAutoFitAtMs = timestampMs
+        this.fitCameraToGraph()
+      }
+      this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(
+        this.flushFitCameraAfterPhysicsSettles,
+      )
+      return
+    }
+
+    this.cancelPhysicsPositionBridge()
+    this.flushPhysicsPositionBridge()
+    this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(() => {
+      this.pendingFitCameraAfterPhysicsFrame = requestAnimationFrame(() => {
+        this.pendingFitCameraAfterPhysicsFrame = null
+        this.shouldRepeatFitCameraUntilPhysicsSettles = false
+        this.lastPhysicsAutoFitAtMs = null
+        this.fitCameraToGraph()
+      })
+    })
+  }
+
+  private cancelPendingFitCameraAfterPhysics() {
+    if (this.pendingFitCameraAfterPhysicsFrame === null) {
+      return
+    }
+
+    cancelAnimationFrame(this.pendingFitCameraAfterPhysicsFrame)
+    this.pendingFitCameraAfterPhysicsFrame = null
+    this.shouldRepeatFitCameraUntilPhysicsSettles = false
+    this.lastPhysicsAutoFitAtMs = null
   }
 
   private cancelPhysicsPositionBridge() {

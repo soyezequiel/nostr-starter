@@ -1891,11 +1891,11 @@ export default function GraphAppV2() {
     }
 
     pendingExpansionAutoFitRef.current = null
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        sigmaHostRef.current?.fitCameraToGraph()
-      })
-    })
+    if (isMobileGraphViewport()) {
+      sigmaHostRef.current?.fitCameraToGraphWhilePhysicsSettles()
+      return
+    }
+    sigmaHostRef.current?.fitCameraToGraphAfterPhysicsSettles()
   }, [deferredSceneState, isSceneTransitionPending])
 
   const detail = useMemo(

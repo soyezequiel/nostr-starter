@@ -438,6 +438,182 @@ test('fitCameraToGraph does nothing when there are no measurable visible nodes',
   assert.equal(reset, false)
 })
 
+test('fitCameraToGraphAfterPhysicsSettles waits for layout settle before fitting', async () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrameHandle = 1
+  const runNextFrame = (timestampMs: number) => {
+    const next = frames.entries().next().value as
+      | [number, FrameRequestCallback]
+      | undefined
+    if (!next) {
+      return false
+    }
+    const [handle, callback] = next
+    frames.delete(handle)
+    callback(timestampMs)
+    return true
+  }
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    const handle = nextFrameHandle
+    nextFrameHandle += 1
+    frames.set(handle, callback)
+    return handle
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = ((handle: number) => {
+    frames.delete(handle)
+  }) as typeof cancelAnimationFrame
+
+  try {
+    const { SigmaRendererAdapter } = await import(
+      '@/features/graph-v2/renderer/SigmaRendererAdapter'
+    )
+
+    let running = true
+    let settleSyncs = 0
+    let fitCalls = 0
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      forceRuntime: { isRunning: () => boolean; isSuspended: () => boolean }
+      flushPhysicsPositionBridge: () => void
+      fitCameraToGraph: () => boolean
+      fitCameraToGraphAfterPhysicsSettles: () => void
+    }
+
+    adapter.forceRuntime = {
+      isRunning: () => running,
+      isSuspended: () => false,
+    }
+    adapter.flushPhysicsPositionBridge = () => {
+      settleSyncs += 1
+    }
+    adapter.fitCameraToGraph = () => {
+      fitCalls += 1
+      return true
+    }
+
+    adapter.fitCameraToGraphAfterPhysicsSettles()
+
+    assert.equal(runNextFrame(0), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 0)
+
+    assert.equal(runNextFrame(60), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 0)
+
+    assert.equal(runNextFrame(120), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 0)
+
+    running = false
+    assert.equal(runNextFrame(180), true)
+    assert.equal(settleSyncs, 1)
+    assert.equal(fitCalls, 0)
+
+    assert.equal(runNextFrame(196), true)
+    assert.equal(fitCalls, 0)
+
+    assert.equal(runNextFrame(212), true)
+
+    assert.equal(settleSyncs, 1)
+    assert.equal(fitCalls, 1)
+  } finally {
+    frames.clear()
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+  }
+})
+
+test('fitCameraToGraphWhilePhysicsSettles fits repeatedly until layout settle', async () => {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame
+  const frames = new Map<number, FrameRequestCallback>()
+  let nextFrameHandle = 1
+  const runNextFrame = (timestampMs: number) => {
+    const next = frames.entries().next().value as
+      | [number, FrameRequestCallback]
+      | undefined
+    if (!next) {
+      return false
+    }
+    const [handle, callback] = next
+    frames.delete(handle)
+    callback(timestampMs)
+    return true
+  }
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    const handle = nextFrameHandle
+    nextFrameHandle += 1
+    frames.set(handle, callback)
+    return handle
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = ((handle: number) => {
+    frames.delete(handle)
+  }) as typeof cancelAnimationFrame
+
+  try {
+    const { SigmaRendererAdapter } = await import(
+      '@/features/graph-v2/renderer/SigmaRendererAdapter'
+    )
+
+    let running = true
+    let settleSyncs = 0
+    let fitCalls = 0
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      forceRuntime: { isRunning: () => boolean; isSuspended: () => boolean }
+      flushPhysicsPositionBridge: () => void
+      fitCameraToGraph: () => boolean
+      fitCameraToGraphWhilePhysicsSettles: () => void
+    }
+
+    adapter.forceRuntime = {
+      isRunning: () => running,
+      isSuspended: () => false,
+    }
+    adapter.flushPhysicsPositionBridge = () => {
+      settleSyncs += 1
+    }
+    adapter.fitCameraToGraph = () => {
+      fitCalls += 1
+      return true
+    }
+
+    adapter.fitCameraToGraphWhilePhysicsSettles()
+
+    assert.equal(runNextFrame(0), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 1)
+
+    assert.equal(runNextFrame(60), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 1)
+
+    assert.equal(runNextFrame(120), true)
+    assert.equal(settleSyncs, 0)
+    assert.equal(fitCalls, 2)
+
+    running = false
+    assert.equal(runNextFrame(180), true)
+    assert.equal(settleSyncs, 1)
+    assert.equal(fitCalls, 2)
+
+    assert.equal(runNextFrame(196), true)
+    assert.equal(fitCalls, 2)
+
+    assert.equal(runNextFrame(212), true)
+
+    assert.equal(settleSyncs, 1)
+    assert.equal(fitCalls, 3)
+  } finally {
+    frames.clear()
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame
+  }
+})
+
 const createScene = (): GraphSceneSnapshot => ({
   render: {
     nodes: [
