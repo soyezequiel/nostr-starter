@@ -3610,8 +3610,8 @@ export default function GraphAppV2() {
 
     return (
       <div>
-        <div className="sg-node-hero">
-          <div style={{ position: 'relative' }}>
+        <div className="sg-node-hero" data-panel-drag-handle>
+          <div className="sg-node-hero__avatar-wrap">
             <div className="sg-node-hero__avatar">
               {detail.pictureUrl ? (
                 <img alt="" src={detail.pictureUrl} />
@@ -3630,21 +3630,6 @@ export default function GraphAppV2() {
           <div className="sg-node-hero__content">
             <div className="sg-node-hero__title-row">
               <h2>{detailTitle ?? '—'}</h2>
-              {detail.pubkey ? (
-                <button
-                  aria-label={pinActionLabel}
-                  aria-pressed={detail.isPinned}
-                  className={`sg-node-pin-action${detail.isPinned ? ' sg-node-pin-action--active' : ''}`}
-                  onClick={() => {
-                    if (!detail.pubkey) return
-                    handleToggleDetailPin(detail.pubkey)
-                  }}
-                  title={pinActionLabel}
-                  type="button"
-                >
-                  <PinIcon />
-                </button>
-              ) : null}
             </div>
             <div className="sg-node-hero__handle">{detail.pubkey?.slice(0, 12)}…</div>
             <div className="sg-node-hero__badges">
@@ -3655,23 +3640,45 @@ export default function GraphAppV2() {
           </div>
         </div>
 
+        <div className="sg-node-primary-actions" data-panel-no-drag>
+          <button
+            className={`sg-node-primary-action${detail.isExpanded || isExpansionLoading ? '' : ' sg-node-primary-action--primary'}`}
+            disabled={detail.isExpanded || isExpansionLoading}
+            onClick={() => {
+              if (!detail.pubkey) return
+              handleExploreConnections(detail.pubkey, detail.isExpanded)
+            }}
+            type="button"
+          >
+            <span>{exploreActionLabel}</span>
+          </button>
+          {detail.pubkey ? (
+            <button
+              aria-label={pinActionLabel}
+              aria-pressed={detail.isPinned}
+              className={`sg-node-primary-action sg-node-primary-action--pin${detail.isPinned ? ' sg-node-primary-action--active' : ''}`}
+              onClick={() => {
+                if (!detail.pubkey) return
+                handleToggleDetailPin(detail.pubkey)
+              }}
+              title={pinActionLabel}
+              type="button"
+            >
+              <PinIcon />
+              <span>{detail.isPinned ? 'Anclado' : 'Anclar'}</span>
+            </button>
+          ) : null}
+        </div>
+
         {shouldShowIdentityHelp ? (
           <div className="sg-identity-help">
             <p>Abriste una identidad. Explorá sus conexiones o anclala para compararla.</p>
             <button
-              className={`sg-btn${detail.isExpanded || isExpansionLoading ? '' : ' sg-btn--primary'}`}
-              disabled={isExpansionLoading}
-              onClick={() => {
-                if (detail.isExpanded) {
-                  dismissIdentityHelp()
-                  return
-                }
-                if (!detail.pubkey) return
-                handleExploreConnections(detail.pubkey, detail.isExpanded)
-              }}
+              className="sg-btn"
+              onClick={dismissIdentityHelp}
               type="button"
             >
-              {detail.isExpanded ? 'Entendido' : exploreActionLabel}
+              Entendido
             </button>
           </div>
         ) : null}
@@ -3777,20 +3784,6 @@ export default function GraphAppV2() {
               </span>
             ) : null}
           </span>
-        </div>
-
-        <div className="sg-actions">
-          <button
-            className={`sg-btn${detail.isExpanded || isExpansionLoading ? '' : ' sg-btn--primary'}`}
-            disabled={detail.isExpanded || isExpansionLoading}
-            onClick={() => {
-              if (!detail.pubkey) return
-              handleExploreConnections(detail.pubkey, detail.isExpanded)
-            }}
-            type="button"
-          >
-            {exploreActionLabel}
-          </button>
         </div>
       </div>
     )
@@ -3965,6 +3958,7 @@ export default function GraphAppV2() {
                     : 'IDENTIDAD'
           }
           mobileSnap={mobilePanelSnap}
+          mobileSnapResetKey={isIdentityPanelOpen ? detail.pubkey : undefined}
           onClose={handleCloseSidePanel}
           tabs={
             isSettingsOpen && settingsTabs.length > 1 ? (

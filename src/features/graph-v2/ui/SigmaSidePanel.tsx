@@ -16,12 +16,14 @@ interface Props {
   children: ReactNode
   tabs?: ReactNode
   mobileSnap?: SigmaPanelSnap
+  mobileSnapResetKey?: string | number
 }
 
 const PANEL_DRAG_THRESHOLD_PX = 42
 const PANEL_CLOSE_THRESHOLD_PX = 120
 const PANEL_MIN_HEIGHT_PX = 180
 const PANEL_TOP_CLEARANCE_PX = 100
+const PANEL_SNAP_ORDER: readonly SigmaPanelSnap[] = ['peek', 'mid', 'full']
 
 const clampPanelHeight = (height: number, viewportHeight: number) => {
   const maxHeight = Math.max(PANEL_MIN_HEIGHT_PX, viewportHeight - PANEL_TOP_CLEARANCE_PX)
@@ -40,6 +42,41 @@ const resolveInitialPanelHeight = (snap: SigmaPanelSnap, viewportHeight: number)
   return clampPanelHeight(viewportHeight * 0.56, viewportHeight)
 }
 
+const resolveClosestPanelSnap = (height: number, viewportHeight: number): SigmaPanelSnap => {
+  let closestSnap: SigmaPanelSnap = 'mid'
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  for (const snap of PANEL_SNAP_ORDER) {
+    const snapHeight = resolveInitialPanelHeight(snap, viewportHeight)
+    const distance = Math.abs(height - snapHeight)
+    if (distance < closestDistance) {
+      closestSnap = snap
+      closestDistance = distance
+    }
+  }
+
+  return closestSnap
+}
+
+const resolveNextPanelSnap = (
+  start: { height: number; snap: SigmaPanelSnap },
+  deltaY: number,
+  viewportHeight: number,
+): SigmaPanelSnap => {
+  const currentSnap = resolveClosestPanelSnap(start.height, viewportHeight)
+  const currentIndex = Math.max(0, PANEL_SNAP_ORDER.indexOf(currentSnap))
+
+  if (deltaY < 0) {
+    return PANEL_SNAP_ORDER[Math.min(PANEL_SNAP_ORDER.length - 1, currentIndex + 1)]
+  }
+
+  if (deltaY > 0) {
+    return PANEL_SNAP_ORDER[Math.max(0, currentIndex - 1)]
+  }
+
+  return start.snap
+}
+
 export const SigmaSidePanel = memo(function SigmaSidePanel({
   eyebrow,
   title,
@@ -47,12 +84,14 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
   children,
   tabs,
   mobileSnap = 'mid',
+  mobileSnapResetKey,
 }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const [mobileHeightPx, setMobileHeightPx] = useState<number | null>(null)
   const [isPanelDragging, setIsPanelDragging] = useState(false)
   const dragStartRef = useRef<{
     height: number
+    snap: SigmaPanelSnap
     bodyScrollTop: number | null
   } | null>(null)
   const suppressClickRef = useRef(false)
@@ -65,7 +104,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     syncInitialHeight()
     window.addEventListener('resize', syncInitialHeight)
     return () => window.removeEventListener('resize', syncInitialHeight)
-  }, [mobileSnap])
+  }, [mobileSnap, mobileSnapResetKey])
 
   const markPanelDragHandled = () => {
     suppressClickRef.current = true
@@ -94,6 +133,11 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     setMobileHeightPx(clampPanelHeight(start.height - deltaY, window.innerHeight))
   }
 
+  const snapPanelAfterDrag = (start: { height: number; snap: SigmaPanelSnap }, deltaY: number) => {
+    const nextSnap = resolveNextPanelSnap(start, deltaY, window.innerHeight)
+    setMobileHeightPx(resolveInitialPanelHeight(nextSnap, window.innerHeight))
+  }
+
   const shouldClosePanelFromDrag = (start: { height: number }, deltaY: number) => {
     if (deltaY <= PANEL_CLOSE_THRESHOLD_PX) return false
     const proportionalThreshold = start.height * 0.35
@@ -103,24 +147,29 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
   const handlePanelPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (!event.isPrimary) return
     const target = event.target
+    const targetElement = target instanceof Element ? target : null
+    const startedOnBodyDragHandle = Boolean(
+      targetElement?.closest('[data-panel-drag-handle]'),
+    )
     const startedInsideScrollableBody =
       target instanceof Node && bodyRef.current?.contains(target)
 
-    if (startedInsideScrollableBody) {
-      dragStartRef.current = null
-      return
-    }
-
     if (
-      target instanceof Element &&
-      target.closest('button, a, input, select, textarea, [data-panel-no-drag]')
+      targetElement?.closest('button, a, input, select, textarea, [data-panel-no-drag]')
     ) {
       return
     }
 
+    if (startedInsideScrollableBody && !startedOnBodyDragHandle) {
+      dragStartRef.current = null
+      return
+    }
+
+    const height = mobileHeightPx ?? resolveInitialPanelHeight(mobileSnap, window.innerHeight)
     dragStartRef.current = {
-      height: mobileHeightPx ?? resolveInitialPanelHeight(mobileSnap, window.innerHeight),
-      bodyScrollTop: resolveBodyScrollTop(event.target),
+      height,
+      snap: resolveClosestPanelSnap(height, window.innerHeight),
+      bodyScrollTop: startedOnBodyDragHandle ? null : resolveBodyScrollTop(event.target),
     }
     if (event.pointerType === 'touch') {
       event.preventDefault()
@@ -164,7 +213,7 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     }
 
     markPanelDragHandled()
-    applyPanelDrag(start, deltaY)
+    snapPanelAfterDrag(start, deltaY)
   }
 
   const panelStyle = mobileHeightPx === null

@@ -1916,6 +1916,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       callbacks.onClearSelection()
     })
 
+    sigma.on('clickEdge', () => {
+      callbacks.onClearSelection()
+    })
+
     sigma.on('enterNode', ({ node }) => {
       this.scheduleHoveredNodeFocus(node)
     })

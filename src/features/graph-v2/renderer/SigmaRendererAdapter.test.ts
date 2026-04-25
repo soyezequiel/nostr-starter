@@ -1754,6 +1754,61 @@ test('double click on a node prevents Sigma zoom and forwards the interaction', 
   }
 })
 
+test('clicking an edge clears node selection because the pointer is outside nodes', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const originalWindow = globalThis.window
+  const listeners = new Map<string, (event: unknown) => void>()
+  let clearSelectionCalls = 0
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      on: (eventName: string, listener: (event: unknown) => void) => void
+      getCamera: () => {
+        on: (eventName: string, listener: (event: unknown) => void) => void
+      }
+    } | null
+    renderStore: Record<string, never> | null
+    physicsStore: Record<string, never> | null
+    callbacks: GraphInteractionCallbacks | null
+    bindEvents: () => void
+  }
+
+  globalThis.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  } as Window & typeof globalThis
+
+  try {
+    adapter.sigma = {
+      on: (eventName, listener) => {
+        listeners.set(eventName, listener)
+      },
+      getCamera: () => ({
+        on: () => {},
+      }),
+    }
+    adapter.renderStore = {}
+    adapter.physicsStore = {}
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onClearSelection: () => {
+        clearSelectionCalls += 1
+      },
+    }
+
+    adapter.bindEvents()
+
+    listeners.get('clickEdge')?.({})
+
+    assert.equal(clearSelectionCalls, 1)
+  } finally {
+    globalThis.window = originalWindow
+  }
+})
+
 test('small pointer movement before click does not consume node clicks', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
