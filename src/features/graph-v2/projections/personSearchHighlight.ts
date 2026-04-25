@@ -56,8 +56,6 @@ export const applyPersonSearchHighlight = (
           color: PERSON_SEARCH_MATCH_COLOR,
           size: node.size + PERSON_SEARCH_SIZE_BOOST,
           isDimmed: false,
-          isNeighbor: node.focusState === 'selected' ? node.isNeighbor : true,
-          focusState: node.focusState === 'selected' ? 'selected' : 'neighbor',
         }
       }),
     },

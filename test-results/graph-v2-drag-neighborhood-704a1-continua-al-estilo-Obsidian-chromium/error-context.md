@@ -12,118 +12,203 @@
 # Error details
 
 ```
-Error: expect(received).toBe(expected) // Object.is equality
-
-Expected: true
-Received: false
+Error: No se pudo seleccionar fixture-drag-target. Ultima seleccion observada: null
 ```
 
 # Page snapshot
 
 ```yaml
 - generic [active] [ref=e1]:
-  - main [ref=e2]:
+  - button "Open Next.js Dev Tools" [ref=e7] [cursor=pointer]:
+    - img [ref=e8]
+  - alert [ref=e11]
+  - main [ref=e12]:
     - generic:
-      - generic [ref=e12]:
-        - generic [ref=e15]: RF
-        - generic [ref=e16]:
-          - generic [ref=e17]: Identidad raíz
-          - generic [ref=e18]: Root Fixture
-        - button "Cambiar" [ref=e19] [cursor=pointer]
-      - generic [ref=e20]:
-        - generic [ref=e21]:
-          - combobox "Formato de imagen" [ref=e22]:
-            - option "wide" [selected]
-            - option "square"
-            - option "story"
-          - button "Compartir imagen" [ref=e23] [cursor=pointer]:
-            - img [ref=e24]
-            - generic [ref=e29]: Compartir imagen
-        - generic [ref=e30]:
-          - link "Nostr Espacial" [ref=e31] [cursor=pointer]:
-            - /url: /
-            - img "Nostr Espacial" [ref=e33]
-          - generic [ref=e34]: v0.3.2
-    - region "Filtros del grafo":
-      - generic [ref=e35]:
-        - 'button "Toda la red: Vista base: raiz, follows salientes, followers entrantes y nodos expandidos." [ref=e36] [cursor=pointer]':
-          - text: Toda la red
-          - generic [ref=e38]: "40"
-        - 'button "A quienes sigo: A quienes sigo: follows salientes desde la raiz y desde nodos expandidos." [ref=e39] [cursor=pointer]':
-          - text: A quienes sigo
-          - generic [ref=e41]: "-"
-        - 'button "Me siguen: Me siguen: follows entrantes hacia la raiz y nodos expandidos." [ref=e42] [cursor=pointer]':
-          - text: Me siguen
-          - generic [ref=e44]: "-"
-        - 'button "Mutuos: Mutuos: relacion de ida y vuelta confirmada." [ref=e45] [cursor=pointer]':
-          - text: Mutuos
-          - generic [ref=e47]: "-"
-        - 'button "Sin reciprocidad: Sin reciprocidad: vinculo confirmado de un solo lado." [ref=e48] [cursor=pointer]':
-          - text: Sin reciprocidad
-          - generic [ref=e50]: "-"
-        - 'button "Conexiones: Conexiones: solo mutuos de raiz y expandidos." [ref=e51] [cursor=pointer]':
-          - text: Conexiones
-          - generic [ref=e53]: mutuos
-    - generic [ref=e54]:
-      - button "Ajustes" [ref=e56] [cursor=pointer]:
-        - img [ref=e57]
-        - text: Ajustes
-      - button "Notificaciones (0)" [ref=e61] [cursor=pointer]:
-        - img [ref=e62]
-        - text: Notificaciones (0)
-      - button "Inspector de runtime (Shift + D)" [ref=e65] [cursor=pointer]:
-        - img [ref=e66]
-        - text: Inspector de runtime (Shift + D)
-      - button "Pausar física" [ref=e69] [cursor=pointer]:
-        - img [ref=e70]
-        - text: Pausar física
-      - button "Ocultar zaps" [ref=e76] [cursor=pointer]:
-        - img [ref=e77]
-        - text: Ocultar zaps
-      - button "Recentrar vista" [ref=e81] [cursor=pointer]:
-        - img [ref=e82]
-        - text: Recentrar vista
-      - button "Relays al día" [ref=e86] [cursor=pointer]:
-        - img [ref=e87]
-        - text: Relays al día
-      - button "Buscar persona (/)" [ref=e92] [cursor=pointer]:
-        - img [ref=e93]
-        - text: Buscar persona (/)
-    - generic [ref=e97]:
-      - generic [ref=e98]:
-        - generic [ref=e99]: Nodos
-        - generic [ref=e100]: "40"
-      - generic [ref=e101]:
-        - generic [ref=e102]: Aristas
-        - generic [ref=e103]: "56"
-      - generic [ref=e104]:
-        - generic [ref=e105]: Visibles
-        - generic [ref=e106]: "56"
-      - generic [ref=e107]:
-        - generic [ref=e108]: Física
-        - generic [ref=e109]: activa
-      - generic [ref=e110]:
-        - generic [ref=e111]: Relays
-        - generic [ref=e112]: 1/1
-      - generic [ref=e113]:
-        - generic [ref=e114]: Frame
-        - generic [ref=e115]: 15.0ms
-    - generic [ref=e116]:
-      - generic [ref=e117]:
-        - generic [ref=e118]: MAPA
-        - generic [ref=e119]: —
-      - generic [ref=e122]:
-        - button "＋" [ref=e123] [cursor=pointer]
-        - button "−" [ref=e125] [cursor=pointer]
-        - button "fit" [ref=e127] [cursor=pointer]
-  - button "Open Next.js Dev Tools" [ref=e133] [cursor=pointer]:
-    - img [ref=e134]
-  - alert [ref=e137]
+      - generic [ref=e23]:
+        - progressbar "40 nodos. Carga completa. 100 por ciento. 40 nodos visibles de 40 cargados; sin pendientes de dibujo." [ref=e24]
+        - img [ref=e26]
+        - searchbox "Buscar persona en el grafo" [ref=e29]
+        - generic "40 nodos visibles de 40 cargados; sin pendientes de dibujo." [ref=e30]: 40/40 - 0 faltan
+        - 'button "Cambiar identidad raiz: Root Fixture" [ref=e31] [cursor=pointer]':
+          - generic [ref=e34]: RF
+      - generic [ref=e36]:
+        - link "Nostr Espacial" [ref=e37] [cursor=pointer]:
+          - /url: /
+          - img "Nostr Espacial" [ref=e39]
+        - generic [ref=e40]: v0.3.2
+    - text: Ajustes Notificaciones (0) Inspector de runtime (Shift + D) Pausar física Zaps Ajustar vista Relays al dia
+    - navigation "Navegacion principal del grafo" [ref=e41]:
+      - button "Filtros de conexiones" [ref=e42] [cursor=pointer]:
+        - img [ref=e44]
+        - generic [ref=e45]: Filtros
+      - button "Zaps en vivo" [ref=e46] [cursor=pointer]:
+        - img [ref=e48]
+        - generic [ref=e50]: Zaps
+      - button "Inspector de runtime" [ref=e51] [cursor=pointer]:
+        - img [ref=e53]
+        - generic [ref=e55]: Runtime
+      - button "Ajustar vista" [ref=e56] [cursor=pointer]:
+        - img [ref=e58]
+        - generic [ref=e61]: Vista
+      - button "Ajustes" [ref=e62] [cursor=pointer]:
+        - img [ref=e64]
+        - generic [ref=e67]: Ajustes
+    - generic [ref=e69]:
+      - generic [ref=e70]:
+        - generic [ref=e71]: Nodos
+        - generic [ref=e72]: "40"
+      - generic [ref=e73]:
+        - generic [ref=e74]: Aristas
+        - generic [ref=e75]: "56"
+      - generic [ref=e76]:
+        - generic [ref=e77]: Visibles
+        - generic [ref=e78]: "56"
+      - generic [ref=e79]:
+        - generic [ref=e80]: Física
+        - generic [ref=e81]: activa
+      - generic [ref=e82]:
+        - generic [ref=e83]: Relays
+        - generic [ref=e84]: 1/1
+      - generic [ref=e85]:
+        - generic [ref=e86]: FPS
+        - generic [ref=e87]: 43 fps
+    - generic [ref=e88]:
+      - generic [ref=e89]:
+        - generic [ref=e90]: MAPA
+        - generic [ref=e91]: 0.05×
+      - generic [ref=e94]:
+        - button "＋" [ref=e95] [cursor=pointer]
+        - button "−" [ref=e97] [cursor=pointer]
+        - button "fit" [ref=e99] [cursor=pointer]
 ```
 
 # Test source
 
 ```ts
+  6   |   DebugDragRuntimeState,
+  7   |   DebugSelectionState,
+  8   |   DebugViewportPosition,
+  9   | } from '../src/features/graph-v2/testing/browserDebug'
+  10  | 
+  11  | const SIGMA_LAB_URL = '/labs/sigma?fixture=drag-local&fixtureSource=local&testMode=1'
+  12  | const TARGET_PUBKEY = 'fixture-drag-target'
+  13  | const PINNED_NEIGHBOR_PUBKEY = 'fixture-pinned-neighbor'
+  14  | const DEPTH1_MOVABLE_PUBKEY = 'fixture-hop1-a'
+  15  | const DEPTH2_PUBKEY = 'fixture-hop2-a'
+  16  | const DEPTH3_PUBKEY = 'fixture-hop3-a'
+  17  | const OUTSIDE_PUBKEY = 'fixture-outside-a'
+  18  | 
+  19  | interface DragMetrics {
+  20  |   selectedBeforeDrag: string | null
+  21  |   selectedAfterDrag: string | null
+  22  |   pinnedNeighborPubkey: string | null
+  23  |   candidatePubkey: string | null
+  24  |   degree: number | null
+  25  |   cursorDistancePx: number[]
+  26  |   meanDisplacements: Record<string, number>
+  27  |   pinnedDisplacement: number | null
+  28  |   residuals: number[]
+  29  | }
+  30  | 
+  31  | interface SampledNodes {
+  32  |   target: DebugNodePosition
+  33  |   depth1: DebugNodePosition
+  34  |   depth2: DebugNodePosition
+  35  |   depth3: DebugNodePosition
+  36  |   outside: DebugNodePosition
+  37  |   pinned: DebugNodePosition
+  38  | }
+  39  | 
+  40  | const getViewportPosition = async (page: Page, pubkey: string) =>
+  41  |   page.evaluate(
+  42  |     (targetPubkey) => window.__sigmaLabDebug?.getViewportPosition(targetPubkey) ?? null,
+  43  |     pubkey,
+  44  |   ) as Promise<DebugViewportPosition | null>
+  45  | 
+  46  | const getNodePosition = async (page: Page, pubkey: string) =>
+  47  |   page.evaluate(
+  48  |     (targetPubkey) => window.__sigmaLabDebug?.getNodePosition(targetPubkey) ?? null,
+  49  |     pubkey,
+  50  |   ) as Promise<DebugNodePosition | null>
+  51  | 
+  52  | const getNeighborGroups = async (page: Page, pubkey: string) =>
+  53  |   page.evaluate(
+  54  |     (targetPubkey) => window.__sigmaLabDebug?.getNeighborGroups(targetPubkey) ?? null,
+  55  |     pubkey,
+  56  |   ) as Promise<DebugNeighborGroups | null>
+  57  | 
+  58  | const getSelectionState = async (page: Page) =>
+  59  |   page.evaluate(
+  60  |     () => window.__sigmaLabDebug?.getSelectionState() ?? null,
+  61  |   ) as Promise<DebugSelectionState | null>
+  62  | 
+  63  | const getDragRuntimeState = async (page: Page) =>
+  64  |   page.evaluate(
+  65  |     () => window.__sigmaLabDebug?.getDragRuntimeState() ?? null,
+  66  |   ) as Promise<DebugDragRuntimeState | null>
+  67  | 
+  68  | const getFixedState = async (page: Page, pubkey: string) =>
+  69  |   page.evaluate(
+  70  |     (targetPubkey) => window.__sigmaLabDebug?.isNodeFixed(targetPubkey) ?? false,
+  71  |     pubkey,
+  72  |   ) as Promise<boolean>
+  73  | 
+  74  | const clickNodeUntilSelected = async (
+  75  |   page: Page,
+  76  |   pubkey: string,
+  77  |   maxAttempts = 10,
+  78  | ) => {
+  79  |   const clickOffsets = [
+  80  |     { x: 0, y: 0 },
+  81  |     { x: 2, y: 0 },
+  82  |     { x: -2, y: 0 },
+  83  |     { x: 0, y: 2 },
+  84  |     { x: 0, y: -2 },
+  85  |     { x: 3, y: 3 },
+  86  |     { x: -3, y: 3 },
+  87  |     { x: 3, y: -3 },
+  88  |     { x: -3, y: -3 },
+  89  |   ]
+  90  |   let lastSelection: DebugSelectionState | null = null
+  91  | 
+  92  |   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  93  |     const viewport = await getViewportPosition(page, pubkey)
+  94  |     expect(viewport).not.toBeNull()
+  95  | 
+  96  |     for (const offset of clickOffsets) {
+  97  |       await page.mouse.click(viewport!.clientX + offset.x, viewport!.clientY + offset.y)
+  98  |       await page.waitForTimeout(80)
+  99  |       lastSelection = await getSelectionState(page)
+  100 |       if (lastSelection?.selectedNodePubkey === pubkey) {
+  101 |         return
+  102 |       }
+  103 |     }
+  104 |   }
+  105 | 
+> 106 |   throw new Error(
+      |         ^ Error: No se pudo seleccionar fixture-drag-target. Ultima seleccion observada: null
+  107 |     `No se pudo seleccionar ${pubkey}. Ultima seleccion observada: ${
+  108 |       lastSelection?.selectedNodePubkey ?? 'null'
+  109 |     }`,
+  110 |   )
+  111 | }
+  112 | 
+  113 | const distance = (left: DebugNodePosition, right: DebugNodePosition) =>
+  114 |   Math.hypot(left.x - right.x, left.y - right.y)
+  115 | 
+  116 | const displacement = (
+  117 |   baseline: DebugNodePosition,
+  118 |   current: DebugNodePosition,
+  119 | ) => distance(baseline, current)
+  120 | 
+  121 | const collectPositions = async (
+  122 |   page: Page,
+  123 |   pubkeys: readonly string[],
+  124 | ) => {
+  125 |   const entries = await Promise.all(
+  126 |     pubkeys.map(async (pubkey) => [pubkey, await getNodePosition(page, pubkey)] as const),
+  127 |   )
+  128 | 
   129 |   return Object.fromEntries(
   130 |     entries.filter((entry): entry is readonly [string, DebugNodePosition] => Boolean(entry[1])),
   131 |   )
@@ -202,128 +287,4 @@ Received: false
   204 |     await expect.poll(() => getViewportPosition(page, TARGET_PUBKEY)).not.toBeNull()
   205 |     await expect.poll(() => getNodePosition(page, TARGET_PUBKEY)).not.toBeNull()
   206 | 
-  207 |     const candidate = await page.evaluate(
-  208 |       () => window.__sigmaLabDebug?.findDragCandidate({ minDegree: 3, maxDegree: 10 }) ?? null,
-  209 |     )
-  210 |     expect(candidate).toMatchObject({
-  211 |       pubkey: TARGET_PUBKEY,
-  212 |     })
-  213 | 
-  214 |     metrics.candidatePubkey = candidate?.pubkey ?? null
-  215 |     metrics.degree = candidate?.degree ?? null
-  216 | 
-  217 |     const neighborGroups = await getNeighborGroups(page, TARGET_PUBKEY)
-  218 |     expect(neighborGroups).not.toBeNull()
-  219 |     expect(neighborGroups).toMatchObject({
-  220 |       sourcePubkey: TARGET_PUBKEY,
-  221 |     })
-  222 |     expect(neighborGroups?.depth1).toContain(PINNED_NEIGHBOR_PUBKEY)
-  223 |     expect(neighborGroups?.depth1).toContain(DEPTH1_MOVABLE_PUBKEY)
-  224 |     expect(neighborGroups?.depth2).toContain(DEPTH2_PUBKEY)
-  225 |     expect(neighborGroups?.depth3).toContain(DEPTH3_PUBKEY)
-  226 |     expect(neighborGroups?.outside).toContain(OUTSIDE_PUBKEY)
-  227 | 
-  228 |     metrics.pinnedNeighborPubkey = PINNED_NEIGHBOR_PUBKEY
-> 229 |     expect(await getFixedState(page, PINNED_NEIGHBOR_PUBKEY)).toBe(true)
-      |                                                               ^ Error: expect(received).toBe(expected) // Object.is equality
-  230 |     const initialPinnedSelection = await getSelectionState(page)
-  231 |     expect(initialPinnedSelection?.pinnedNodePubkeys).toContain(PINNED_NEIGHBOR_PUBKEY)
-  232 | 
-  233 |     const baselineRuntimeState = await getDragRuntimeState(page)
-  234 |     expect(baselineRuntimeState).toMatchObject({
-  235 |       draggedNodePubkey: null,
-  236 |       forceAtlasRunning: true,
-  237 |       forceAtlasSuspended: false,
-  238 |     })
-  239 | 
-  240 |     const baselineSelection = await getSelectionState(page)
-  241 |     expect(baselineSelection).toMatchObject({
-  242 |       selectedNodePubkey: null,
-  243 |     })
-  244 | 
-  245 |     const trackedPubkeys = [
-  246 |       TARGET_PUBKEY,
-  247 |       ...neighborGroups!.depth1,
-  248 |       ...neighborGroups!.depth2,
-  249 |       ...neighborGroups!.depth3,
-  250 |       ...neighborGroups!.outside,
-  251 |     ]
-  252 |     const movableDepth1Pubkeys = neighborGroups!.depth1.filter(
-  253 |       (pubkey) => pubkey !== PINNED_NEIGHBOR_PUBKEY,
-  254 |     )
-  255 |     await clickNodeUntilSelected(page, TARGET_PUBKEY)
-  256 | 
-  257 |     const selectionAfterClick = await getSelectionState(page)
-  258 |     metrics.selectedBeforeDrag = selectionAfterClick?.selectedNodePubkey ?? null
-  259 | 
-  260 |     const baselinePositions = await collectTrackedNodes(page)
-  261 |     const baselineGroupPositions = await collectPositions(page, trackedPubkeys)
-  262 | 
-  263 |     const start = await getViewportPosition(page, TARGET_PUBKEY)
-  264 |     expect(start).not.toBeNull()
-  265 |     await page.mouse.move(start!.clientX, start!.clientY)
-  266 |     await page.mouse.down()
-  267 | 
-  268 |     const totalDx = 120
-  269 |     const totalDy = 72
-  270 |     const steps = 8
-  271 |     const dragSamples: Array<{
-  272 |       viewport: DebugViewportPosition
-  273 |       runtime: DebugDragRuntimeState | null
-  274 |       position: DebugNodePosition
-  275 |       cursorErrorPx: number
-  276 |     }> = []
-  277 | 
-  278 |     for (let step = 1; step <= steps; step += 1) {
-  279 |       const nextX = start!.clientX + (totalDx * step) / steps
-  280 |       const nextY = start!.clientY + (totalDy * step) / steps
-  281 |       await page.mouse.move(nextX, nextY, { steps: 1 })
-  282 |       await page.waitForTimeout(32)
-  283 |       const dragRuntimeState = await getDragRuntimeState(page)
-  284 |       const viewport = await getViewportPosition(page, TARGET_PUBKEY)
-  285 |       const position = await getNodePosition(page, TARGET_PUBKEY)
-  286 |       expect(viewport).not.toBeNull()
-  287 |       expect(position).not.toBeNull()
-  288 | 
-  289 |       const cursorErrorPx = Math.hypot(viewport!.clientX - nextX, viewport!.clientY - nextY)
-  290 |       metrics.cursorDistancePx.push(cursorErrorPx)
-  291 |       dragSamples.push({
-  292 |         viewport: viewport!,
-  293 |         runtime: dragRuntimeState,
-  294 |         position: position!,
-  295 |         cursorErrorPx,
-  296 |       })
-  297 |     }
-  298 | 
-  299 |     const lastCursorX = start!.clientX + totalDx
-  300 |     const lastCursorY = start!.clientY + totalDy
-  301 |     await expect
-  302 |       .poll(async () => {
-  303 |         const viewport = await getViewportPosition(page, TARGET_PUBKEY)
-  304 |         if (!viewport) {
-  305 |           return Number.POSITIVE_INFINITY
-  306 |         }
-  307 | 
-  308 |         return Math.hypot(viewport.clientX - lastCursorX, viewport.clientY - lastCursorY)
-  309 |       })
-  310 |       .toBeLessThan(18)
-  311 |     const duringDragPositions = await collectTrackedNodes(page)
-  312 |     const duringDragGroupPositions = await collectPositions(page, trackedPubkeys)
-  313 | 
-  314 |     for (const sample of dragSamples) {
-  315 |       expect(sample.runtime).toMatchObject({
-  316 |         draggedNodePubkey: TARGET_PUBKEY,
-  317 |         forceAtlasSuspended: true,
-  318 |         forceAtlasRunning: false,
-  319 |       })
-  320 |       expect(sample.cursorErrorPx).toBeLessThan(18)
-  321 |     }
-  322 | 
-  323 |     const runtimeDuringDrag = await getDragRuntimeState(page)
-  324 |     expect(runtimeDuringDrag?.influencedNodeCount ?? 0).toBeGreaterThanOrEqual(6)
-  325 |     expect(runtimeDuringDrag?.maxHopDistance ?? 0).toBeGreaterThanOrEqual(3)
-  326 |     expect(
-  327 |       runtimeDuringDrag?.influenceHopSample.some(
-  328 |         (entry) => entry.pubkey === DEPTH3_PUBKEY && entry.hopDistance === 3,
-  329 |       ) ?? false,
 ```

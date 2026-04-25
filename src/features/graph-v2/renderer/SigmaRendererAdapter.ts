@@ -81,9 +81,9 @@ const HOVER_DIM_EDGE_COLOR = '#10171f'
 const HIGHLIGHT_TRANSITION_MS = 180
 const HOVER_FOCUS_DWELL_MS = 500
 const TOUCH_TAP_MOVE_TOLERANCE_PX = 16
-const SCENE_FOCUS_TRANSITION_MS = 180
 const STAGE_CLICK_SUPPRESS_AFTER_DRAG_MS = 160
 const OUTSIDE_NODE_CLICK_DEDUP_MS = 500
+const MOBILE_GRAPH_INTERACTION_QUERY = '(max-width: 720px)'
 const PHYSICS_BRIDGE_BACKGROUND_SYNC_CAP = 96
 const PHYSICS_BRIDGE_VIEWPORT_PADDING_RATIO = 0.12
 const PHYSICS_AUTO_FIT_INTERVAL_MS = 120
@@ -100,6 +100,11 @@ const AVATAR_MAX_HOVER_REVEAL_MAX_NODES = 96
 const AVATAR_MIN_FAST_NODE_VELOCITY = 40
 const AVATAR_MAX_FAST_NODE_VELOCITY = 2000
 const AVATAR_MAX_INTERACTIVE_BUCKETS = [32, 64, 128, 256] as const
+const EMPTY_HOVER_NEIGHBORS = new Set<string>()
+const EMPTY_RENDERER_FOCUS: HoverFocusSnapshot = {
+  pubkey: null,
+  neighbors: EMPTY_HOVER_NEIGHBORS,
+}
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
@@ -120,6 +125,17 @@ const easeInOut = (value: number) => {
 
 const lerpNumber = (from: number, to: number, amount: number) =>
   from + (to - from) * amount
+
+const isMobileGraphInteractionMode = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+
+  return (
+    window.matchMedia(MOBILE_GRAPH_INTERACTION_QUERY).matches ||
+    window.matchMedia('(pointer: coarse)').matches
+  )
+}
 
 const parseHexRgb = (color: string) => {
   const normalized = color.trim()
@@ -204,69 +220,12 @@ type HighlightTransition = {
   durationMs: number
 }
 
-type NodeVisualStyle = Pick<
-  RenderNodeAttributes,
-  'color' | 'size' | 'zIndex' | 'highlighted' | 'forceLabel' | 'label'
->
-
-type EdgeVisualStyle = Pick<
-  RenderEdgeAttributes,
-  'color' | 'size' | 'zIndex' | 'hidden'
->
-
 type SigmaMovementCaptorShim = {
   isMoving: boolean
 }
 
-type SceneFocusTransition = {
-  nodes: Map<string, NodeVisualStyle>
-  edges: Map<string, EdgeVisualStyle>
-  startedAt: number
-  durationMs: number
-}
-
-const pickNodeVisualStyle = (
-  attributes: RenderNodeAttributes,
-): NodeVisualStyle => ({
-  color: attributes.color,
-  size: attributes.size,
-  zIndex: attributes.zIndex,
-  highlighted: attributes.highlighted,
-  forceLabel: attributes.forceLabel,
-  label: attributes.label,
-})
-
-const pickEdgeVisualStyle = (
-  attributes: RenderEdgeAttributes,
-): EdgeVisualStyle => ({
-  color: attributes.color,
-  size: attributes.size,
-  zIndex: attributes.zIndex,
-  hidden: attributes.hidden,
-})
-
-const hasNodeVisualStyleChange = (
-  from: NodeVisualStyle,
-  to: NodeVisualStyle,
-) =>
-  from.color !== to.color ||
-  from.size !== to.size ||
-  from.zIndex !== to.zIndex ||
-  from.highlighted !== to.highlighted ||
-  from.forceLabel !== to.forceLabel ||
-  from.label !== to.label
-
-const hasEdgeVisualStyleChange = (
-  from: EdgeVisualStyle,
-  to: EdgeVisualStyle,
-) =>
-  from.color !== to.color ||
-  from.size !== to.size ||
-  from.zIndex !== to.zIndex ||
-  from.hidden !== to.hidden
-
 const mixNodeVisualAttributes = (
-  from: RenderNodeAttributes | NodeVisualStyle,
+  from: RenderNodeAttributes,
   to: RenderNodeAttributes,
   amount: number,
 ): RenderNodeAttributes => ({
@@ -280,7 +239,7 @@ const mixNodeVisualAttributes = (
 })
 
 const mixEdgeVisualAttributes = (
-  from: RenderEdgeAttributes | EdgeVisualStyle,
+  from: RenderEdgeAttributes,
   to: RenderEdgeAttributes,
   amount: number,
 ): RenderEdgeAttributes => ({
@@ -363,10 +322,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private lastMoveBodyPointer: { x: number; y: number } | null = null
 
-  private avatarRevealPointer: { x: number; y: number } | null = null
-
-  private pendingAvatarRevealRenderFrame: number | null = null
-
   private lastScheduledGraphPosition: { x: number; y: number } | null = null
 
   private lastFlushedGraphPosition: { x: number; y: number } | null = null
@@ -384,9 +339,19 @@ export class SigmaRendererAdapter implements RendererAdapter {
     neighbors: this.hoveredNeighbors,
   }
 
-  private highlightTransition: HighlightTransition | null = null
+  private selectedSceneFocus: HoverFocusSnapshot = {
+    pubkey: null,
+    neighbors: EMPTY_HOVER_NEIGHBORS,
+  }
 
-  private sceneFocusTransition: SceneFocusTransition | null = null
+  private draggedNodeFocus: HoverFocusSnapshot = {
+    pubkey: null,
+    neighbors: EMPTY_HOVER_NEIGHBORS,
+  }
+
+  private hideEdgesOnMoveBeforeDrag: boolean | null = null
+
+  private highlightTransition: HighlightTransition | null = null
 
   private pendingHighlightTransitionFrame: number | null = null
 
@@ -1258,7 +1223,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.resumePhysicsAfterDrag = !(this.forceRuntime?.isSuspended() ?? false)
+    this.draggedNodeFocus = this.createFocusSnapshot(pubkey, {
+      requireNode: true,
+    })
     this.draggedNodePubkey = pubkey
+    this.setNodeDragEdgeRendering(true)
     this.shouldPinDraggedNodeOnRelease = false
     this.markMotion()
     this.dragHopDistances = buildDragHopDistances(
@@ -1278,7 +1247,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.lastDragFlushTimestamp = null
     this.cancelPendingDragFrame()
     this.physicsStore.setNodeFixed(pubkey, true)
-    this.setGraphBoundsLocked(true)
     this.forceRuntime?.suspend()
     // Force-lock highlight on the dragged node regardless of pointer position.
     this.setHoveredNode(pubkey, true)
@@ -1289,12 +1257,14 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingDragGesture = null
 
     if (!this.draggedNodePubkey || !this.renderStore || !this.physicsStore || !this.callbacks) {
+      this.setNodeDragEdgeRendering(false)
       this.setCameraLocked(false)
       this.setGraphBoundsLocked(false)
       this.cancelPendingDragFrame()
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
       this.lastDragGraphPosition = null
+      this.draggedNodeFocus = this.createEmptyFocusSnapshot()
       this.shouldPinDraggedNodeOnRelease = false
       return
     }
@@ -1324,6 +1294,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.lastDragGraphPosition = null
 
     this.draggedNodePubkey = null
+    this.draggedNodeFocus = this.createEmptyFocusSnapshot()
+    this.setNodeDragEdgeRendering(false)
     this.shouldPinDraggedNodeOnRelease = false
     this.lastDragFlushTimestamp = null
     this.cancelPendingDragFrame()
@@ -1345,8 +1317,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.setGraphBoundsLocked(false)
     this.safeRender()
 
-    // Recalculate hover based on actual pointer position after release.
-    this.recalculateHoverAfterDrag()
+    if (isMobileGraphInteractionMode()) {
+      this.clearInteractiveRendererFocus({ notifySelection: true })
+    } else {
+      // Recalculate hover based on actual pointer position after release.
+      this.recalculateHoverAfterDrag()
+    }
 
     if (position) {
       this.callbacks.onNodeDragEnd(draggedNodePubkey, position, {
@@ -1389,6 +1365,35 @@ export class SigmaRendererAdapter implements RendererAdapter {
       },
       nodeReducer: this.nodeReducer,
       edgeReducer: this.edgeReducer,
+    }
+  }
+
+  private setNodeDragEdgeRendering(active: boolean) {
+    const sigma = this.sigma
+    const settings = sigma as
+      | {
+          getSetting?: (key: 'hideEdgesOnMove') => boolean
+          setSetting?: (key: 'hideEdgesOnMove', value: boolean) => void
+        }
+      | null
+    if (!settings?.getSetting || !settings.setSetting) {
+      return
+    }
+
+    if (active) {
+      if (this.hideEdgesOnMoveBeforeDrag === null) {
+        this.hideEdgesOnMoveBeforeDrag = settings.getSetting('hideEdgesOnMove')
+      }
+      if (settings.getSetting('hideEdgesOnMove')) {
+        settings.setSetting('hideEdgesOnMove', false)
+      }
+      return
+    }
+
+    const hideEdgesOnMove = this.hideEdgesOnMoveBeforeDrag ?? true
+    this.hideEdgesOnMoveBeforeDrag = null
+    if (settings.getSetting('hideEdgesOnMove') !== hideEdgesOnMove) {
+      settings.setSetting('hideEdgesOnMove', hideEdgesOnMove)
     }
   }
 
@@ -1484,6 +1489,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.renderStore = new RenderGraphStore(this.positionLedger)
     this.physicsStore = new PhysicsGraphStore(this.positionLedger)
     this.renderStore.applyScene(initialScene.render)
+    this.syncSelectedSceneFocus()
     this.physicsStore.applyScene(initialScene.physics)
     this.forceRuntime = new ForceAtlasRuntime(this.physicsStore.getGraph())
     this.sigma = new Sigma(
@@ -1514,20 +1520,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     ) {
       return
     }
-
-    const previousScene = this.scene
-    const shouldAnimateSceneFocus =
-      (previousScene?.render.selection.selectedNodePubkey ?? null) !==
-      (scene.render.selection.selectedNodePubkey ?? null)
-    const previousVisualStyles = shouldAnimateSceneFocus
-      ? this.captureRenderVisualStyles()
-      : null
     const draggedNodePubkey = this.draggedNodePubkey
     const draggedNodePosition =
       draggedNodePubkey !== null ? this.lastDragGraphPosition : null
     this.scene = scene
     this.renderStore.applyScene(scene.render)
-    this.startSceneFocusTransition(previousVisualStyles)
+    this.syncSelectedSceneFocus()
     const physicsApplyResult = this.physicsStore.applyScene(scene.physics)
     this.nodeHitTester?.markDirty()
 
@@ -1544,6 +1542,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
         this.dragInfluenceConfig,
         this.dragInfluenceState,
       )
+      // Keep drag focus in sync with the current render graph so that
+      // neighbors match what selection would produce for the same node.
+      this.draggedNodeFocus = this.createFocusSnapshot(draggedNodePubkey, {
+        requireNode: true,
+      })
     } else {
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
@@ -1576,10 +1579,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.releaseDrag()
     this.cancelPendingDragFrame()
     this.cancelPhysicsPositionBridge()
-    if (this.pendingAvatarRevealRenderFrame !== null) {
-      cancelAnimationFrame(this.pendingAvatarRevealRenderFrame)
-      this.pendingAvatarRevealRenderFrame = null
-    }
     if (this.pendingHighlightTransitionFrame !== null) {
       cancelAnimationFrame(this.pendingHighlightTransitionFrame)
       this.pendingHighlightTransitionFrame = null
@@ -1610,14 +1609,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.callbacks = null
     this.scene = null
     this.container = null
-    this.highlightTransition = null
-    this.sceneFocusTransition = null
-    this.hoveredNodePubkey = null
-    this.hoveredNeighbors = new Set()
-    this.currentHoverFocus = {
-      pubkey: null,
-      neighbors: this.hoveredNeighbors,
-    }
+    this.resetRendererFocusState()
   }
 
   private initAvatarPipeline(
@@ -1657,12 +1649,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
         getBlockedAvatar: (urlKey) => this.avatarLoader?.getBlockedEntry(urlKey) ?? null,
         getSelectedNodePubkey: () =>
           this.scene?.render.selection.selectedNodePubkey ?? null,
-        getHoveredNodePubkey: () => this.currentHoverFocus.pubkey,
+        getHoveredNodePubkey: () => this.resolveRendererFocus().pubkey,
         getForcedAvatarPubkey: () =>
-          this.draggedNodePubkey ?? this.hoveredNodePubkey,
-        getDraggedAvatarPubkey: () => this.draggedNodePubkey,
-        getHoveredNeighborPubkeys: () => this.currentHoverFocus.neighbors,
-        getAvatarRevealPointer: () => this.avatarRevealPointer,
+          this.draggedNodePubkey ?? this.resolveRendererFocus().pubkey,
+        getHoveredNeighborPubkeys: () => this.resolveRendererFocus().neighbors,
         getRuntimeOptions: () => this.avatarRuntimeOptions,
       })
       this.avatarOverlay.setDebugDetailsEnabled(this.avatarDebugDetailsEnabled)
@@ -1767,17 +1757,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     mouseCaptor.isMoving = false
   }
 
-  private scheduleAvatarRevealRender() {
-    if (this.pendingAvatarRevealRenderFrame !== null) {
-      return
-    }
-
-    this.pendingAvatarRevealRenderFrame = requestAnimationFrame(() => {
-      this.pendingAvatarRevealRenderFrame = null
-      this.sigma?.scheduleRender()
-    })
-  }
-
   private scheduleAvatarSettledRefresh() {
     if (!this.sigma) {
       return
@@ -1800,6 +1779,112 @@ export class SigmaRendererAdapter implements RendererAdapter {
       pubkey: this.currentHoverFocus.pubkey,
       neighbors: this.currentHoverFocus.neighbors,
     }
+  }
+
+  private createEmptyFocusSnapshot(): HoverFocusSnapshot {
+    return {
+      pubkey: null,
+      neighbors: EMPTY_HOVER_NEIGHBORS,
+    }
+  }
+
+  private applyHoverFocusSnapshot(
+    pubkey: string | null,
+    focus: HoverFocusSnapshot,
+  ) {
+    this.hoveredNodePubkey = pubkey
+    this.hoveredNeighbors = focus.neighbors
+    this.currentHoverFocus = focus
+  }
+
+  private clearSelectedRendererFocus() {
+    this.selectedSceneFocus = this.createEmptyFocusSnapshot()
+  }
+
+  private setSelectedRendererFocus(pubkey: string | null) {
+    this.selectedSceneFocus = this.createFocusSnapshot(pubkey, {
+      requireNode: true,
+    })
+  }
+
+  private clearInteractiveRendererFocus(options?: {
+    notifySelection?: boolean
+  }) {
+    this.clearHoveredNodeFocus()
+    this.clearSelectedRendererFocus()
+    if (options?.notifySelection) {
+      this.callbacks?.onClearSelection()
+    }
+  }
+
+  private resetRendererFocusState() {
+    this.cancelPendingHoverFocus()
+    this.highlightTransition = null
+    this.hoveredNodePubkey = null
+    this.hoveredNeighbors = new Set()
+    this.currentHoverFocus = {
+      pubkey: null,
+      neighbors: this.hoveredNeighbors,
+    }
+    this.clearSelectedRendererFocus()
+    this.draggedNodeFocus = this.createEmptyFocusSnapshot()
+  }
+
+  private syncSelectedSceneFocus() {
+    const selectedPubkey = this.scene?.render.selection.selectedNodePubkey ?? null
+    this.setSelectedRendererFocus(selectedPubkey)
+  }
+
+  private createFocusSnapshot(
+    pubkey: string | null,
+    options: { requireNode?: boolean } = {},
+  ): HoverFocusSnapshot {
+    if (!pubkey) {
+      return this.createEmptyFocusSnapshot()
+    }
+
+    const graph = this.renderStore?.getGraph()
+    if (!graph || !graph.hasNode(pubkey)) {
+      return options.requireNode
+        ? this.createEmptyFocusSnapshot()
+        : {
+            pubkey,
+            neighbors: EMPTY_HOVER_NEIGHBORS,
+          }
+    }
+
+    const neighbors = new Set<string>()
+    graph.forEachNeighbor(pubkey, (neighborPubkey) => {
+      neighbors.add(neighborPubkey)
+    })
+
+    return {
+      pubkey,
+      neighbors,
+    }
+  }
+
+  private resolveDragFocus(): HoverFocusSnapshot | null {
+    if (!this.draggedNodePubkey) {
+      return null
+    }
+
+    if (this.draggedNodeFocus.pubkey === this.draggedNodePubkey) {
+      return this.draggedNodeFocus
+    }
+
+    return this.createFocusSnapshot(this.draggedNodePubkey, {
+      requireNode: true,
+    })
+  }
+
+  private resolveRendererFocus(): HoverFocusSnapshot {
+    return (
+      this.resolveDragFocus() ??
+      (this.currentHoverFocus.pubkey
+        ? this.currentHoverFocus
+        : this.selectedSceneFocus)
+    )
   }
 
   private getTransitionAmount(
@@ -1831,17 +1916,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.highlightTransition = null
     }
 
-    if (
-      this.sceneFocusTransition &&
-      now - this.sceneFocusTransition.startedAt >=
-        this.sceneFocusTransition.durationMs
-    ) {
-      this.sceneFocusTransition = null
-    }
-
     this.safeRender()
 
-    if (this.highlightTransition || this.sceneFocusTransition) {
+    if (this.highlightTransition) {
       this.scheduleHighlightTransitionFrame()
     }
   }
@@ -1859,75 +1936,25 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.scheduleHighlightTransitionFrame()
   }
 
-  private captureRenderVisualStyles(): SceneFocusTransition | null {
-    if (!this.renderStore) {
-      return null
-    }
-
-    const graph = this.renderStore.getGraph()
-    const nodes = new Map<string, NodeVisualStyle>()
-    const edges = new Map<string, EdgeVisualStyle>()
-
-    graph.forEachNode((pubkey, attributes) => {
-      nodes.set(pubkey, pickNodeVisualStyle(attributes))
-    })
-
-    graph.forEachEdge((edgeId, attributes) => {
-      edges.set(edgeId, pickEdgeVisualStyle(attributes))
-    })
-
-    return {
-      nodes,
-      edges,
-      startedAt: performance.now(),
-      durationMs: SCENE_FOCUS_TRANSITION_MS,
-    }
-  }
-
-  private startSceneFocusTransition(
-    previousStyles: SceneFocusTransition | null,
+  private startRendererFocusTransition(
+    from: HoverFocusSnapshot,
+    to: HoverFocusSnapshot,
   ) {
-    if (!previousStyles || !this.renderStore) {
-      return
-    }
-
-    const graph = this.renderStore.getGraph()
-    const changedNodes = new Map<string, NodeVisualStyle>()
-    const changedEdges = new Map<string, EdgeVisualStyle>()
-
-    for (const [pubkey, previousStyle] of previousStyles.nodes) {
-      if (!graph.hasNode(pubkey)) {
-        continue
+    if (from.pubkey === to.pubkey && from.neighbors.size === to.neighbors.size) {
+      let equalNeighbors = true
+      for (const neighbor of from.neighbors) {
+        if (!to.neighbors.has(neighbor)) {
+          equalNeighbors = false
+          break
+        }
       }
-
-      const currentStyle = pickNodeVisualStyle(graph.getNodeAttributes(pubkey))
-      if (hasNodeVisualStyleChange(previousStyle, currentStyle)) {
-        changedNodes.set(pubkey, previousStyle)
+      if (equalNeighbors) {
+        this.highlightTransition = null
+        return
       }
     }
 
-    for (const [edgeId, previousStyle] of previousStyles.edges) {
-      if (!graph.hasEdge(edgeId)) {
-        continue
-      }
-
-      const currentStyle = pickEdgeVisualStyle(graph.getEdgeAttributes(edgeId))
-      if (hasEdgeVisualStyleChange(previousStyle, currentStyle)) {
-        changedEdges.set(edgeId, previousStyle)
-      }
-    }
-
-    if (changedNodes.size === 0 && changedEdges.size === 0) {
-      return
-    }
-
-    this.sceneFocusTransition = {
-      nodes: changedNodes,
-      edges: changedEdges,
-      startedAt: performance.now(),
-      durationMs: SCENE_FOCUS_TRANSITION_MS,
-    }
-    this.scheduleHighlightTransitionFrame()
+    this.startHighlightTransition(from, to)
   }
 
   private bindEvents() {
@@ -1997,14 +2024,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     sigma.on('leaveStage', () => {
       this.clearHoveredNodeFocus()
-      this.avatarRevealPointer = null
-      this.scheduleAvatarRevealRender()
     })
 
     sigma.on('downNode', ({ node, event }) => {
       this.setCameraLocked(true)
-      this.avatarRevealPointer = { x: event.x, y: event.y }
-      this.scheduleAvatarRevealRender()
       this.pendingDragGesture = createPendingNodeDragGesture(node, {
         x: event.x,
         y: event.y,
@@ -2017,8 +2040,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
         x: event.x,
         y: event.y,
       }
-      this.avatarRevealPointer = this.lastMoveBodyPointer
-      this.scheduleAvatarRevealRender()
       this.shouldPinDraggedNodeOnRelease = isControlModifierPressed(event)
       const pendingDragGesture = this.pendingDragGesture
 
@@ -2078,12 +2099,13 @@ export class SigmaRendererAdapter implements RendererAdapter {
   ): RenderNodeAttributes {
     const cameraRatio = this.sigma?.getCamera().ratio ?? 1
     const zoomScaledSize = data.size * resolveZoomOutNodeScale(cameraRatio)
+    const shouldKeepLabel = data.forceLabel === true
 
     if (!focus.pubkey) {
       // Hot path during pan/zoom with no hover: merge size + label visibility
       // in a single spread instead of double-allocating via the helper.
       const sizeChanged = zoomScaledSize !== data.size
-      if (data.isSelected) {
+      if (shouldKeepLabel) {
         if (!sizeChanged && data.forceLabel) return data
         return { ...data, size: zoomScaledSize, forceLabel: true }
       }
@@ -2104,7 +2126,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     // Single spread (vs. helper) avoids per-node-per-frame double allocation.
     if (focus.neighbors.has(node)) {
-      return data.isSelected
+      return shouldKeepLabel
         ? {
             ...data,
             size: zoomScaledSize,
@@ -2122,7 +2144,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
           }
     }
 
-    return data.isSelected
+    return shouldKeepLabel
       ? {
           ...data,
           size: zoomScaledSize,
@@ -2147,18 +2169,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
     data: RenderEdgeAttributes,
     focus: HoverFocusSnapshot,
   ): RenderEdgeAttributes {
-    if (!focus.pubkey || !this.sigma) {
+    if (!focus.pubkey) {
       return data
     }
 
-    const graph = this.sigma.getGraph()
-    if (!graph.hasEdge(edge)) {
+    const endpoints = this.getEdgeEndpoints(edge)
+    if (!endpoints) {
       return data
     }
 
-    const source = graph.source(edge)
-    const target = graph.target(edge)
-    if (source !== focus.pubkey && target !== focus.pubkey) {
+    if (!this.edgeEndpointsTouchFocus(endpoints, focus)) {
       return {
         ...data,
         color: HOVER_DIM_EDGE_COLOR,
@@ -2176,101 +2196,73 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
-  private resolveDragEdgeLodAttributes(
-    edge: string,
-    data: RenderEdgeAttributes,
-  ): RenderEdgeAttributes | null {
-    const draggedNodePubkey = this.draggedNodePubkey
-    if (!draggedNodePubkey || !this.sigma) {
+  private getEdgeEndpoints(edge: string): { source: string; target: string } | null {
+    if (!this.sigma) {
       return null
     }
 
     const graph = this.sigma.getGraph()
     if (!graph.hasEdge(edge)) {
-      return data
+      return null
     }
 
-    const source = graph.source(edge)
-    const target = graph.target(edge)
-    if (source !== draggedNodePubkey && target !== draggedNodePubkey) {
-      return data.hidden ? data : { ...data, hidden: true }
+    return {
+      source: graph.source(edge),
+      target: graph.target(edge),
     }
-
-    return this.resolveEdgeHoverAttributes(edge, data, {
-      pubkey: draggedNodePubkey,
-      neighbors: this.currentHoverFocus.neighbors,
-    })
   }
 
-  private resolveLowPerformanceEdgeLodAttributes(
+  private edgeEndpointsTouchFocus(
+    endpoints: { source: string; target: string },
+    focus: HoverFocusSnapshot,
+  ) {
+    return (
+      Boolean(focus.pubkey) &&
+      (endpoints.source === focus.pubkey || endpoints.target === focus.pubkey)
+    )
+  }
+
+  private resolveEdgeLodAttributes(
     edge: string,
     data: RenderEdgeAttributes,
+    focus: HoverFocusSnapshot,
   ): RenderEdgeAttributes {
-    if (data.hidden || data.touchesFocus || !this.sigma) {
+    if (!this.sigma) {
       return data
     }
 
-    const hoverFocus = this.currentHoverFocus
-    if (hoverFocus.pubkey) {
-      const graph = this.sigma.getGraph()
-      if (!graph.hasEdge(edge)) {
+    if (focus.pubkey) {
+      const endpoints = this.getEdgeEndpoints(edge)
+      if (!endpoints) {
         return data
       }
-
-      const source = graph.source(edge)
-      const target = graph.target(edge)
-      if (source === hoverFocus.pubkey || target === hoverFocus.pubkey) {
-        return this.resolveEdgeHoverAttributes(edge, data, hoverFocus)
+      if (this.edgeEndpointsTouchFocus(endpoints, focus)) {
+        return this.resolveEdgeHoverAttributes(edge, data, focus)
       }
+    }
+
+    if (data.hidden) {
+      return data
     }
 
     return { ...data, hidden: true }
-  }
-
-  private applyNodeSceneFocusTransition(
-    node: string,
-    target: RenderNodeAttributes,
-  ) {
-    if (!this.sceneFocusTransition) {
-      return target
-    }
-
-    const previousStyle = this.sceneFocusTransition.nodes.get(node)
-    if (!previousStyle) {
-      return target
-    }
-
-    return mixNodeVisualAttributes(
-      previousStyle,
-      target,
-      this.getTransitionAmount(this.sceneFocusTransition),
-    )
-  }
-
-  private applyEdgeSceneFocusTransition(
-    edge: string,
-    target: RenderEdgeAttributes,
-  ) {
-    if (!this.sceneFocusTransition) {
-      return target
-    }
-
-    const previousStyle = this.sceneFocusTransition.edges.get(edge)
-    if (!previousStyle) {
-      return target
-    }
-
-    return mixEdgeVisualAttributes(
-      previousStyle,
-      target,
-      this.getTransitionAmount(this.sceneFocusTransition),
-    )
   }
 
   private readonly nodeReducer = (
     node: string,
     data: RenderNodeAttributes,
   ) => {
+    const focus = this.resolveRendererFocus()
+    if (this.draggedNodePubkey) {
+      // Durante el drag NO oscurecemos el resto del grafo: aplicamos sólo el
+      // escalado por zoom usando un focus vacío para mantener la vista completa.
+      return this.resolveNodeHoverAttributes(
+        node,
+        data,
+        EMPTY_RENDERER_FOCUS,
+      )
+    }
+
     if (this.highlightTransition) {
       const amount = this.getTransitionAmount(this.highlightTransition)
       const from = this.resolveNodeHoverAttributes(
@@ -2290,22 +2282,24 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const target = this.resolveNodeHoverAttributes(
       node,
       data,
-      this.currentHoverFocus,
+      focus,
     )
-    return this.applyNodeSceneFocusTransition(node, target)
+    return target
   }
 
   private readonly edgeReducer = (
     edge: string,
     data: RenderEdgeAttributes,
   ) => {
-    const dragEdgeLod = this.resolveDragEdgeLodAttributes(edge, data)
-    if (dragEdgeLod) {
-      return dragEdgeLod
+    const focus = this.resolveRendererFocus()
+    if (this.draggedNodePubkey) {
+      // Durante el drag mostramos todo el grafo sin oscurecer ni ocultar
+      // aristas. El nodo arrastrado se mueve y el resto sigue siendo visible.
+      return data
     }
 
     if (this.hideConnectionsForLowPerformance) {
-      return this.resolveLowPerformanceEdgeLodAttributes(edge, data)
+      return this.resolveEdgeLodAttributes(edge, data, focus)
     }
 
     if (this.highlightTransition) {
@@ -2327,9 +2321,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const target = this.resolveEdgeHoverAttributes(
       edge,
       data,
-      this.currentHoverFocus,
+      focus,
     )
-    return this.applyEdgeSceneFocusTransition(edge, target)
+    return target
   }
 
   private readonly setHoveredNode = (
@@ -2346,32 +2340,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
-    if (this.hoveredNodePubkey === pubkey) {
+    if (!force && this.hoveredNodePubkey === pubkey) {
       return
     }
 
     const previousFocus = this.copyHoverFocusSnapshot()
-    this.hoveredNodePubkey = pubkey
-    const nextNeighbors = new Set<string>()
-
-    if (pubkey && this.renderStore) {
-      const graph = this.renderStore.getGraph()
-      if (graph.hasNode(pubkey)) {
-        graph.forEachNeighbor(pubkey, (neighborPubkey) => {
-          nextNeighbors.add(neighborPubkey)
-        })
-      }
-    }
-
-    this.hoveredNeighbors = nextNeighbors
-    this.currentHoverFocus = {
-      pubkey,
-      neighbors: nextNeighbors,
-    }
+    const nextFocus = this.createFocusSnapshot(pubkey)
+    this.applyHoverFocusSnapshot(pubkey, nextFocus)
     // Share the same Set reference with the transition: currentHoverFocus is
     // reassigned (not mutated) on the next hover, so the transition's `to`
     // snapshot stays stable without a defensive clone.
-    this.startHighlightTransition(previousFocus, this.currentHoverFocus)
+    this.startRendererFocusTransition(previousFocus, this.currentHoverFocus)
     this.safeRender()
   }
 
@@ -2431,8 +2410,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.lastOutsideNodeFocusClearAt = now
-    this.clearHoveredNodeFocus()
-    this.callbacks?.onClearSelection()
+    this.clearInteractiveRendererFocus({ notifySelection: true })
   }
 
   // After releasing a drag, check what node (if any) sits under the last
@@ -2697,7 +2675,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.avatarOverlay?.forEachVisibleNodePubkey((pubkey) => {
         addPubkey(pubkey)
       }) ?? 0
-    for (const pubkey of this.hoveredNeighbors) {
+    const rendererFocus = this.resolveRendererFocus()
+    for (const pubkey of rendererFocus.neighbors) {
       addPubkey(pubkey)
     }
     const dragHopDistances = this.dragHopDistances

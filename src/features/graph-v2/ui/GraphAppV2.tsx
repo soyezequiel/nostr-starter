@@ -42,6 +42,9 @@ import type {
   CanonicalNode,
 } from '@/features/graph-v2/domain/types'
 import {
+  applyVisibleEdgeCountLabels,
+} from '@/features/graph-v2/projections/applyVisibleEdgeCountLabels'
+import {
   buildGraphSceneSnapshot,
   getSnapshotCacheStats,
 } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
@@ -269,6 +272,18 @@ const readStoredRuntimeInspectorButtonEnabled = () => {
   }
 }
 
+const readStoredVisibleEdgeCountLabelsEnabled = () => {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    return window.localStorage.getItem(VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 interface LoadRootInput
   extends Omit<Pick<ValidRootIdentity, 'pubkey' | 'relays' | 'evidence'>, 'relays'> {
   relays?: string[]
@@ -292,6 +307,7 @@ const DEV_SIGMA_SETTINGS_TAB: { id: SigmaSettingsTab; label: string } = {
 const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
 const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const RUNTIME_INSPECTOR_BUTTON_STORAGE_KEY = 'sigma.runtimeInspectorButtonEnabled'
+const VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY = 'sigma.visibleEdgeCountLabels'
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
 
@@ -1101,29 +1117,57 @@ function DragTuningPanel({
 
 function VisualOptionsPanel({
   avatarRuntimeOptions,
+  showVisibleEdgeCountLabels,
   onAvatarRuntimeOptionsChange,
+  onToggleVisibleEdgeCountLabels,
 }: {
   avatarRuntimeOptions: AvatarRuntimeOptions
+  showVisibleEdgeCountLabels: boolean
   onAvatarRuntimeOptionsChange: (options: AvatarRuntimeOptions) => void
+  onToggleVisibleEdgeCountLabels: () => void
 }) {
   return (
-    <div className="sg-settings-section">
-      <h4>Monogramas</h4>
-      <div className="sg-setting-row">
-        <div>
-          <div className="sg-setting-row__lbl">Letras de monograma</div>
-          <div className="sg-setting-row__desc">
-            Muestra iniciales cuando no hay foto disponible.
+    <div>
+      <div className="sg-settings-section">
+        <h4>Etiquetas</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">Grado visible</div>
+            <div className="sg-setting-row__desc">
+              Cada nodo muestra cuantas aristas visibles lo tocan en la vista actual.
+            </div>
           </div>
+          <button
+            aria-pressed={showVisibleEdgeCountLabels}
+            className={`sg-toggle${showVisibleEdgeCountLabels ? ' sg-toggle--on' : ''}`}
+            onClick={onToggleVisibleEdgeCountLabels}
+            title={
+              showVisibleEdgeCountLabels
+                ? 'Volver a mostrar nombres de nodos'
+                : 'Mostrar cantidad de aristas visibles por nodo'
+            }
+            type="button"
+          />
         </div>
-        <button
-          className={`sg-toggle${avatarRuntimeOptions.showMonogramText ? ' sg-toggle--on' : ''}`}
-          onClick={() => onAvatarRuntimeOptionsChange({
-            ...avatarRuntimeOptions,
-            showMonogramText: !avatarRuntimeOptions.showMonogramText,
-          })}
-          type="button"
-        />
+      </div>
+      <div className="sg-settings-section">
+        <h4>Monogramas</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">Letras de monograma</div>
+            <div className="sg-setting-row__desc">
+              Muestra iniciales cuando no hay foto disponible.
+            </div>
+          </div>
+          <button
+            className={`sg-toggle${avatarRuntimeOptions.showMonogramText ? ' sg-toggle--on' : ''}`}
+            onClick={() => onAvatarRuntimeOptionsChange({
+              ...avatarRuntimeOptions,
+              showMonogramText: !avatarRuntimeOptions.showMonogramText,
+            })}
+            type="button"
+          />
+        </div>
       </div>
     </div>
   )
@@ -1379,46 +1423,6 @@ function AdvancedAvatarOptionsPanel({
           step={0.05}
           type="range"
           value={avatarRuntimeOptions.zoomThreshold}
-        />
-      </div>
-      <div className="sg-slider-row">
-        <div className="sg-slider-row__head">
-          <span className="sg-slider-row__lbl">Radio cerca del mouse</span>
-          <span className="sg-slider-row__val">{avatarRuntimeOptions.hoverRevealRadiusPx.toFixed(0)}px</span>
-        </div>
-        <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>
-          Fuerza fotos para los nodos más cercanos dentro de ese radio.
-        </p>
-        <input
-          className="sg-slider"
-          max={180}
-          min={0}
-          onChange={(event) => {
-            onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, hoverRevealRadiusPx: Number.parseInt(event.target.value, 10) })
-          }}
-          step={4}
-          type="range"
-          value={avatarRuntimeOptions.hoverRevealRadiusPx}
-        />
-      </div>
-      <div className="sg-slider-row">
-        <div className="sg-slider-row__head">
-          <span className="sg-slider-row__lbl">Máx cerca del mouse</span>
-          <span className="sg-slider-row__val">{avatarRuntimeOptions.hoverRevealMaxNodes.toFixed(0)} nodos</span>
-        </div>
-        <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>
-          Limita cuántas fotos puede forzar el radio; prioriza las más cercanas al puntero.
-        </p>
-        <input
-          className="sg-slider"
-          max={96}
-          min={0}
-          onChange={(event) => {
-            onAvatarRuntimeOptionsChange({ ...avatarRuntimeOptions, hoverRevealMaxNodes: Number.parseInt(event.target.value, 10) })
-          }}
-          step={4}
-          type="range"
-          value={avatarRuntimeOptions.hoverRevealMaxNodes}
         />
       </div>
       <div className="sg-setting-row">
@@ -1704,12 +1708,22 @@ const RuntimeInspectorUiStateBridge = memo(function RuntimeInspectorUiStateBridg
 export default function GraphAppV2() {
   const searchParams = useSearchParams()
   const fixtureName = searchParams.get('fixture')
+  const fixtureSource = searchParams.get('fixtureSource')
   const isTestMode = searchParams.get('testMode') === '1'
-  const isFixtureMode = isTestMode && fixtureName === 'drag-local'
+  // `fixture=drag-local` keeps the drag lab chrome enabled. The synthetic graph
+  // is now explicit so the same URL can exercise a real Nostr identity.
+  const isFixtureMode =
+    isTestMode && fixtureName === 'drag-local' && fixtureSource === 'local'
+  const isRealDragLabMode =
+    isTestMode && fixtureName === 'drag-local' && fixtureSource !== 'local'
   const isDev = process.env.NODE_ENV === 'development'
   const [bridge] = useState(() => new LegacyKernelBridge())
   const [loadFeedback, setLoadFeedback] = useState<string | null>(
-    isFixtureMode ? 'Fixture drag-local cargado para Playwright.' : null,
+    isFixtureMode
+      ? 'Fixture drag-local cargado para Playwright.'
+      : isRealDragLabMode
+        ? 'Cargando usuario real para drag-local...'
+        : null,
   )
   const [actionFeedback, setActionFeedback] = useState<string | null>(null)
   const [notificationHistory, setNotificationHistory] = useState<SigmaNotificationLogEntry[]>([])
@@ -1774,6 +1788,9 @@ export default function GraphAppV2() {
   )
   const [runtimeInspectorButtonEnabled, setRuntimeInspectorButtonEnabled] =
     useState(() => isDev || readStoredRuntimeInspectorButtonEnabled())
+  const [showVisibleEdgeCountLabels, setShowVisibleEdgeCountLabels] = useState(
+    readStoredVisibleEdgeCountLabelsEnabled,
+  )
   const [showZaps, setShowZaps] = useState(true)
   const [zapFeedMode, setZapFeedMode] = useState<ZapFeedMode>('live')
   const [recentZapReplayRequest, setRecentZapReplayRequest] = useState(0)
@@ -1786,6 +1803,7 @@ export default function GraphAppV2() {
   const pendingExpansionAutoFitRef = useRef<ExpansionAutoFitRequest | null>(
     null,
   )
+  const realDragLabAutoloadAttemptedRef = useRef(false)
   const visibleProfileWarmupAttemptedAtRef = useRef(new Map<string, number>())
   const visibleProfileWarmupInflightRef = useRef(new Set<string>())
   const visibleProfileWarmupDebugRef =
@@ -1885,6 +1903,17 @@ export default function GraphAppV2() {
       // Persistence is best-effort; the runtime toggle still works.
     }
   }, [isDev, runtimeInspectorButtonEnabled])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY,
+        showVisibleEdgeCountLabels ? '1' : '0',
+      )
+    } catch {
+      // Non-critical preference persistence.
+    }
+  }, [showVisibleEdgeCountLabels])
 
   useEffect(() => {
     setIsLowPerformanceForConnections((current) =>
@@ -2217,8 +2246,12 @@ export default function GraphAppV2() {
     [deferredPersonSearchQuery, deferredScene],
   )
   const displayScene = useMemo(
-    () => applyPersonSearchHighlight(deferredScene, personSearchMatches),
-    [deferredScene, personSearchMatches],
+    () =>
+      applyVisibleEdgeCountLabels(
+        applyPersonSearchHighlight(deferredScene, personSearchMatches),
+        showVisibleEdgeCountLabels,
+      ),
+    [deferredScene, personSearchMatches, showVisibleEdgeCountLabels],
   )
 
   useEffect(() => {
@@ -2822,6 +2855,71 @@ export default function GraphAppV2() {
       profileFetchedAt: Date.now(),
     })
   }, [loadRootFromPointer, sessionIdentity.isConnected, sessionIdentity.profile])
+
+  useEffect(() => {
+    if (!isRealDragLabMode) {
+      realDragLabAutoloadAttemptedRef.current = false
+      return
+    }
+    if (
+      realDragLabAutoloadAttemptedRef.current ||
+      sceneState.rootPubkey ||
+      isRootLoadScreenOpen
+    ) {
+      return
+    }
+
+    const sessionProfile = sessionIdentity.isConnected
+      ? sessionIdentity.profile
+      : null
+    if (sessionProfile?.pubkey) {
+      realDragLabAutoloadAttemptedRef.current = true
+      loadRootFromPointer({
+        pubkey: sessionProfile.pubkey,
+        source: 'session',
+        evidence: {
+          normalizedInput: sessionProfile.npub,
+        },
+        npub: sessionProfile.npub,
+        relays: [],
+        profile: mapNostrProfileToSavedRootProfile(sessionProfile),
+        profileFetchedAt: Date.now(),
+      })
+      return
+    }
+
+    if (!savedRootsHydrated) {
+      return
+    }
+
+    const savedRoot = savedRoots[0]
+    if (!savedRoot) {
+      realDragLabAutoloadAttemptedRef.current = true
+      setLoadFeedback('Elegí una identidad real para usar el laboratorio drag-local.')
+      setIsRootSheetOpen(true)
+      return
+    }
+
+    realDragLabAutoloadAttemptedRef.current = true
+    loadRootFromPointer({
+      pubkey: savedRoot.pubkey,
+      source: savedRoot.source ?? 'npub',
+      evidence: savedRoot.evidence,
+      npub: savedRoot.npub,
+      relays: savedRoot.relayHints ?? [],
+      profile: savedRoot.profile,
+      profileFetchedAt: savedRoot.profileFetchedAt,
+    })
+  }, [
+    isRealDragLabMode,
+    isRootLoadScreenOpen,
+    loadRootFromPointer,
+    savedRoots,
+    savedRootsHydrated,
+    sceneState.rootPubkey,
+    sessionIdentity.isConnected,
+    sessionIdentity.profile,
+  ])
 
   const handleDeleteSavedRoot = useCallback(
     (savedRoot: SavedRootEntry) => { removeSavedRoot(savedRoot.pubkey) },
@@ -3522,6 +3620,10 @@ export default function GraphAppV2() {
             <VisualOptionsPanel
               avatarRuntimeOptions={avatarRuntimeOptions}
               onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+              onToggleVisibleEdgeCountLabels={() => {
+                setShowVisibleEdgeCountLabels((current) => !current)
+              }}
+              showVisibleEdgeCountLabels={showVisibleEdgeCountLabels}
             />
             {renderZapSettingsContent()}
           </div>

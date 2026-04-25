@@ -51,11 +51,9 @@ const COMMON_NODE_PALETTE = [
 const commonNodeColorCache = new Map<string, string>()
 
 const DIM_NODE_COLOR = '#121a22'
-const DIM_EDGE_COLOR = '#10171f'
 const SELECTED_COLOR = '#f4fbff'
 const PINNED_COLOR = '#f4fbff'
 const ROOT_COLOR = '#7dd3a7'
-const NEIGHBOR_EDGE_BRIGHT = '#f4fbff'
 
 const SIZE_ROOT = 18
 const SIZE_EXPANDED = 18
@@ -129,7 +127,7 @@ const getReciprocalFollowEdgeIds = (edges: readonly CanonicalEdge[]) => {
   return reciprocalEdgeIds
 }
 
-const shouldIncludeFocusedContextEdge = ({
+const shouldIncludeSelectionContextEdge = ({
   activeLayer,
   edge,
   visibleEdgeIds,
@@ -150,40 +148,18 @@ const shouldIncludeFocusedContextEdge = ({
 
 const resolveFocusState = ({
   isRoot,
-  isSelected,
   isPinned,
-  isNeighbor,
-  hasSelection,
 }: {
   isRoot: boolean
-  isSelected: boolean
   isPinned: boolean
-  isNeighbor: boolean
-  hasSelection: boolean
 }): GraphSceneFocusState => {
-  if (!hasSelection) {
-    if (isRoot) {
-      return 'root'
-    }
-    if (isPinned) {
-      return 'pinned'
-    }
-    return 'idle'
-  }
-
-  if (isSelected) {
-    return 'selected'
-  }
   if (isRoot) {
     return 'root'
-  }
-  if (isNeighbor) {
-    return 'neighbor'
   }
   if (isPinned) {
     return 'pinned'
   }
-  return 'dim'
+  return 'idle'
 }
 
 const resolveNodeColor = (
@@ -256,10 +232,6 @@ const resolveNodeExpansionProgress = (
 const mapRenderEdge = (
   edge: CanonicalEdge,
   hidden: boolean,
-  focusState: {
-    hasSelection: boolean
-    touchesFocus: boolean
-  },
   options: {
     isMutual: boolean
   },
@@ -268,25 +240,18 @@ const mapRenderEdge = (
     ? MUTUAL_EDGE_COLOR
     : edgeColorByRelation[edge.relation]
   const base = baseEdgeSize(edge.relation)
-  const isDimmed = focusState.hasSelection && !focusState.touchesFocus
-  const color = !focusState.hasSelection
-    ? baseColor
-    : focusState.touchesFocus
-      ? NEIGHBOR_EDGE_BRIGHT
-      : DIM_EDGE_COLOR
-  const size = focusState.touchesFocus ? base + 1.6 : isDimmed ? 0.25 : base
 
   return {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    color,
-    size,
+    color: baseColor,
+    size: base,
     hidden,
     relation: edge.relation,
     weight: edge.weight,
-    isDimmed,
-    touchesFocus: focusState.touchesFocus,
+    isDimmed: false,
+    touchesFocus: false,
   }
 }
 
@@ -336,8 +301,6 @@ class ForceEdgeEligibilityPolicy implements PhysicsEligibilityPolicy {
 const DEFAULT_PHYSICS_ELIGIBILITY_POLICY = new ForceEdgeEligibilityPolicy()
 
 interface GraphSceneStructureSnapshot {
-  visualFocusPubkey: string | null
-  hasVisualFocus: boolean
   sortedNodePubkeys: string[]
   depth1Neighbors: ReadonlySet<string>
   visibleEdges: GraphRenderEdge[]
@@ -387,12 +350,12 @@ const resolveTopologySignature = (state: CanonicalGraphSceneState) =>
   ].join('|')
 
 const createStructureSignature = (state: CanonicalGraphSceneState) => {
-  const visualFocusPubkey =
+  const selectionContextPubkey =
     state.selectedNodePubkey && state.nodesByPubkey[state.selectedNodePubkey]
       ? state.selectedNodePubkey
       : 'no-selection'
 
-  return [resolveTopologySignature(state), visualFocusPubkey].join('|')
+  return [resolveTopologySignature(state), selectionContextPubkey].join('|')
 }
 
 export const buildGraphSceneSnapshot = (
@@ -470,8 +433,6 @@ const computeGraphSceneSnapshot = (
   }
 
   const {
-    visualFocusPubkey,
-    hasVisualFocus,
     sortedNodePubkeys,
     depth1Neighbors,
     visibleEdges,
@@ -490,10 +451,7 @@ const computeGraphSceneSnapshot = (
       const isNeighbor = depth1Neighbors.has(node.pubkey)
       const focusState = resolveFocusState({
         isRoot,
-        isSelected: node.pubkey === visualFocusPubkey,
         isPinned,
-        isNeighbor,
-        hasSelection: hasVisualFocus,
       })
       const baseColor = resolveBaseNodeColor(node)
       const baseSize = isRoot
@@ -623,7 +581,7 @@ const computeGraphSceneSnapshot = (
         pubkeys: Array.from(state.pinnedNodePubkeys),
       },
       cameraHint: {
-        focusPubkey: selectedNodePubkey ?? state.rootPubkey,
+        focusPubkey: null,
         rootPubkey: state.rootPubkey,
       },
       diagnostics: {
@@ -669,43 +627,43 @@ const computeGraphSceneStructure = (
     layerProjection.visibleEdges.map((edge) => edge.id),
   )
   const visibleNodePubkeys = new Set(layerProjection.visibleNodePubkeys)
-  const visualFocusPubkey =
+  const selectionContextPubkey =
     state.selectedNodePubkey && state.nodesByPubkey[state.selectedNodePubkey]
       ? state.selectedNodePubkey
       : null
-  const hasVisualFocus = visualFocusPubkey !== null
+  const hasSelectionContext = selectionContextPubkey !== null
   const forceEdges =
     state.activeLayer === 'graph'
       ? layerProjection.visibleEdges
       : sortAndDedupeDirectedEdges([
           ...layerProjection.visibleEdges,
-          ...(hasVisualFocus
+          ...(hasSelectionContext
             ? Object.values(state.edgesById).filter(
                 (edge) =>
-                  shouldIncludeFocusedContextEdge({
+                  shouldIncludeSelectionContextEdge({
                     activeLayer: state.activeLayer,
                     edge,
                     visibleEdgeIds,
                   }) &&
                   visibleNodePubkeys.has(edge.source) &&
                   visibleNodePubkeys.has(edge.target) &&
-                  (edge.source === visualFocusPubkey ||
-                    edge.target === visualFocusPubkey),
+                  (edge.source === selectionContextPubkey ||
+                    edge.target === selectionContextPubkey),
               )
             : []),
         ])
 
   const depth1Neighbors = new Set<string>()
-  if (visualFocusPubkey && hasVisualFocus) {
+  if (selectionContextPubkey && hasSelectionContext) {
     for (const edge of forceEdges) {
-      if (edge.source === visualFocusPubkey) {
+      if (edge.source === selectionContextPubkey) {
         depth1Neighbors.add(edge.target)
       }
-      if (edge.target === visualFocusPubkey) {
+      if (edge.target === selectionContextPubkey) {
         depth1Neighbors.add(edge.source)
       }
     }
-    depth1Neighbors.delete(visualFocusPubkey)
+    depth1Neighbors.delete(selectionContextPubkey)
   }
 
   const sortedNodePubkeys = Array.from(visibleNodePubkeys)
@@ -728,34 +686,18 @@ const computeGraphSceneStructure = (
     })
     .map((node) => node.pubkey)
 
-  const touchesFocus = (edge: CanonicalEdge) => {
-    if (!hasVisualFocus || !visualFocusPubkey) {
-      return false
-    }
-    return edge.source === visualFocusPubkey || edge.target === visualFocusPubkey
-  }
-
   const reciprocalVisibleEdgeIds = getReciprocalFollowEdgeIds(layerProjection.visibleEdges)
   const reciprocalForceEdgeIds = getReciprocalFollowEdgeIds(forceEdges)
 
   const visibleEdges = layerProjection.visibleEdges.map((edge) =>
     mapRenderEdge(edge, false, {
-      hasSelection: hasVisualFocus,
-      touchesFocus: touchesFocus(edge),
-    }, {
       isMutual: reciprocalVisibleEdgeIds.has(edge.id),
     }),
   )
   const renderForceEdges = forceEdges.map((edge) => {
-    const edgeTouchesFocus = touchesFocus(edge)
-
     return mapRenderEdge(
       edge,
-      !visibleEdgeIds.has(edge.id) && !(hasVisualFocus && edgeTouchesFocus),
-      {
-        hasSelection: hasVisualFocus,
-        touchesFocus: edgeTouchesFocus,
-      },
+      !visibleEdgeIds.has(edge.id),
       {
         isMutual: reciprocalForceEdgeIds.has(edge.id),
       },
@@ -763,8 +705,6 @@ const computeGraphSceneStructure = (
   })
 
   return {
-    visualFocusPubkey,
-    hasVisualFocus,
     sortedNodePubkeys,
     depth1Neighbors,
     visibleEdges,

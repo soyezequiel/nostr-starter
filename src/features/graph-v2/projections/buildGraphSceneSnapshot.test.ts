@@ -375,7 +375,7 @@ test('renders expanded nodes with the same base size as the root', () => {
   assert.equal(nodesByPubkey.alice?.size, 18)
 })
 
-test('uses selection as visual focus while keeping the expanded physics neighborhood', () => {
+test('keeps selection semantic while the renderer owns visual focus', () => {
   const scene = buildGraphSceneSnapshot(
     createState({
       selectedNodePubkey: 'alice',
@@ -390,11 +390,11 @@ test('uses selection as visual focus while keeping the expanded physics neighbor
   )
   assert.equal(scene.render.selection.selectedNodePubkey, 'alice')
   assert.equal(nodesByPubkey.alice?.isSelected, true)
-  assert.equal(focusByPubkey.alice, 'selected')
+  assert.equal(focusByPubkey.alice, 'idle')
   assert.equal(focusByPubkey.root, 'root')
-  assert.equal(focusByPubkey.bob, 'neighbor')
-  assert.equal(nodesByPubkey.alice?.color, '#f4fbff')
-  assert.equal(nodesByPubkey.alice?.size, 17)
+  assert.equal(focusByPubkey.bob, 'idle')
+  assert.equal(nodesByPubkey.alice?.color, '#9da8c9')
+  assert.equal(nodesByPubkey.alice?.size, 9)
   assert.equal(nodesByPubkey.bob?.color, '#8ebfc7')
   assert.equal(nodesByPubkey.bob?.size, 9)
 
@@ -406,10 +406,9 @@ test('uses selection as visual focus while keeping the expanded physics neighbor
   const visibleEdgesById = Object.fromEntries(
     scene.render.visibleEdges.map((edge) => [edge.id, edge]),
   )
-  assert.equal(visibleEdgesById['root->alice:follow']?.touchesFocus, true)
-  assert.equal(visibleEdgesById['root->bob:follow']?.isDimmed, true)
-  assert.equal(visibleEdgesById['root->bob:follow']?.color, '#10171f')
-  assert.equal(visibleEdgesById['root->bob:follow']?.size, 0.25)
+  assert.equal(visibleEdgesById['root->alice:follow']?.touchesFocus, false)
+  assert.equal(visibleEdgesById['root->bob:follow']?.isDimmed, false)
+  assert.equal(visibleEdgesById['root->bob:follow']?.touchesFocus, false)
 })
 
 test('keeps root as the root focus state even when it is a depth-1 neighbor of the selection', () => {
@@ -471,7 +470,7 @@ test('marks pinned nodes outside the neighborhood with pinned focus state (not d
   assert.equal(carol.focusState, 'pinned')
 })
 
-test('dims visible edges outside the selected node neighborhood', () => {
+test('does not dim visible edges from semantic selection alone', () => {
   const state = createState({
     activeLayer: 'graph',
     selectedNodePubkey: 'root',
@@ -528,6 +527,6 @@ test('dims visible edges outside the selected node neighborhood', () => {
     (edge) => edge.id === 'carol->dave:follow',
   )
   assert.ok(dimmed)
-  assert.equal(dimmed.isDimmed, true)
+  assert.equal(dimmed.isDimmed, false)
   assert.equal(dimmed.touchesFocus, false)
 })

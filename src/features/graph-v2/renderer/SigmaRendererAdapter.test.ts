@@ -6,6 +6,8 @@ import {
   NodePositionLedger,
   PhysicsGraphStore,
   RenderGraphStore,
+  type RenderEdgeAttributes,
+  type RenderNodeAttributes,
 } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 import type {
   GraphInteractionCallbacks,
@@ -95,6 +97,61 @@ test('sigma settings disable camera rotation while keeping regular camera contro
     globalThis.WebGL2RenderingContext = originalWebGL2RenderingContext
     globalThis.WebGLRenderingContext = originalWebGLRenderingContext
   }
+})
+
+test('forced node labels survive renderer hover and idle label pruning', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => { ratio: number }
+    }
+    resolveNodeHoverAttributes: (
+      node: string,
+      data: RenderNodeAttributes,
+      focus: { pubkey: string | null; neighbors: Set<string> },
+    ) => RenderNodeAttributes
+  }
+  const forcedLabelNode: RenderNodeAttributes = {
+    x: 0,
+    y: 0,
+    size: 10,
+    color: '#fff',
+    focusState: 'idle',
+    label: '2',
+    hidden: false,
+    highlighted: false,
+    forceLabel: true,
+    fixed: false,
+    pictureUrl: null,
+    isExpanding: false,
+    expansionProgress: null,
+    isDimmed: false,
+    isSelected: false,
+    isNeighbor: false,
+    isRoot: false,
+    isPinned: false,
+    zIndex: 0,
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({ ratio: 1 }),
+  }
+
+  const idleNode = adapter.resolveNodeHoverAttributes('alice', forcedLabelNode, {
+    pubkey: null,
+    neighbors: new Set(),
+  })
+  const dimmedNode = adapter.resolveNodeHoverAttributes('alice', forcedLabelNode, {
+    pubkey: 'root',
+    neighbors: new Set(),
+  })
+
+  assert.equal(idleNode.label, '2')
+  assert.equal(idleNode.forceLabel, true)
+  assert.equal(dimmedNode.label, '2')
+  assert.equal(dimmedNode.forceLabel, true)
 })
 
 test('touch taps tolerate small finger drift when selecting nodes', async () => {
@@ -844,7 +901,9 @@ type EdgeReducerHarness = {
     }
   }
   draggedNodePubkey: string | null
+  draggedNodeFocus: { pubkey: string | null; neighbors: Set<string> }
   currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+  selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
   safeRender: () => void
   setHideConnectionsForLowPerformance: (enabled: boolean) => void
   edgeReducer: (
@@ -1068,6 +1127,566 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   assert.equal(adapter.draggedNodePubkey, null)
   assert.equal(adapter.resumePhysicsAfterDrag, true)
   assert.deepEqual(dragEnds, [{ x: 10, y: 20 }])
+})
+
+test('node drag temporarily keeps Sigma edge rendering enabled for first-order connections', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+
+  let hideEdgesOnMove = true
+  const hideEdgesOnMoveUpdates: boolean[] = []
+  let customBBoxUpdates = 0
+  let dragStarts = 0
+  const dragEnds: Array<{ x: number; y: number }> = []
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getSetting: (key: 'hideEdgesOnMove') => boolean
+      setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
+      getBBox: () => { x: [number, number]; y: [number, number] }
+      setCustomBBox: (_bbox: { x: [number, number]; y: [number, number] } | null) => void
+      getCamera: () => { disable: () => void; enable: () => void }
+    }
+    container: Pick<HTMLElement, 'offsetWidth' | 'offsetHeight'>
+    scene: GraphSceneSnapshot
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      isRunning: () => boolean
+      isSuspended: () => boolean
+      suspend: () => void
+      resume: (_options?: { invalidateConvergence?: boolean }) => void
+    }
+    ensurePhysicsPositionBridge: () => void
+    safeRender: () => void
+    flushPendingDragFrame: () => void
+    startHighlightTransition: () => void
+    startDrag: (pubkey: string) => void
+    releaseDrag: () => void
+  }
+
+  adapter.sigma = {
+    getSetting: () => hideEdgesOnMove,
+    setSetting: (_key, value) => {
+      hideEdgesOnMove = value
+      hideEdgesOnMoveUpdates.push(value)
+    },
+    getBBox: () => ({ x: [0, 1], y: [0, 1] }),
+    setCustomBBox: () => {
+      customBBoxUpdates += 1
+    },
+    getCamera: () => ({
+      disable: () => {},
+      enable: () => {},
+    }),
+  }
+  adapter.container = {
+    offsetWidth: 800,
+    offsetHeight: 600,
+  }
+  adapter.scene = scene
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = {
+    onNodeClick: () => {},
+    onNodeDoubleClick: () => {},
+    onClearSelection: () => {},
+    onNodeHover: () => {},
+    onNodeDragStart: () => {
+      dragStarts += 1
+    },
+    onNodeDragMove: () => {},
+    onNodeDragEnd: (_pubkey, position) => {
+      dragEnds.push(position)
+    },
+    onViewportChange: () => {},
+  }
+  adapter.forceRuntime = {
+    isRunning: () => false,
+    isSuspended: () => false,
+    suspend: () => {},
+    resume: () => {},
+  }
+  adapter.ensurePhysicsPositionBridge = () => {}
+  adapter.safeRender = () => {}
+  adapter.flushPendingDragFrame = () => {}
+  adapter.startHighlightTransition = () => {}
+
+  adapter.startDrag('A')
+  assert.equal(hideEdgesOnMove, false)
+  assert.deepEqual(hideEdgesOnMoveUpdates, [false])
+  assert.equal(customBBoxUpdates, 0)
+  assert.equal(dragStarts, 1)
+
+  adapter.releaseDrag()
+  assert.equal(hideEdgesOnMove, true)
+  assert.deepEqual(hideEdgesOnMoveUpdates, [false, true])
+  assert.equal(customBBoxUpdates, 0)
+  assert.equal(dragEnds.length, 1)
+})
+
+test('releaseDrag clears node focus instead of restoring hover on mobile', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const originalWindow = globalThis.window
+  let clearSelectionCalls = 0
+  const hoverEvents: Array<string | null> = []
+  const dragEnds: Array<{ x: number; y: number }> = []
+  let renderCalls = 0
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    draggedNodePubkey: string | null
+    shouldPinDraggedNodeOnRelease: boolean
+    lastDragFlushTimestamp: number | null
+    dragInfluenceState: null
+    lastDragGraphPosition: null
+    resumePhysicsAfterDrag: boolean
+    suppressedClick: unknown
+    suppressedStageClickUntil: number
+    hoveredNodePubkey: string | null
+    hoveredNeighbors: Set<string>
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
+    renderStore: { getNodePosition: (_pubkey: string) => { x: number; y: number } | null }
+    physicsStore: { setNodeFixed: (_pubkey: string, _pinned: boolean) => void }
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      resume: (_options?: { invalidateConvergence?: boolean }) => void
+    } | null
+    scene: { render: { pins: { pubkeys: string[] } } } | null
+    flushPendingDragFrame: () => void
+    cancelPendingDragFrame: () => void
+    ensurePhysicsPositionBridge: () => void
+    setCameraLocked: (_locked: boolean) => void
+    setGraphBoundsLocked: (_locked: boolean) => void
+    startHighlightTransition: () => void
+    safeRender: () => void
+    recalculateHoverAfterDrag: () => void
+    releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+  }
+
+  globalThis.window = {
+    matchMedia: (query: string) => ({
+      matches: query === '(max-width: 720px)',
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  } as Window & typeof globalThis
+
+  try {
+    adapter.draggedNodePubkey = 'alice'
+    adapter.shouldPinDraggedNodeOnRelease = false
+    adapter.lastDragFlushTimestamp = null
+    adapter.dragInfluenceState = null
+    adapter.lastDragGraphPosition = null
+    adapter.resumePhysicsAfterDrag = true
+    adapter.suppressedClick = null
+    adapter.suppressedStageClickUntil = 0
+    adapter.hoveredNodePubkey = 'alice'
+    adapter.hoveredNeighbors = new Set(['bob'])
+    adapter.currentHoverFocus = {
+      pubkey: 'alice',
+      neighbors: new Set(['bob']),
+    }
+    adapter.selectedSceneFocus = {
+      pubkey: 'alice',
+      neighbors: new Set(['bob']),
+    }
+    adapter.renderStore = {
+      getNodePosition: () => ({ x: 10, y: 20 }),
+    }
+    adapter.physicsStore = {
+      setNodeFixed: () => {},
+    }
+    adapter.callbacks = {
+      onNodeClick: () => {},
+      onNodeDoubleClick: () => {},
+      onClearSelection: () => {
+        clearSelectionCalls += 1
+      },
+      onNodeHover: (pubkey) => {
+        hoverEvents.push(pubkey)
+      },
+      onNodeDragStart: () => {},
+      onNodeDragMove: () => {},
+      onNodeDragEnd: (_pubkey, position) => {
+        dragEnds.push(position)
+      },
+      onViewportChange: () => {},
+    }
+    adapter.forceRuntime = {
+      resume: () => {},
+    }
+    adapter.scene = {
+      render: {
+        pins: { pubkeys: [] },
+      },
+    }
+    adapter.flushPendingDragFrame = () => {}
+    adapter.cancelPendingDragFrame = () => {}
+    adapter.ensurePhysicsPositionBridge = () => {}
+    adapter.setCameraLocked = () => {}
+    adapter.setGraphBoundsLocked = () => {}
+    adapter.startHighlightTransition = () => {}
+    adapter.safeRender = () => {
+      renderCalls += 1
+    }
+    adapter.recalculateHoverAfterDrag = () => {
+      throw new Error('mobile drag release should not restore hover focus')
+    }
+
+    adapter.releaseDrag()
+
+    assert.equal(clearSelectionCalls, 1)
+    assert.equal(adapter.hoveredNodePubkey, null)
+    assert.equal(adapter.currentHoverFocus.pubkey, null)
+    assert.equal(adapter.selectedSceneFocus.pubkey, null)
+    assert.deepEqual(hoverEvents, [null])
+    assert.deepEqual(dragEnds, [{ x: 10, y: 20 }])
+    assert.equal(renderCalls, 2)
+  } finally {
+    globalThis.window = originalWindow
+  }
+})
+
+test('forced hover refresh rebuilds neighbors when drag starts on the current hover node', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  renderStore.applyScene({
+    ...scene.render,
+    visibleEdges: [
+      {
+        id: 'A->D',
+        source: 'A',
+        target: 'D',
+        weight: 1,
+        color: '#fff',
+        size: 1,
+        hidden: false,
+        isDimmed: false,
+        touchesFocus: true,
+      },
+    ],
+  })
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    hoveredNodePubkey: string | null
+    hoveredNeighbors: Set<string>
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    renderStore: RenderGraphStore
+    startHighlightTransition: () => void
+    safeRender: () => void
+    setHoveredNode: (pubkey: string | null, force?: boolean) => void
+  }
+
+  adapter.hoveredNodePubkey = 'A'
+  adapter.hoveredNeighbors = new Set()
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(),
+  }
+  adapter.renderStore = renderStore
+  adapter.startHighlightTransition = () => {}
+  adapter.safeRender = () => {}
+
+  adapter.setHoveredNode('A', true)
+
+  assert.equal(adapter.currentHoverFocus.pubkey, 'A')
+  assert.deepEqual(Array.from(adapter.currentHoverFocus.neighbors), ['D'])
+})
+
+test('selected node uses the same renderer focus style when no hover is active', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const baseNode: RenderNodeAttributes = {
+    x: 0,
+    y: 0,
+    size: 10,
+    color: '#7dd3a7',
+    focusState: 'idle',
+    label: 'A',
+    hidden: false,
+    highlighted: false,
+    forceLabel: false,
+    fixed: false,
+    pictureUrl: null,
+    isExpanding: false,
+    expansionProgress: null,
+    isDimmed: false,
+    isSelected: false,
+    isNeighbor: false,
+    isRoot: false,
+    isPinned: false,
+    zIndex: 0,
+  }
+  const baseEdge: RenderEdgeAttributes = {
+    size: 1,
+    color: '#7dd3a7',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['B->C', ['B', 'C']],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => { ratio: number }
+      getGraph: () => {
+        hasEdge: (_edgeId: string) => boolean
+        source: (_edgeId: string) => string
+        target: (_edgeId: string) => string
+      }
+    }
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
+    nodeReducer: (node: string, data: RenderNodeAttributes) => RenderNodeAttributes
+    edgeReducer: (edge: string, data: RenderEdgeAttributes) => RenderEdgeAttributes
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({ ratio: 1 }),
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)![0],
+      target: (edgeId) => edgeEndpoints.get(edgeId)![1],
+    }),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+
+  const selected = adapter.nodeReducer('A', baseNode)
+  const neighbor = adapter.nodeReducer('B', baseNode)
+  const dimmed = adapter.nodeReducer('C', baseNode)
+  const focusedEdge = adapter.edgeReducer('A->B', baseEdge)
+  const dimmedEdge = adapter.edgeReducer('B->C', baseEdge)
+
+  assert.equal(selected.color, '#f4fbff')
+  assert.equal(selected.highlighted, true)
+  assert.ok(selected.zIndex >= 10)
+  assert.equal(neighbor.highlighted, true)
+  assert.ok(neighbor.zIndex >= 8)
+  assert.equal(dimmed.color, '#121a22')
+  assert.equal(focusedEdge.color, '#f4fbff')
+  assert.equal(focusedEdge.hidden, false)
+  assert.ok(focusedEdge.size > baseEdge.size)
+  assert.equal(dimmedEdge.color, '#10171f')
+})
+
+test('selection scene update applies renderer focus immediately', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const selectedScene: GraphSceneSnapshot = {
+    ...scene,
+    render: {
+      ...scene.render,
+      selection: {
+        ...scene.render.selection,
+        selectedNodePubkey: 'A',
+      },
+    },
+  }
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => { ratio: number }
+    }
+    scene: GraphSceneSnapshot
+    renderStore: RenderGraphStore
+    physicsStore: {
+      applyScene: (scene: GraphSceneSnapshot['physics']) => { topologyChanged: boolean }
+    }
+    forceRuntime: { sync: (scene: GraphSceneSnapshot['physics'], options?: { topologyChanged: boolean }) => void }
+    nodeHitTester: { markDirty: () => void }
+    ensurePhysicsPositionBridge: () => void
+    safeRefresh: () => void
+    highlightTransition: unknown
+    nodeReducer: (node: string, data: RenderNodeAttributes) => RenderNodeAttributes
+    update: (scene: GraphSceneSnapshot) => void
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({ ratio: 1 }),
+  }
+  adapter.scene = scene
+  adapter.renderStore = renderStore
+  adapter.physicsStore = {
+    applyScene: () => ({ topologyChanged: false }),
+  }
+  adapter.forceRuntime = { sync: () => {} }
+  adapter.nodeHitTester = { markDirty: () => {} }
+  adapter.ensurePhysicsPositionBridge = () => {}
+  adapter.safeRefresh = () => {}
+
+  adapter.update(selectedScene)
+
+  const selected = adapter.nodeReducer(
+    'A',
+    renderStore.getGraph().getNodeAttributes('A'),
+  )
+
+  assert.equal(adapter.highlightTransition, null)
+  assert.equal(selected.color, '#f4fbff')
+  assert.equal(selected.highlighted, true)
+  assert.ok(selected.zIndex >= 10)
+})
+
+test('renderer focus resolves through one priority path for drag hover and selection', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    draggedNodePubkey: string | null
+    draggedNodeFocus: { pubkey: string | null; neighbors: Set<string> }
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
+    resolveRendererFocus: () => {
+      pubkey: string | null
+      neighbors: Set<string>
+    }
+  }
+
+  adapter.selectedSceneFocus = {
+    pubkey: 'selected',
+    neighbors: new Set(['selected-neighbor']),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'hovered',
+    neighbors: new Set(['hovered-neighbor']),
+  }
+  adapter.draggedNodeFocus = {
+    pubkey: 'dragged',
+    neighbors: new Set(['dragged-neighbor']),
+  }
+  adapter.draggedNodePubkey = 'dragged'
+
+  const dragFocus = adapter.resolveRendererFocus()
+  assert.equal(dragFocus.pubkey, 'dragged')
+  assert.deepEqual(Array.from(dragFocus.neighbors), ['dragged-neighbor'])
+
+  adapter.draggedNodePubkey = null
+  assert.equal(adapter.resolveRendererFocus().pubkey, 'hovered')
+
+  adapter.currentHoverFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+  const selectedFocus = adapter.resolveRendererFocus()
+  assert.equal(selectedFocus.pubkey, 'selected')
+  assert.deepEqual(Array.from(selectedFocus.neighbors), ['selected-neighbor'])
+
+  adapter.selectedSceneFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+  assert.equal(adapter.resolveRendererFocus().pubkey, null)
+})
+
+test('drag node focus bypasses transitions so unrelated nodes hide immediately', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => { ratio: number }
+    }
+    draggedNodePubkey: string | null
+    draggedNodeFocus: { pubkey: string | null; neighbors: Set<string> }
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    highlightTransition: {
+      from: { pubkey: string | null; neighbors: Set<string> }
+      to: { pubkey: string | null; neighbors: Set<string> }
+      startedAt: number
+      durationMs: number
+    } | null
+    nodeReducer: (node: string, data: RenderNodeAttributes) => RenderNodeAttributes
+  }
+  const baseNode: RenderNodeAttributes = {
+    x: 0,
+    y: 0,
+    size: 10,
+    color: '#7dd3a7',
+    focusState: 'idle',
+    label: 'C',
+    hidden: false,
+    highlighted: false,
+    forceLabel: false,
+    fixed: false,
+    pictureUrl: null,
+    isExpanding: false,
+    expansionProgress: null,
+    isDimmed: false,
+    isSelected: false,
+    isNeighbor: false,
+    isRoot: false,
+    isPinned: false,
+    zIndex: 0,
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({ ratio: 1 }),
+  }
+  adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.highlightTransition = {
+    from: { pubkey: null, neighbors: new Set() },
+    to: { pubkey: 'A', neighbors: new Set(['B']) },
+    startedAt: performance.now(),
+    durationMs: 180,
+  }
+
+  const dimmed = adapter.nodeReducer('C', baseNode)
+
+  assert.equal(dimmed.color, '#121a22')
+  assert.equal(dimmed.highlighted, false)
+  assert.ok(dimmed.zIndex < 0)
 })
 
 test('highlight transition frame uses render-only scheduling', async () => {
@@ -1507,6 +2126,10 @@ test('edge reducer hides non first-order edges while dragging a node', async () 
     }),
   }
   adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
   adapter.currentHoverFocus = {
     pubkey: 'A',
     neighbors: new Set(['B']),
@@ -1518,6 +2141,234 @@ test('edge reducer hides non first-order edges while dragging a node', async () 
   assert.equal(firstOrder.hidden, false)
   assert.ok(firstOrder.size > baseEdge.size)
   assert.equal(unrelated.hidden, true)
+})
+
+test('edge reducer hides dragged-node edges whose endpoint is not in drag focus neighbors', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['A->Z', ['A', 'Z']],
+  ])
+  const nodePositions = new Map<string, { x: number; y: number }>([
+    ['A', { x: 0, y: 0 }],
+    ['B', { x: 4, y: 0 }],
+    ['Z', { x: 5, y: 0 }],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness & {
+    renderStore: {
+      getNodePosition: (pubkey: string) => { x: number; y: number } | null
+    }
+    getMinimapViewport: () => {
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+    }
+  }
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)?.[0] ?? '',
+      target: (edgeId) => edgeEndpoints.get(edgeId)?.[1] ?? '',
+    }),
+    getDimensions: () => ({ width: 100, height: 100 }),
+    viewportToGraph: (point: { x: number; y: number }) => point,
+  }
+  adapter.renderStore = {
+    getNodePosition: (pubkey) => nodePositions.get(pubkey) ?? null,
+  }
+  adapter.getMinimapViewport = () => ({
+    minX: -10,
+    minY: -10,
+    maxX: 10,
+    maxY: 10,
+  })
+  adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+
+  const focusedNeighbor = adapter.edgeReducer('A->B', baseEdge)
+  const staleIncidentEdge = adapter.edgeReducer('A->Z', baseEdge)
+
+  assert.equal(focusedNeighbor.hidden, false)
+  assert.ok(focusedNeighbor.size > baseEdge.size)
+  assert.equal(staleIncidentEdge.hidden, true)
+})
+
+test('edge reducer hides dragged-node edges whose neighbor is outside the viewport', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['A->Z', ['A', 'Z']],
+  ])
+  const nodePositions = new Map<string, { x: number; y: number }>([
+    ['A', { x: 0, y: 0 }],
+    ['B', { x: 4, y: 0 }],
+    ['Z', { x: 1000, y: 0 }],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness & {
+    renderStore: {
+      getNodePosition: (pubkey: string) => { x: number; y: number } | null
+    }
+    getMinimapViewport: () => {
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+    }
+  }
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)?.[0] ?? '',
+      target: (edgeId) => edgeEndpoints.get(edgeId)?.[1] ?? '',
+    }),
+    getDimensions: () => ({ width: 100, height: 100 }),
+    viewportToGraph: (point: { x: number; y: number }) => point,
+  }
+  adapter.renderStore = {
+    getNodePosition: (pubkey) => nodePositions.get(pubkey) ?? null,
+  }
+  adapter.getMinimapViewport = () => ({
+    minX: -10,
+    minY: -10,
+    maxX: 10,
+    maxY: 10,
+  })
+  adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B', 'Z']),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B', 'Z']),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+
+  const visibleNeighbor = adapter.edgeReducer('A->B', baseEdge)
+  const offscreenNeighbor = adapter.edgeReducer('A->Z', baseEdge)
+
+  assert.equal(visibleNeighbor.hidden, false)
+  assert.ok(visibleNeighbor.size > baseEdge.size)
+  assert.equal(offscreenNeighbor.hidden, true)
+})
+
+test('edge reducer hides dragged-node edges whose neighbor sits just outside the viewport', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['A->Z', ['A', 'Z']],
+  ])
+  const nodePositions = new Map<string, { x: number; y: number }>([
+    ['A', { x: 0, y: 0 }],
+    ['B', { x: 4, y: 0 }],
+    ['Z', { x: 10.3, y: 0 }],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness & {
+    renderStore: {
+      getNodePosition: (pubkey: string) => { x: number; y: number } | null
+    }
+    getMinimapViewport: () => {
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+    }
+  }
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)?.[0] ?? '',
+      target: (edgeId) => edgeEndpoints.get(edgeId)?.[1] ?? '',
+    }),
+    getDimensions: () => ({ width: 100, height: 100 }),
+    viewportToGraph: (point: { x: number; y: number }) => point,
+  }
+  adapter.renderStore = {
+    getNodePosition: (pubkey) => nodePositions.get(pubkey) ?? null,
+  }
+  adapter.getMinimapViewport = () => ({
+    minX: -10,
+    minY: -10,
+    maxX: 10,
+    maxY: 10,
+  })
+  adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B', 'Z']),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B', 'Z']),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+
+  const visibleNeighbor = adapter.edgeReducer('A->B', baseEdge)
+  const barelyOffscreenNeighbor = adapter.edgeReducer('A->Z', baseEdge)
+
+  assert.equal(visibleNeighbor.hidden, false)
+  assert.ok(visibleNeighbor.size > baseEdge.size)
+  assert.equal(barelyOffscreenNeighbor.hidden, true)
 })
 
 test('edge reducer hides background edges during low-performance connection LOD', async () => {
@@ -1556,6 +2407,10 @@ test('edge reducer hides background edges during low-performance connection LOD'
     }),
   }
   adapter.draggedNodePubkey = 'A'
+  adapter.draggedNodeFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
   adapter.currentHoverFocus = {
     pubkey: 'A',
     neighbors: new Set(['B']),
@@ -1568,6 +2423,10 @@ test('edge reducer hides background edges during low-performance connection LOD'
   adapter.setHideConnectionsForLowPerformance(true)
   const draggedEdge = adapter.edgeReducer('A->B', baseEdge)
   adapter.draggedNodePubkey = null
+  adapter.currentHoverFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
   const focused = adapter.edgeReducer('E->F', focusedEdge)
   const hidden = adapter.edgeReducer('C->D', baseEdge)
   adapter.setHideConnectionsForLowPerformance(false)
@@ -1575,11 +2434,67 @@ test('edge reducer hides background edges during low-performance connection LOD'
 
   assert.equal(draggedEdge.hidden, false)
   assert.ok(draggedEdge.size > baseEdge.size)
-  assert.equal(focused.hidden, false)
+  assert.equal(focused.hidden, true)
   assert.equal(focused.touchesFocus, true)
   assert.equal(hidden.hidden, true)
   assert.equal(visible.hidden, false)
   assert.equal(renderCalls, 2)
+})
+
+test('selected node focus keeps its incident edges visible during low-performance connection LOD', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const edgeEndpoints = new Map<string, [string, string]>([
+    ['A->B', ['A', 'B']],
+    ['C->D', ['C', 'D']],
+    ['E->F', ['E', 'F']],
+  ])
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: (edgeId) => edgeEndpoints.has(edgeId),
+      source: (edgeId) => edgeEndpoints.get(edgeId)?.[0] ?? '',
+      target: (edgeId) => edgeEndpoints.get(edgeId)?.[1] ?? '',
+    }),
+  }
+  adapter.draggedNodePubkey = null
+  adapter.currentHoverFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.safeRender = () => {}
+  adapter.setHideConnectionsForLowPerformance(true)
+
+  const focusedEdge = adapter.edgeReducer('A->B', baseEdge)
+  const backgroundEdge = adapter.edgeReducer('C->D', baseEdge)
+  const staleProjectedFocusEdge = adapter.edgeReducer('E->F', {
+    ...baseEdge,
+    touchesFocus: true,
+    zIndex: 6,
+  })
+
+  assert.equal(focusedEdge.hidden, false)
+  assert.ok(focusedEdge.size > baseEdge.size)
+  assert.equal(focusedEdge.zIndex, 9)
+  assert.equal(backgroundEdge.hidden, true)
+  assert.equal(staleProjectedFocusEdge.hidden, true)
 })
 
 test('avatar runtime debug snapshot combines cache, loader, scheduler, and overlay state', async () => {
@@ -1928,6 +2843,7 @@ test('pressing outside nodes clears selection and local hover focus immediately'
     hoveredNodePubkey: string | null
     hoveredNeighbors: Set<string>
     currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
     startHighlightTransition: () => void
     safeRender: () => void
     bindEvents: () => void
@@ -1964,6 +2880,10 @@ test('pressing outside nodes clears selection and local hover focus immediately'
       pubkey: 'alice',
       neighbors: new Set(['bob']),
     }
+    adapter.selectedSceneFocus = {
+      pubkey: 'alice',
+      neighbors: new Set(['bob']),
+    }
     adapter.startHighlightTransition = () => {}
     adapter.safeRender = () => {}
 
@@ -1974,6 +2894,7 @@ test('pressing outside nodes clears selection and local hover focus immediately'
     assert.equal(clearSelectionCalls, 1)
     assert.equal(adapter.hoveredNodePubkey, null)
     assert.equal(adapter.currentHoverFocus.pubkey, null)
+    assert.equal(adapter.selectedSceneFocus.pubkey, null)
     assert.deepEqual(hoverEvents, [null])
   } finally {
     globalThis.window = originalWindow

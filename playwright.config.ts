@@ -25,7 +25,7 @@ export default defineConfig({
   ],
   webServer: {
     command: `npm run dev -- --hostname ${HOST} --port ${PORT}`,
-    url: `http://${HOST}:${PORT}/labs/sigma?fixture=drag-local&testMode=1`,
+    url: `http://${HOST}:${PORT}/labs/sigma?fixture=drag-local&fixtureSource=local&testMode=1`,
     reuseExistingServer: true,
     timeout: 120_000,
   },

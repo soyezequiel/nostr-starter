@@ -17,10 +17,8 @@ import {
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
   selectAvatarDrawItemsForFrame,
-  selectClosestAvatarRevealPubkeys,
-  shouldDrawAvatarForSelectionFocus,
+  shouldDrawAvatarForRendererFocus,
   shouldDisableAvatarImage,
-  shouldHideAvatarImageForDragNeighbor,
 } from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
 
 test('avatar URL metadata resolver caches and caps parsed URL metadata', () => {
@@ -81,32 +79,6 @@ test('frame cap keeps only the budgeted regular overlay draw items', () => {
   )
 })
 
-test('caps proximity reveal pubkeys to the closest nodes before forcing avatars', () => {
-  const candidates = [
-    { pubkey: 'near-b', distanceSquared: 16 },
-    { pubkey: 'far', distanceSquared: 81 },
-    { pubkey: 'near-a', distanceSquared: 9 },
-  ]
-
-  assert.deepEqual(
-    selectClosestAvatarRevealPubkeys(candidates, 2),
-    ['near-a', 'near-b'],
-  )
-})
-
-test('uses pubkey order as a deterministic tie breaker for proximity reveal', () => {
-  const candidates = [
-    { pubkey: 'charlie', distanceSquared: 16 },
-    { pubkey: 'alice', distanceSquared: 16 },
-    { pubkey: 'bob', distanceSquared: 16 },
-  ]
-
-  assert.deepEqual(selectClosestAvatarRevealPubkeys(candidates, 2), [
-    'alice',
-    'bob',
-  ])
-})
-
 test('retains visible inflight avatars even when the current frame cap drops them', () => {
   const retained = retainInflightAvatarPubkeys(
     [
@@ -121,7 +93,7 @@ test('retains visible inflight avatars even when the current frame cap drops the
   assert.deepEqual([...retained], ['root', 'alice'])
 })
 
-test('does not enlarge proximity-revealed avatars beyond the node radius', () => {
+test('does not enlarge regular zoomed-out avatars beyond the node radius', () => {
   assert.equal(
     resolveAvatarDrawRadiusPx({
       avatarRadiusPx: 4,
@@ -180,128 +152,71 @@ test('draws the forced avatar on the forced context when available', () => {
   )
 })
 
-test('keeps all avatars eligible when no node is selected', () => {
+test('keeps all avatars eligible when renderer focus is empty', () => {
   assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: null,
+    shouldDrawAvatarForRendererFocus({
       pubkey: 'far',
-      isSelected: false,
-      isNeighbor: false,
     }),
     true,
   )
 })
 
-test('limits avatars to the selected node and its neighbors while selected', () => {
+test('does not use semantic selection as avatar focus fallback', () => {
   assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: 'selected',
+    shouldDrawAvatarForRendererFocus({
       pubkey: 'selected',
-      isSelected: true,
-      isNeighbor: false,
     }),
     true,
   )
   assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: 'selected',
+    shouldDrawAvatarForRendererFocus({
       pubkey: 'neighbor',
-      isSelected: false,
-      isNeighbor: true,
     }),
     true,
   )
   assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: 'selected',
+    shouldDrawAvatarForRendererFocus({
       pubkey: 'far',
-      isSelected: false,
-      isNeighbor: false,
+    }),
+    true,
+  )
+})
+
+test('renderer focus limits avatars to the focused node and its neighbors', () => {
+  const rendererFocusNeighborPubkeys = new Set(['focus-neighbor'])
+
+  assert.equal(
+    shouldDrawAvatarForRendererFocus({
+      rendererFocusPubkey: 'focused',
+      rendererFocusNeighborPubkeys,
+      pubkey: 'focused',
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForRendererFocus({
+      rendererFocusPubkey: 'focused',
+      rendererFocusNeighborPubkeys,
+      pubkey: 'focus-neighbor',
+    }),
+    true,
+  )
+  assert.equal(
+    shouldDrawAvatarForRendererFocus({
+      rendererFocusPubkey: 'focused',
+      rendererFocusNeighborPubkeys,
+      pubkey: 'far',
     }),
     false,
   )
 })
 
-test('hover focus limits avatars to the hovered node and its neighbors', () => {
-  const hoveredNeighborPubkeys = new Set(['hover-neighbor'])
-
+test('renderer focus ignores semantic selected-neighbor metadata', () => {
   assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: null,
-      hoveredNodePubkey: 'hovered',
-      hoveredNeighborPubkeys,
-      pubkey: 'hovered',
-      isSelected: false,
-      isNeighbor: false,
-    }),
-    true,
-  )
-  assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: null,
-      hoveredNodePubkey: 'hovered',
-      hoveredNeighborPubkeys,
-      pubkey: 'hover-neighbor',
-      isSelected: false,
-      isNeighbor: false,
-    }),
-    true,
-  )
-  assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: null,
-      hoveredNodePubkey: 'hovered',
-      hoveredNeighborPubkeys,
-      pubkey: 'far',
-      isSelected: false,
-      isNeighbor: false,
-    }),
-    false,
-  )
-})
-
-test('hover focus overrides the selected node avatar neighborhood', () => {
-  assert.equal(
-    shouldDrawAvatarForSelectionFocus({
-      selectedNodePubkey: 'selected',
-      hoveredNodePubkey: 'hovered',
-      hoveredNeighborPubkeys: new Set(['hover-neighbor']),
+    shouldDrawAvatarForRendererFocus({
+      rendererFocusPubkey: 'focused',
+      rendererFocusNeighborPubkeys: new Set(['focus-neighbor']),
       pubkey: 'selected-neighbor',
-      isSelected: false,
-      isNeighbor: true,
-    }),
-    false,
-  )
-})
-
-test('hides direct neighbor photos while a node is dragged', () => {
-  assert.equal(
-    shouldHideAvatarImageForDragNeighbor({
-      draggedNodePubkey: 'dragged',
-      pubkey: 'neighbor',
-      draggedNeighborPubkeys: new Set(['neighbor']),
-    }),
-    true,
-  )
-})
-
-test('does not apply drag-neighbor hiding to hover-only focus', () => {
-  assert.equal(
-    shouldHideAvatarImageForDragNeighbor({
-      draggedNodePubkey: null,
-      pubkey: 'neighbor',
-      draggedNeighborPubkeys: new Set(['neighbor']),
-    }),
-    false,
-  )
-})
-
-test('does not hide the directly dragged node through the neighbor rule', () => {
-  assert.equal(
-    shouldHideAvatarImageForDragNeighbor({
-      draggedNodePubkey: 'dragged',
-      pubkey: 'dragged',
-      draggedNeighborPubkeys: new Set(['dragged']),
     }),
     false,
   )
@@ -338,16 +253,18 @@ test('motion hiding remains active when all visible photos mode is enabled', () 
   )
 })
 
-test('global motion hides the directly dragged avatar image too', () => {
+test('global motion keeps persistent focus avatars visually stable', () => {
   assert.equal(
     resolveAvatarItemGlobalMotionActive({
       globalMotionActive: true,
+      isPersistentAvatar: true,
     }),
-    true,
+    false,
   )
   assert.equal(
     resolveAvatarItemGlobalMotionActive({
       globalMotionActive: true,
+      isPersistentAvatar: false,
     }),
     true,
   )

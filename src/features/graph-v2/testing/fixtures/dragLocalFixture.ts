@@ -147,7 +147,7 @@ export const createDragLocalFixture = (): FixtureScenario => {
       activeLayer: 'graph',
       connectionsSourceLayer: 'mutuals',
       selectedNodePubkey: null,
-      pinnedNodePubkeys: new Set<string>(),
+      pinnedNodePubkeys: new Set<string>([PINNED_NEIGHBOR_PUBKEY]),
       relayState: {
         urls: ['wss://fixture.local'],
         endpoints: {

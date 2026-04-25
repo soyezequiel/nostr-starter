@@ -313,7 +313,7 @@ test('keeps positions for nodes that temporarily disappear from one layer', () =
   assert.deepEqual(physicsStore.getNodePosition('B'), { x: 42, y: 24 })
 })
 
-test('projects selected neighborhoods into prominent render attributes', () => {
+test('preserves projected focus metadata without promoting it to renderer focus visuals', () => {
   const { renderStore } = createStores()
   const scene = createScene('follow:A:B')
   scene.render.nodes = scene.render.nodes.map((node) =>
@@ -347,16 +347,16 @@ test('projects selected neighborhoods into prominent render attributes', () => {
   const neighbor = graph.getNodeAttributes('B')
   const edge = graph.getEdgeAttributes('follow:A:B')
 
-  assert.equal(selected.highlighted, true)
-  assert.equal(selected.forceLabel, true)
+  assert.equal(selected.highlighted, false)
+  assert.equal(selected.forceLabel, false)
   assert.equal(selected.focusState, 'selected')
-  assert.equal(selected.zIndex, 8)
-  assert.equal(neighbor.highlighted, true)
+  assert.equal(selected.zIndex, 6)
+  assert.equal(neighbor.highlighted, false)
   assert.equal(neighbor.forceLabel, false)
   assert.equal(neighbor.focusState, 'neighbor')
-  assert.equal(neighbor.zIndex, 5)
+  assert.equal(neighbor.zIndex, 0)
   assert.equal(edge.touchesFocus, true)
-  assert.equal(edge.zIndex, 6)
+  assert.equal(edge.zIndex, 1)
 })
 
 test('does not promote semantic selection without visual focus state', () => {
@@ -382,6 +382,6 @@ test('does not promote semantic selection without visual focus state', () => {
 
   assert.equal(semanticSelection.isSelected, true)
   assert.equal(semanticSelection.highlighted, false)
-  assert.equal(semanticSelection.forceLabel, true)
+  assert.equal(semanticSelection.forceLabel, false)
   assert.equal(semanticSelection.zIndex, 0)
 })

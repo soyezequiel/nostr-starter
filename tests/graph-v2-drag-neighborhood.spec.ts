@@ -8,7 +8,7 @@ import type {
   DebugViewportPosition,
 } from '../src/features/graph-v2/testing/browserDebug'
 
-const SIGMA_LAB_URL = '/labs/sigma?fixture=drag-local&testMode=1'
+const SIGMA_LAB_URL = '/labs/sigma?fixture=drag-local&fixtureSource=local&testMode=1'
 const TARGET_PUBKEY = 'fixture-drag-target'
 const PINNED_NEIGHBOR_PUBKEY = 'fixture-pinned-neighbor'
 const DEPTH1_MOVABLE_PUBKEY = 'fixture-hop1-a'

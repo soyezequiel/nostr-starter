@@ -153,19 +153,12 @@ const resolveRenderNodeZIndex = (
   focusState: GraphSceneFocusState,
   isRoot: boolean,
   isPinned: boolean,
-  isDimmed: boolean,
 ) =>
-  focusState === 'selected'
-    ? 8
-    : isRoot
-      ? 6
-      : focusState === 'neighbor'
-        ? 5
-        : isPinned
-          ? 4
-          : isDimmed
-            ? -2
-            : 0
+  isRoot
+    ? 6
+    : isPinned || focusState === 'pinned'
+      ? 4
+      : 0
 
 export class NodePositionLedger {
   private readonly positions = new Map<string, NodePosition>()
@@ -310,9 +303,8 @@ export class RenderGraphStore {
         focusState: node.focusState,
         label: node.label,
         hidden: false,
-        highlighted:
-          node.focusState === 'selected' || node.focusState === 'neighbor',
-        forceLabel: node.isSelected,
+        highlighted: false,
+        forceLabel: node.forceLabel === true,
         fixed: node.isPinned,
         pictureUrl: node.pictureUrl,
         isExpanding: node.isExpanding,
@@ -326,7 +318,6 @@ export class RenderGraphStore {
           node.focusState,
           node.isRoot,
           node.isPinned,
-          node.isDimmed,
         ),
       }
 
@@ -353,7 +344,7 @@ export class RenderGraphStore {
         weight: edge.weight,
         isDimmed: edge.isDimmed,
         touchesFocus: edge.touchesFocus,
-        zIndex: edge.touchesFocus ? 6 : edge.isDimmed ? -2 : 1,
+        zIndex: edge.isDimmed ? -2 : 1,
       }
 
       if (this.graph.hasEdge(edge.id)) {

@@ -82,18 +82,11 @@ interface ExpansionRingItem {
   progress: number
 }
 
-interface AvatarRevealSelectionItem {
-  pubkey: string
-  distanceSquared: number
-}
-
 interface AvatarNodeMotionSample {
   x: number
   y: number
   t: number
 }
-
-type AvatarRevealPointer = { x: number; y: number }
 
 type EffectiveAvatarBudget = AvatarBudget & AvatarRuntimeOptions
 
@@ -185,9 +178,7 @@ export interface AvatarOverlayRendererDeps {
   getSelectedNodePubkey?: () => string | null
   getHoveredNodePubkey?: () => string | null
   getForcedAvatarPubkey?: () => string | null
-  getDraggedAvatarPubkey?: () => string | null
   getHoveredNeighborPubkeys?: () => ReadonlySet<string>
-  getAvatarRevealPointer?: () => AvatarRevealPointer | null
   getRuntimeOptions?: () => AvatarRuntimeOptions
   getBlockedAvatar?: (urlKey: AvatarUrlKey) => AvatarLoaderBlockDebugEntry | null
 }
@@ -239,15 +230,6 @@ const withAlpha = (color: string, alpha: number) => {
   const blue = Number.parseInt(expanded.slice(4, 6), 16)
 
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
-}
-
-const resolveRevealDistanceSquared = (
-  node: AvatarRevealPointer,
-  pointer: AvatarRevealPointer,
-) => {
-  const dx = node.x - pointer.x
-  const dy = node.y - pointer.y
-  return dx * dx + dy * dy
 }
 
 export const resolveAvatarDrawRadiusPx = ({
@@ -305,44 +287,6 @@ export const selectAvatarDrawItemsForFrame = <
   return [...selected, ...persistentItems, ...forcedItems]
 }
 
-export const selectClosestAvatarRevealPubkeys = <
-  T extends AvatarRevealSelectionItem,
->(
-  candidates: T[],
-  cap: number,
-): string[] => {
-  const normalizedCap = Number.isFinite(cap)
-    ? Math.max(0, Math.floor(cap))
-    : 0
-  if (normalizedCap === 0 || candidates.length === 0) {
-    return []
-  }
-
-  const selected: T[] = []
-  for (const candidate of candidates) {
-    const insertIndex = selected.findIndex((item) => {
-      if (candidate.distanceSquared !== item.distanceSquared) {
-        return candidate.distanceSquared < item.distanceSquared
-      }
-      return candidate.pubkey < item.pubkey
-    })
-
-    if (insertIndex === -1) {
-      if (selected.length < normalizedCap) {
-        selected.push(candidate)
-      }
-      continue
-    }
-
-    selected.splice(insertIndex, 0, candidate)
-    if (selected.length > normalizedCap) {
-      selected.pop()
-    }
-  }
-
-  return selected.map((item) => item.pubkey)
-}
-
 export const selectAvatarDrawContext = <T>(
   itemPubkey: string,
   forcedPubkeys: ReadonlySet<string>,
@@ -353,45 +297,24 @@ export const selectAvatarDrawContext = <T>(
     ? forcedContext
     : baseContext
 
-export const shouldDrawAvatarForSelectionFocus = ({
-  selectedNodePubkey,
-  hoveredNodePubkey = null,
-  hoveredNeighborPubkeys = EMPTY_SET,
+export const shouldDrawAvatarForRendererFocus = ({
+  rendererFocusPubkey = null,
+  rendererFocusNeighborPubkeys = EMPTY_SET,
   pubkey,
-  isSelected,
-  isNeighbor,
 }: {
-  selectedNodePubkey: string | null
-  hoveredNodePubkey?: string | null
-  hoveredNeighborPubkeys?: ReadonlySet<string>
+  rendererFocusPubkey?: string | null
+  rendererFocusNeighborPubkeys?: ReadonlySet<string>
   pubkey: string
-  isSelected: boolean
-  isNeighbor: boolean
 }) => {
-  if (hoveredNodePubkey !== null) {
-    return pubkey === hoveredNodePubkey || hoveredNeighborPubkeys.has(pubkey)
+  if (rendererFocusPubkey === null) {
+    return true
   }
 
   return (
-    selectedNodePubkey === null ||
-    isSelected ||
-    isNeighbor ||
-    pubkey === selectedNodePubkey
+    pubkey === rendererFocusPubkey ||
+    rendererFocusNeighborPubkeys.has(pubkey)
   )
 }
-
-export const shouldHideAvatarImageForDragNeighbor = ({
-  draggedNodePubkey,
-  pubkey,
-  draggedNeighborPubkeys,
-}: {
-  draggedNodePubkey: string | null
-  pubkey: string
-  draggedNeighborPubkeys: ReadonlySet<string>
-}) =>
-  draggedNodePubkey !== null &&
-  pubkey !== draggedNodePubkey &&
-  draggedNeighborPubkeys.has(pubkey)
 
 export const resolveAvatarGlobalMotionActive = ({
   moving,
@@ -403,9 +326,11 @@ export const resolveAvatarGlobalMotionActive = ({
 
 export const resolveAvatarItemGlobalMotionActive = ({
   globalMotionActive,
+  isPersistentAvatar = false,
 }: {
   globalMotionActive: boolean
-}) => globalMotionActive
+  isPersistentAvatar?: boolean
+}) => globalMotionActive && !isPersistentAvatar
 
 export const resolveAvatarImageDisableReason = ({
   selectedForImage,
@@ -553,9 +478,7 @@ export class AvatarOverlayRenderer {
   private readonly getSelectedNodePubkey: () => string | null
   private readonly getHoveredNodePubkey: () => string | null
   private readonly getForcedAvatarPubkey: () => string | null
-  private readonly getDraggedAvatarPubkey: () => string | null
   private readonly getHoveredNeighborPubkeys: () => ReadonlySet<string>
-  private readonly getAvatarRevealPointer: () => AvatarRevealPointer | null
   private readonly getRuntimeOptions: () => AvatarRuntimeOptions | null
   private readonly getBlockedAvatar: (urlKey: AvatarUrlKey) => AvatarLoaderBlockDebugEntry | null
   private readonly avatarUrlMetadata = createAvatarUrlMetadataResolver()
@@ -580,9 +503,7 @@ export class AvatarOverlayRenderer {
     this.getSelectedNodePubkey = deps.getSelectedNodePubkey ?? (() => null)
     this.getHoveredNodePubkey = deps.getHoveredNodePubkey ?? (() => null)
     this.getForcedAvatarPubkey = deps.getForcedAvatarPubkey ?? (() => null)
-    this.getDraggedAvatarPubkey = deps.getDraggedAvatarPubkey ?? (() => null)
     this.getHoveredNeighborPubkeys = deps.getHoveredNeighborPubkeys ?? (() => EMPTY_SET)
-    this.getAvatarRevealPointer = deps.getAvatarRevealPointer ?? (() => null)
     this.getRuntimeOptions = deps.getRuntimeOptions ?? (() => null)
     this.getBlockedAvatar = deps.getBlockedAvatar ?? (() => null)
     this.boundAfterRender = () => this.onAfterRender()
@@ -645,11 +566,8 @@ export class AvatarOverlayRenderer {
     if (directForcedAvatarPubkey) {
       forcedAvatarPubkeys.add(directForcedAvatarPubkey)
     }
-    const revealPointer = this.getAvatarRevealPointer()
-    const revealRadiusPx = Math.max(0, budget.hoverRevealRadiusPx)
-    const revealRadiusSquared = revealRadiusPx * revealRadiusPx
     const moving = this.isMoving()
-    const hoveredNeighborPubkeys = this.getHoveredNeighborPubkeys()
+    const rendererFocusNeighborPubkeys = this.getHoveredNeighborPubkeys()
     const allowZoomedOutImages =
       budget.allowZoomedOutImages || budget.showAllVisibleImages
 
@@ -666,20 +584,14 @@ export class AvatarOverlayRenderer {
       this.lastCameraSignature !== cameraSignature
     this.lastCameraSignature = cameraSignature
     const graph = this.sigma.getGraph()
-    const rawSelectedNodePubkey = this.getSelectedNodePubkey()
-    const selectedNodePubkey =
-      rawSelectedNodePubkey !== null && graph.hasNode(rawSelectedNodePubkey)
-        ? rawSelectedNodePubkey
-        : null
-    const rawHoveredNodePubkey = this.getHoveredNodePubkey()
-    const hoveredNodePubkey =
-      rawHoveredNodePubkey !== null && graph.hasNode(rawHoveredNodePubkey)
-        ? rawHoveredNodePubkey
+    const rawRendererFocusPubkey = this.getHoveredNodePubkey()
+    const rendererFocusPubkey =
+      rawRendererFocusPubkey !== null && graph.hasNode(rawRendererFocusPubkey)
+        ? rawRendererFocusPubkey
         : null
     const drawItems: AvatarDrawItem[] = []
     const focusAuraItems: FocusAuraItem[] = []
     const expansionRingItems: ExpansionRingItem[] = []
-    const revealCandidates: AvatarRevealSelectionItem[] = []
     const seenNodes = new Set<string>()
 
     graph.forEachNode((pubkey, attrs) => {
@@ -694,41 +606,22 @@ export class AvatarOverlayRenderer {
       const nodeRadiusPx = this.sigma.scaleSize(display.size, cameraRatio)
       const avatarRadiusPx = Math.max(0, nodeRadiusPx - AVATAR_NODE_INSET_PX)
       const viewport = this.sigma.framedGraphToViewport(display)
-      const avatarAllowedByFocus = shouldDrawAvatarForSelectionFocus({
-        selectedNodePubkey,
-        hoveredNodePubkey,
-        hoveredNeighborPubkeys,
+      const avatarAllowedByFocus = shouldDrawAvatarForRendererFocus({
+        rendererFocusPubkey,
+        rendererFocusNeighborPubkeys,
         pubkey,
-        isSelected: nodeAttrs.isSelected,
-        isNeighbor: nodeAttrs.isNeighbor,
       })
-      let isRevealCandidate = false
-      let revealDistanceSquared: number | null = null
-      if (
-        avatarAllowedByFocus &&
-        revealPointer &&
-        revealRadiusPx > 0 &&
-        pubkey !== directForcedAvatarPubkey
-      ) {
-        const distanceSquared = resolveRevealDistanceSquared(
-          viewport,
-          revealPointer,
-        )
-        if (distanceSquared <= revealRadiusSquared) {
-          isRevealCandidate = true
-          revealDistanceSquared = distanceSquared
-        }
-      }
+      const isFocusedAvatar = pubkey === rendererFocusPubkey
       const isPersistentAvatar =
         forcedAvatarPubkeys.has(pubkey) ||
         nodeAttrs.isRoot ||
         nodeAttrs.isPinned ||
-        nodeAttrs.isSelected
+        isFocusedAvatar
       const hasPriorityAvatarSizing =
         pubkey === directForcedAvatarPubkey ||
         nodeAttrs.isRoot ||
         nodeAttrs.isPinned ||
-        nodeAttrs.isSelected
+        isFocusedAvatar
       const zoomedOutMonogram = avatarRadiusPx < budget.sizeThreshold
       const drawRadiusPx = resolveAvatarDrawRadiusPx({
         avatarRadiusPx,
@@ -739,10 +632,7 @@ export class AvatarOverlayRenderer {
         return
       }
       seenNodes.add(pubkey)
-      if (
-        nodeAttrs.focusState === 'neighbor' ||
-        hoveredNeighborPubkeys.has(pubkey)
-      ) {
+      if (rendererFocusNeighborPubkeys.has(pubkey)) {
         focusAuraItems.push({
           pubkey,
           x: viewport.x,
@@ -770,13 +660,9 @@ export class AvatarOverlayRenderer {
         !budget.showZoomedOutMonograms &&
         !allowZoomedOutImages &&
         !isPersistentAvatar &&
-        !isRevealCandidate &&
         zoomedOutMonogram
       ) {
         return
-      }
-      if (revealDistanceSquared !== null) {
-        revealCandidates.push({ pubkey, distanceSquared: revealDistanceSquared })
       }
       const fastMoving =
         this.isFastMovingNode(
@@ -874,13 +760,6 @@ export class AvatarOverlayRenderer {
       return
     }
 
-    for (const pubkey of selectClosestAvatarRevealPubkeys(
-      revealCandidates,
-      budget.hoverRevealMaxNodes,
-    )) {
-      forcedAvatarPubkeys.add(pubkey)
-    }
-
     const includeDebugNodes = this.debugDetailsEnabled || isAvatarTraceEnabled()
     const candidates: AvatarCandidate[] = []
     const debugNodes: AvatarVisibleNodeDebugSnapshot[] = []
@@ -892,7 +771,6 @@ export class AvatarOverlayRenderer {
       moving,
       hideImagesOnFastNodes: budget.hideImagesOnFastNodes,
     })
-    const draggedNodePubkey = this.getDraggedAvatarPubkey()
     let imageDrawCount = 0
     let drawnImageCount = 0
     let monogramDrawCount = 0
@@ -993,22 +871,17 @@ export class AvatarOverlayRenderer {
       const inflight = urlKey !== null && this.scheduler.hasInflight(urlKey)
       const itemGlobalMotionActive = resolveAvatarItemGlobalMotionActive({
         globalMotionActive,
+        isPersistentAvatar,
       })
-      const dragNeighborImageHidden = shouldHideAvatarImageForDragNeighbor({
-        draggedNodePubkey,
-        pubkey: item.pubkey,
-        draggedNeighborPubkeys: hoveredNeighborPubkeys,
-      })
+      const itemFastMoving = isPersistentAvatar ? false : item.fastMoving
       const disableImageReason =
         hasPictureUrl && !hasSafePictureUrl
           ? 'unsafe_url'
-          : dragNeighborImageHidden
-            ? 'drag_neighbor'
           : resolveAvatarImageDisableReason({
               selectedForImage,
               globalMotionActive: itemGlobalMotionActive,
               monogramOnly: item.monogramOnly,
-              fastMoving: item.fastMoving,
+              fastMoving: itemFastMoving,
               imageDrawCount,
               maxImageDrawsPerFrame,
               hasReadyImage,
@@ -1044,9 +917,7 @@ export class AvatarOverlayRenderer {
       let requestedBucket: ImageLodBucket | null = null
       if (!hasPictureUrl) {
         loadSkipReason = 'missing_url'
-      } else if (dragNeighborImageHidden) {
-        loadSkipReason = 'drag_neighbor'
-      } else if (item.fastMoving) {
+      } else if (itemFastMoving) {
         loadSkipReason = 'fast_moving'
       } else if (!selectedForImage) {
         loadSkipReason = 'not_selected_for_image'
@@ -1124,7 +995,7 @@ export class AvatarOverlayRenderer {
           isPersistentAvatar,
           zoomedOutMonogram: item.zoomedOutMonogram,
           monogramOnly: item.monogramOnly,
-          fastMoving: item.fastMoving,
+          fastMoving: itemFastMoving,
           globalMotionActive: itemGlobalMotionActive,
           disableImageReason,
           drawResult: drawResult.kind,
