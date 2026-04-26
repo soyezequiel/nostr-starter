@@ -1,4 +1,4 @@
-﻿import type { Filter } from 'nostr-tools'
+import type { Filter } from 'nostr-tools'
 
 import type { GraphNode } from '@/features/graph-runtime/app/store'
 import {
@@ -24,8 +24,9 @@ import {
   type RelayEventEnvelope,
 } from '@/features/graph-runtime/nostr'
 
+import { NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS } from '@/features/graph-runtime/kernel/modules/constants'
+
 export const ROOT_RELAY_LIST_KIND = 10002
-const INBOUND_COUNT_TIMEOUT_MS = 900
 
 export function createFollowerDiscoveryModule(
   ctx: KernelContext,
@@ -87,7 +88,7 @@ export function createFollowerDiscoveryModule(
           '#p': [rootPubkey],
         } satisfies Filter & { '#p': string[] },
       ], {
-        timeoutMs: INBOUND_COUNT_TIMEOUT_MS,
+        timeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
         idPrefix: `inbound:${rootPubkey.slice(0, 8)}`,
       })
 
