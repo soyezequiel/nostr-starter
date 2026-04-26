@@ -75,29 +75,30 @@ export interface KernelNetworkTuning {
   followRelayListQueryConcurrency: number
 }
 
-// Desktop: conexiones rapidas y estables permiten timeouts mas cortos.
-// No tan agresivo como 1.5s/4s/10s (que funciona pero no da margen).
+// Desktop: Restaurado a los valores óptimos originales (3.5s/6.5s/18s) 
+// que demostraron obtener ~189 nodos consistentemente.
 const DESKTOP_KERNEL_TUNING: KernelNetworkTuning = {
-  nodeExpandConnectTimeoutMs: 2_500,
-  nodeExpandPageTimeoutMs: 5_000,
-  nodeExpandHardTimeoutMs: 12_000,
-  nodeExpandRetryCount: 1,
-  nodeExpandStragglerGraceMs: 500,
-  nodeExpandInboundCountTimeoutMs: 2_000,
-  rootInboundDiscoveryPageConcurrency: 2,
-  targetedReciprocalQueryConcurrency: 2,
-  followRelayListQueryConcurrency: 2,
+  nodeExpandConnectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+  nodeExpandPageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+  nodeExpandHardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
+  nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
+  nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+  nodeExpandInboundCountTimeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
+  rootInboundDiscoveryPageConcurrency: ROOT_INBOUND_DISCOVERY_PAGE_CONCURRENCY,
+  targetedReciprocalQueryConcurrency: TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
+  followRelayListQueryConcurrency: FOLLOW_RELAY_LIST_QUERY_CONCURRENCY,
 }
 
-// Mobile: jitter de red requiere timeouts mas generosos. Valores probados
-// que dieron paridad con desktop (~189 nodos en ambos).
+// Mobile: Restaurado a los mismos valores que desktop (3.5s/6.5s/18s).
+// Darle demasiado tiempo (24s) causaba estancamiento en relays caídos, 
+// resultando en pérdida de nodos por timeout global.
 const MOBILE_KERNEL_TUNING: KernelNetworkTuning = {
-  nodeExpandConnectTimeoutMs: 5_000,
-  nodeExpandPageTimeoutMs: 9_000,
-  nodeExpandHardTimeoutMs: 24_000,
-  nodeExpandRetryCount: 2,
-  nodeExpandStragglerGraceMs: 1500,
-  nodeExpandInboundCountTimeoutMs: 4_000,
+  nodeExpandConnectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
+  nodeExpandPageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
+  nodeExpandHardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
+  nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
+  nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
+  nodeExpandInboundCountTimeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
   rootInboundDiscoveryPageConcurrency: ROOT_INBOUND_DISCOVERY_PAGE_CONCURRENCY,
   targetedReciprocalQueryConcurrency: TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
   followRelayListQueryConcurrency: FOLLOW_RELAY_LIST_QUERY_CONCURRENCY,
