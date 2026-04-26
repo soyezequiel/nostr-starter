@@ -1729,6 +1729,73 @@ test('selection scene update applies renderer focus immediately', async () => {
   assert.ok(selected.zIndex >= 10)
 })
 
+test('clearing hover keeps selected focus instead of flashing the graph bright', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const baseNode: RenderNodeAttributes = {
+    x: 0,
+    y: 0,
+    size: 10,
+    color: '#7dd3a7',
+    focusState: 'idle',
+    label: 'C',
+    hidden: false,
+    highlighted: false,
+    forceLabel: false,
+    fixed: false,
+    pictureUrl: null,
+    isExpanding: false,
+    expansionProgress: null,
+    isDimmed: false,
+    isSelected: false,
+    isNeighbor: false,
+    isRoot: false,
+    isPinned: false,
+    zIndex: 0,
+  }
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getCamera: () => { ratio: number }
+    }
+    currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
+    selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
+    highlightTransition: {
+      from: { pubkey: string | null; neighbors: Set<string> }
+      to: { pubkey: string | null; neighbors: Set<string> }
+      startedAt: number
+      durationMs: number
+    } | null
+    safeRender: () => void
+    setHoveredNode: (pubkey: string | null, force?: boolean) => void
+    nodeReducer: (node: string, data: RenderNodeAttributes) => RenderNodeAttributes
+  }
+
+  adapter.sigma = {
+    getCamera: () => ({ ratio: 1 }),
+  }
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.highlightTransition = null
+  adapter.safeRender = () => {}
+
+  adapter.setHoveredNode(null)
+
+  const dimmed = adapter.nodeReducer('C', baseNode)
+
+  assert.equal(adapter.highlightTransition, null)
+  assert.equal(dimmed.color, '#121a22')
+  assert.equal(dimmed.highlighted, false)
+  assert.ok(dimmed.zIndex < 0)
+})
+
 test('renderer focus resolves through one priority path for drag hover and selection', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
@@ -1781,7 +1848,7 @@ test('renderer focus resolves through one priority path for drag hover and selec
   assert.equal(adapter.resolveRendererFocus().pubkey, null)
 })
 
-test('drag node focus bypasses transitions and keeps unrelated nodes visible', async () => {
+test('drag node focus bypasses transitions so unrelated nodes dim immediately', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -1842,11 +1909,11 @@ test('drag node focus bypasses transitions and keeps unrelated nodes visible', a
     durationMs: 180,
   }
 
-  const visible = adapter.nodeReducer('C', baseNode)
+  const dimmed = adapter.nodeReducer('C', baseNode)
 
-  assert.equal(visible.color, baseNode.color)
-  assert.equal(visible.highlighted, false)
-  assert.equal(visible.zIndex, baseNode.zIndex)
+  assert.equal(dimmed.color, '#121a22')
+  assert.equal(dimmed.highlighted, false)
+  assert.ok(dimmed.zIndex < 0)
 })
 
 test('highlight transition frame uses render-only scheduling', async () => {
@@ -1901,6 +1968,81 @@ test('highlight transition frame uses render-only scheduling', async () => {
   assert.equal(renderCalls, 1)
   assert.equal(refreshCalls, 0)
   assert.equal(rescheduleCalls, 1)
+})
+
+test('highlight transition frame yields to active node drag without rendering', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let renderCalls = 0
+  let rescheduleCalls = 0
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    pendingHighlightTransitionFrame: number | null
+    draggedNodePubkey: string | null
+    highlightTransition: {
+      from: { pubkey: string | null; neighbors: Set<string> }
+      to: { pubkey: string | null; neighbors: Set<string> }
+      startedAt: number
+      durationMs: number
+    } | null
+    safeRender: () => void
+    scheduleHighlightTransitionFrame: () => void
+    flushHighlightTransitionFrame: () => void
+  }
+
+  adapter.pendingHighlightTransitionFrame = 1
+  adapter.draggedNodePubkey = 'alice'
+  adapter.highlightTransition = {
+    from: { pubkey: 'alice', neighbors: new Set(['bob']) },
+    to: { pubkey: 'bob', neighbors: new Set(['alice']) },
+    startedAt: performance.now(),
+    durationMs: 1000,
+  }
+  adapter.safeRender = () => {
+    renderCalls += 1
+  }
+  adapter.scheduleHighlightTransitionFrame = () => {
+    rescheduleCalls += 1
+  }
+
+  adapter.flushHighlightTransitionFrame()
+
+  assert.equal(adapter.pendingHighlightTransitionFrame, null)
+  assert.equal(adapter.highlightTransition, null)
+  assert.equal(renderCalls, 0)
+  assert.equal(rescheduleCalls, 0)
+})
+
+test('highlight transitions cannot start while node drag is active', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  let scheduleCalls = 0
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    draggedNodePubkey: string | null
+    highlightTransition: unknown
+    scheduleHighlightTransitionFrame: () => void
+    startHighlightTransition: (
+      from: { pubkey: string | null; neighbors: Set<string> },
+      to: { pubkey: string | null; neighbors: Set<string> },
+    ) => void
+  }
+
+  adapter.draggedNodePubkey = 'alice'
+  adapter.highlightTransition = null
+  adapter.scheduleHighlightTransitionFrame = () => {
+    scheduleCalls += 1
+  }
+
+  adapter.startHighlightTransition(
+    { pubkey: null, neighbors: new Set() },
+    { pubkey: 'bob', neighbors: new Set(['alice']) },
+  )
+
+  assert.equal(adapter.highlightTransition, null)
+  assert.equal(scheduleCalls, 0)
 })
 
 test('motion settle timers use render-only scheduling', async () => {
@@ -2257,7 +2399,7 @@ test('keeps hovered neighbors on their base color while marking them highlighted
   assert.equal(hoveredNeighbor.zIndex, 8)
 })
 
-test('edge reducer keeps every edge visible while dragging a node', async () => {
+test('edge reducer dims non first-order edges while dragging a node', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -2299,12 +2441,13 @@ test('edge reducer keeps every edge visible while dragging a node', async () => 
   const unrelated = adapter.edgeReducer('C->D', baseEdge)
 
   assert.equal(firstOrder.hidden, false)
-  assert.equal(firstOrder.size, baseEdge.size)
+  assert.ok(firstOrder.size > baseEdge.size)
   assert.equal(unrelated.hidden, false)
-  assert.equal(unrelated.size, baseEdge.size)
+  assert.equal(unrelated.color, '#10171f')
+  assert.ok(unrelated.zIndex < 0)
 })
 
-test('edge reducer preserves dragged-node edges outside drag focus neighbors', async () => {
+test('edge reducer dims dragged-node edges whose endpoint is not in drag focus neighbors', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -2376,12 +2519,14 @@ test('edge reducer preserves dragged-node edges outside drag focus neighbors', a
   const staleIncidentEdge = adapter.edgeReducer('A->Z', baseEdge)
 
   assert.equal(focusedNeighbor.hidden, false)
-  assert.equal(focusedNeighbor.size, baseEdge.size)
+  assert.ok(focusedNeighbor.size > baseEdge.size)
   assert.equal(staleIncidentEdge.hidden, false)
-  assert.equal(staleIncidentEdge.size, baseEdge.size)
+  assert.equal(staleIncidentEdge.color, '#f4fbff')
+  assert.ok(staleIncidentEdge.size > baseEdge.size)
+  assert.ok(staleIncidentEdge.zIndex > baseEdge.zIndex)
 })
 
-test('edge reducer preserves dragged-node edges whose neighbor is outside the viewport', async () => {
+test('edge reducer keeps dragged-node focus styling for neighbors outside the viewport', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -2453,12 +2598,12 @@ test('edge reducer preserves dragged-node edges whose neighbor is outside the vi
   const offscreenNeighbor = adapter.edgeReducer('A->Z', baseEdge)
 
   assert.equal(visibleNeighbor.hidden, false)
-  assert.equal(visibleNeighbor.size, baseEdge.size)
+  assert.ok(visibleNeighbor.size > baseEdge.size)
   assert.equal(offscreenNeighbor.hidden, false)
-  assert.equal(offscreenNeighbor.size, baseEdge.size)
+  assert.ok(offscreenNeighbor.size > baseEdge.size)
 })
 
-test('edge reducer preserves dragged-node edges whose neighbor sits just outside the viewport', async () => {
+test('edge reducer keeps dragged-node focus styling for neighbors just outside the viewport', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -2530,9 +2675,9 @@ test('edge reducer preserves dragged-node edges whose neighbor sits just outside
   const barelyOffscreenNeighbor = adapter.edgeReducer('A->Z', baseEdge)
 
   assert.equal(visibleNeighbor.hidden, false)
-  assert.equal(visibleNeighbor.size, baseEdge.size)
+  assert.ok(visibleNeighbor.size > baseEdge.size)
   assert.equal(barelyOffscreenNeighbor.hidden, false)
-  assert.equal(barelyOffscreenNeighbor.size, baseEdge.size)
+  assert.ok(barelyOffscreenNeighbor.size > baseEdge.size)
 })
 
 test('edge reducer hides background edges during low-performance connection LOD', async () => {
@@ -2597,7 +2742,7 @@ test('edge reducer hides background edges during low-performance connection LOD'
   const visible = adapter.edgeReducer('A->B', baseEdge)
 
   assert.equal(draggedEdge.hidden, false)
-  assert.equal(draggedEdge.size, baseEdge.size)
+  assert.ok(draggedEdge.size > baseEdge.size)
   assert.equal(focused.hidden, true)
   assert.equal(focused.touchesFocus, true)
   assert.equal(hidden.hidden, true)

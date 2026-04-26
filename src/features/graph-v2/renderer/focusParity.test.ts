@@ -234,7 +234,7 @@ test('drag and selection resolve identical focus neighbors for the same node', (
   )
 })
 
-test('drag node reducer keeps the full graph visible without dimming non-neighbors', () => {
+test('drag node reducer dims non-neighbors like selection focus', () => {
   const adapter = new SigmaRendererAdapter() as unknown as NodeReducerHarness
   adapter.sigma = { getCamera: () => ({ ratio: 1 }) }
   adapter.highlightTransition = null
@@ -272,7 +272,7 @@ test('drag node reducer keeps the full graph visible without dimming non-neighbo
     color: '#b29ecf',
   }
 
-  // Drag path: ya no entramos en modo focus, así que ningún nodo se oscurece.
+  // Drag path: use the same focus language as selection.
   adapter.draggedNodePubkey = 'A'
   adapter.draggedNodeFocus = { pubkey: 'A', neighbors }
   adapter.currentHoverFocus = { pubkey: null, neighbors: new Set() }
@@ -281,13 +281,15 @@ test('drag node reducer keeps the full graph visible without dimming non-neighbo
   const dragNeighbor = adapter.nodeReducer('B', neighborNode)
   const dragOutsider = adapter.nodeReducer('X', outsiderNode)
 
-  // Todos conservan su color base — nada queda atenuado.
-  assert.equal(dragFocused.color, baseNode.color)
+  // Focused and neighbor nodes stay readable; outsiders dim.
+  assert.equal(dragFocused.color, '#f4fbff')
   assert.equal(dragNeighbor.color, neighborNode.color)
-  assert.equal(dragOutsider.color, outsiderNode.color)
-  assert.equal(dragFocused.highlighted, false)
-  assert.equal(dragNeighbor.highlighted, false)
+  assert.equal(dragOutsider.color, '#121a22')
+  assert.equal(dragFocused.highlighted, true)
+  assert.equal(dragNeighbor.highlighted, true)
   assert.equal(dragOutsider.highlighted, false)
+  assert.ok(dragFocused.zIndex > dragNeighbor.zIndex)
+  assert.ok(dragOutsider.zIndex < 0)
 })
 
 test('update refreshes draggedNodeFocus so drag neighbors stay in sync with render graph', () => {
@@ -430,7 +432,7 @@ test('avatar overlay receives identical focus for drag and selection', () => {
   )
 })
 
-test('edge reducer: drag preserves the full graph without dimming or hiding edges', () => {
+test('edge reducer: drag dims unrelated edges like selection focus', () => {
   const edgeEndpoints = new Map<string, [string, string]>([
     ['A->B', ['A', 'B']],
     ['A->C', ['A', 'C']],
@@ -468,18 +470,17 @@ test('edge reducer: drag preserves the full graph without dimming or hiding edge
   assert.ok(selFocusEdge.size > baseEdge.size)
   assert.equal(selUnrelatedEdge.hidden, false)
 
-  // Drag path: el grafo entero permanece visible sin oscurecer ni resaltar.
+  // Drag path: focus edges brighten and unrelated edges dim.
   adapter.draggedNodePubkey = 'A'
   adapter.draggedNodeFocus = { pubkey: 'A', neighbors }
   adapter.currentHoverFocus = { pubkey: 'A', neighbors }
   const dragFocusEdge = adapter.edgeReducer('A->B', baseEdge)
   const dragUnrelatedEdge = adapter.edgeReducer('X->Y', baseEdge)
 
-  // Drag deja todas las aristas sin modificar.
+  // Drag keeps unrelated edges present, but visually pushed back.
   assert.equal(dragFocusEdge.hidden, false)
-  assert.equal(dragFocusEdge.color, baseEdge.color)
-  assert.equal(dragFocusEdge.size, baseEdge.size)
+  assert.ok(dragFocusEdge.size > baseEdge.size)
   assert.equal(dragUnrelatedEdge.hidden, false)
-  assert.equal(dragUnrelatedEdge.color, baseEdge.color)
-  assert.equal(dragUnrelatedEdge.size, baseEdge.size)
+  assert.equal(dragUnrelatedEdge.color, '#10171f')
+  assert.ok(dragUnrelatedEdge.zIndex < 0)
 })

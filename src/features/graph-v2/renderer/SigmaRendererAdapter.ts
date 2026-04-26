@@ -101,10 +101,6 @@ const AVATAR_MIN_FAST_NODE_VELOCITY = 40
 const AVATAR_MAX_FAST_NODE_VELOCITY = 2000
 const AVATAR_MAX_INTERACTIVE_BUCKETS = [32, 64, 128, 256] as const
 const EMPTY_HOVER_NEIGHBORS = new Set<string>()
-const EMPTY_RENDERER_FOCUS: HoverFocusSnapshot = {
-  pubkey: null,
-  neighbors: EMPTY_HOVER_NEIGHBORS,
-}
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
@@ -1255,6 +1251,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       requireNode: true,
     })
     this.draggedNodePubkey = pubkey
+    this.cancelHighlightTransition()
     this.setNodeDragEdgeRendering(true)
     this.shouldPinDraggedNodeOnRelease = false
     this.markMotion()
@@ -1802,17 +1799,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.sigma.scheduleRefresh()
   }
 
-  private copyHoverFocusSnapshot(): HoverFocusSnapshot {
-    // The neighbors Set is treated as read-only: setHoveredNode reassigns
-    // currentHoverFocus to a fresh object+Set on every transition rather than
-    // mutating, so sharing the reference here is safe and avoids cloning a
-    // potentially large Set each hover event.
-    return {
-      pubkey: this.currentHoverFocus.pubkey,
-      neighbors: this.currentHoverFocus.neighbors,
-    }
-  }
-
   private createEmptyFocusSnapshot(): HoverFocusSnapshot {
     return {
       pubkey: null,
@@ -1851,7 +1837,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private resetRendererFocusState() {
     this.cancelPendingHoverFocus()
-    this.highlightTransition = null
+    this.cancelHighlightTransition()
     this.hoveredNodePubkey = null
     this.hoveredNeighbors = new Set()
     this.currentHoverFocus = {
@@ -1936,8 +1922,21 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )
   }
 
+  private cancelHighlightTransition() {
+    this.highlightTransition = null
+    if (this.pendingHighlightTransitionFrame !== null) {
+      cancelAnimationFrame(this.pendingHighlightTransitionFrame)
+      this.pendingHighlightTransitionFrame = null
+    }
+  }
+
   private readonly flushHighlightTransitionFrame = () => {
     this.pendingHighlightTransitionFrame = null
+
+    if (this.draggedNodePubkey) {
+      this.highlightTransition = null
+      return
+    }
 
     const now = performance.now()
     if (
@@ -1959,6 +1958,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
     from: HoverFocusSnapshot,
     to: HoverFocusSnapshot,
   ) {
+    if (this.draggedNodePubkey) {
+      this.cancelHighlightTransition()
+      return
+    }
+
     this.highlightTransition = {
       from,
       to,
@@ -1981,7 +1985,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
         }
       }
       if (equalNeighbors) {
-        this.highlightTransition = null
+        this.cancelHighlightTransition()
         return
       }
     }
@@ -2307,13 +2311,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
   ) => {
     const focus = this.resolveRendererFocus()
     if (this.draggedNodePubkey) {
-      // Durante el drag NO oscurecemos el resto del grafo: aplicamos sólo el
-      // escalado por zoom usando un focus vacío para mantener la vista completa.
-      return this.resolveNodeHoverAttributes(
-        node,
-        data,
-        EMPTY_RENDERER_FOCUS,
-      )
+      // Drag focus is immediate, like selection: the focused node and its
+      // first-order neighbors stay bright while the rest of the graph dims.
+      return this.resolveNodeHoverAttributes(node, data, focus)
     }
 
     if (this.highlightTransition) {
@@ -2346,9 +2346,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
   ) => {
     const focus = this.resolveRendererFocus()
     if (this.draggedNodePubkey) {
-      // Durante el drag mostramos todo el grafo sin oscurecer ni ocultar
-      // aristas. El nodo arrastrado se mueve y el resto sigue siendo visible.
-      return data
+      // Match node focus during drag without blending through stale hover
+      // transitions.
+      return this.resolveEdgeHoverAttributes(edge, data, focus)
     }
 
     if (this.hideConnectionsForLowPerformance) {
@@ -2397,13 +2397,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
-    const previousFocus = this.copyHoverFocusSnapshot()
+    const previousFocus = this.resolveRendererFocus()
     const nextFocus = this.createFocusSnapshot(pubkey)
     this.applyHoverFocusSnapshot(pubkey, nextFocus)
-    // Share the same Set reference with the transition: currentHoverFocus is
-    // reassigned (not mutated) on the next hover, so the transition's `to`
-    // snapshot stays stable without a defensive clone.
-    this.startRendererFocusTransition(previousFocus, this.currentHoverFocus)
+    const nextRendererFocus = this.resolveRendererFocus()
+    this.startRendererFocusTransition(previousFocus, nextRendererFocus)
     this.safeRender()
   }
 
