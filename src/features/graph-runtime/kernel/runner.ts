@@ -1,4 +1,4 @@
-﻿import type { UiLayer } from '@/features/graph-runtime/app/store'
+import type { UiLayer } from '@/features/graph-runtime/app/store'
 import type {
   LoadRootResult,
   ExpandNodeResult,
@@ -11,7 +11,7 @@ import type { KernelFacade } from '@/features/graph-runtime/kernel/facade'
 
 export type ScenarioCommand =
   | { type: 'loadRoot'; pubkey: string }
-  | { type: 'expandNode'; pubkey: string }
+  | { type: 'expandNode'; pubkey: string; options?: { force?: boolean } }
   | { type: 'toggleLayer'; layer: UiLayer }
   | { type: 'findPath'; source: string; target: string; algorithm?: 'bfs' | 'dijkstra' }
   | { type: 'selectNode'; pubkey: string | null }
@@ -172,7 +172,7 @@ async function executeCommand(
       return { type: 'loadRoot', result }
     }
     case 'expandNode': {
-      const result = await kernel.expandNode(command.pubkey)
+      const result = await kernel.expandNode(command.pubkey, command.options)
       return { type: 'expandNode', result }
     }
     case 'toggleLayer': {

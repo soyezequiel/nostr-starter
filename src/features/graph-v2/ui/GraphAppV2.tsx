@@ -2929,7 +2929,7 @@ export default function GraphAppV2() {
     const rootPubkey = sceneState.rootPubkey
     if (!rootPubkey || isFixtureMode) return
     startTransition(() => {
-      void bridge.expandNode(rootPubkey).then((result) => {
+      void bridge.expandNode(rootPubkey, { force: true }).then((result) => {
         setActionFeedback(result.message)
       })
     })

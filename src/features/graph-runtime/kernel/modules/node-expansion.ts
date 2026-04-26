@@ -608,13 +608,13 @@ export function createNodeExpansionModule(
     activeInboundEnrichmentRequests.set(pubkey, request)
   }
 
-  async function expandNode(pubkey: string): Promise<ExpandNodeResult> {
+  async function expandNode(pubkey: string, options?: { force?: boolean }): Promise<ExpandNodeResult> {
     const activeRequest = activeNodeExpansionRequests.get(pubkey)
     if (activeRequest) {
       return activeRequest
     }
 
-    const request = expandNodeOnce(pubkey).finally(() => {
+    const request = expandNodeOnce(pubkey, options).finally(() => {
       activeNodeExpansionRequests.delete(pubkey)
     })
     activeNodeExpansionRequests.set(pubkey, request)
@@ -622,7 +622,7 @@ export function createNodeExpansionModule(
     return request
   }
 
-  async function expandNodeOnce(pubkey: string): Promise<ExpandNodeResult> {
+  async function expandNodeOnce(pubkey: string, options?: { force?: boolean }): Promise<ExpandNodeResult> {
     const state = ctx.store.getState()
 
     if (!state.nodes[pubkey]) {
@@ -639,7 +639,7 @@ export function createNodeExpansionModule(
       }
     }
 
-    if (state.expandedNodePubkeys.has(pubkey)) {
+    if (state.expandedNodePubkeys.has(pubkey) && !options?.force) {
       setTerminalState(
         pubkey,
         'ready',

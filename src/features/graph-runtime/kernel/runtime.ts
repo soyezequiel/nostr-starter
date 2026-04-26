@@ -1,4 +1,4 @@
-﻿import type { UiLayer } from '@/features/graph-runtime/app/store'
+import type { UiLayer } from '@/features/graph-runtime/app/store'
 import { appStore } from '@/features/graph-runtime/app/store/createAppStore'
 import { createNostrGraphDatabase, createRepositories } from '@/features/graph-runtime/db'
 import type { RelayHealthSnapshot } from '@/features/graph-runtime/nostr'
@@ -89,7 +89,7 @@ export interface RootLoader {
     input: ReconfigureRelaysInput,
   ) => Promise<ReconfigureRelaysResult>
   revertRelayOverride: () => Promise<ReconfigureRelaysResult | null>
-  expandNode: (pubkey: string) => Promise<ExpandNodeResult>
+  expandNode: (pubkey: string, options?: { force?: boolean }) => Promise<ExpandNodeResult>
   toggleLayer: (layer: UiLayer) => ToggleLayerResult
   findPath: (
     sourcePubkey: string,

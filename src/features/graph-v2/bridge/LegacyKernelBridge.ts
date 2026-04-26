@@ -200,8 +200,8 @@ export class LegacyKernelBridge {
     return this.runtime.loadRoot(pubkey, options)
   }
 
-  public async expandNode(pubkey: string) {
-    return this.runtime.expandNode(pubkey)
+  public async expandNode(pubkey: string, options?: { force?: boolean }) {
+    return this.runtime.expandNode(pubkey, options)
   }
 
   public async setRelays(relayUrls: string[]): Promise<ReconfigureRelaysResult> {
