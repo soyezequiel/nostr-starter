@@ -1,8 +1,4 @@
-import {
-  detectDevicePerformance,
-  isMobileDevicePerformanceProfile,
-  type DevicePerformanceDetectionResult,
-} from '@/features/graph-runtime/devicePerformance'
+// devicePerformance imports removidos: tuning universal no necesita deteccion.
 
 export const DEFAULT_SESSION_RELAY_URLS = [
   'wss://relay.damus.io',
@@ -63,14 +59,14 @@ export const NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY = 3
 export const NODE_PROFILE_PERSIST_CONCURRENCY = 8
 export const RELAY_HEALTH_FLUSH_DELAY_MS = 32
 
-// Tuning de red dinamico por perfil de dispositivo.
-// El problema raiz no era "subir todos los timeouts": era que la PC y el celular
-// compartian las mismas constantes. La PC sufre con timeouts laxos (espera de
-// mas a relays caidos) y el celular sufre con timeouts agresivos (corta relays
-// que en mobile tardan un poco mas por el jitter de red). Ademas, en celular
-// conviene MAS concurrencia que menos: como cada query es individualmente mas
-// lenta, hacen falta mas en paralelo para llenar el presupuesto antes del hard
-// timeout. El navegador movil permite hasta ~6 sockets WS por origen.
+// Tuning de red para el kernel.
+// Iteracion anterior: se intentaron dos perfiles (desktop agresivo / mobile laxo)
+// pero la deteccion del dispositivo resulto fragil y el celular a veces recibia
+// timeouts de desktop (1.5s/4s/10s), causando una regresion de 189→131 nodos.
+// Solucion actual: un unico tuning universal basado en los valores que dieron
+// paridad probada entre mobile y desktop (~189 nodos en ambos).
+// Cuando tengamos validacion de deteccion instrumentada, se puede re-introducir
+// la diferenciacion.
 export interface KernelNetworkTuning {
   nodeExpandConnectTimeoutMs: number
   nodeExpandPageTimeoutMs: number
@@ -83,59 +79,22 @@ export interface KernelNetworkTuning {
   followRelayListQueryConcurrency: number
 }
 
-const DESKTOP_KERNEL_TUNING: KernelNetworkTuning = {
-  nodeExpandConnectTimeoutMs: 1_500,
-  nodeExpandPageTimeoutMs: 4_000,
-  nodeExpandHardTimeoutMs: 10_000,
-  nodeExpandRetryCount: 1,
-  nodeExpandStragglerGraceMs: 400,
-  nodeExpandInboundCountTimeoutMs: 1_500,
-  rootInboundDiscoveryPageConcurrency: 2,
-  targetedReciprocalQueryConcurrency: 2,
-  followRelayListQueryConcurrency: 2,
-}
-
-const MOBILE_KERNEL_TUNING: KernelNetworkTuning = {
+const UNIVERSAL_KERNEL_TUNING: KernelNetworkTuning = {
   nodeExpandConnectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
   nodeExpandPageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
   nodeExpandHardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
   nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
   nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
   nodeExpandInboundCountTimeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
-  // NOTA: concurrencia 4 en mobile causo regresion (189→117 nodos). Los relays
-  // rate-limitean y el celular satura CPU con 4 streams de paginacion.
-  // Mantener en 2 como antes.
-  rootInboundDiscoveryPageConcurrency: 2,
-  targetedReciprocalQueryConcurrency: 2,
-  followRelayListQueryConcurrency: 2,
-}
-
-let cachedKernelTuning: KernelNetworkTuning | null = null
-
-const detectKernelTuningProfile = (): DevicePerformanceDetectionResult => {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-    return { profile: 'mobile', isPointerCoarse: false }
-  }
-  const matchMedia =
-    typeof window.matchMedia === 'function' ? window.matchMedia : null
-  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory
-  return detectDevicePerformance({
-    isPointerCoarse: matchMedia?.('(pointer: coarse)').matches ?? false,
-    viewportWidth: window.innerWidth ?? 0,
-    deviceMemory: typeof memory === 'number' ? memory : null,
-    hardwareConcurrency: navigator.hardwareConcurrency ?? null,
-  })
+  rootInboundDiscoveryPageConcurrency: ROOT_INBOUND_DISCOVERY_PAGE_CONCURRENCY,
+  targetedReciprocalQueryConcurrency: TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
+  followRelayListQueryConcurrency: FOLLOW_RELAY_LIST_QUERY_CONCURRENCY,
 }
 
 export function getKernelNetworkTuning(): KernelNetworkTuning {
-  if (cachedKernelTuning) return cachedKernelTuning
-  const detected = detectKernelTuningProfile()
-  cachedKernelTuning = isMobileDevicePerformanceProfile(detected.profile)
-    ? MOBILE_KERNEL_TUNING
-    : DESKTOP_KERNEL_TUNING
-  return cachedKernelTuning
+  return UNIVERSAL_KERNEL_TUNING
 }
 
 export function resetKernelNetworkTuningCache(): void {
-  cachedKernelTuning = null
+  // No-op: tuning universal no usa cache. Se mantiene la firma para no romper tests.
 }
