@@ -307,6 +307,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private physicsBridgeBackgroundCursor = 0
 
+  private physicsBridgeFrameSkipCount = 0
+
   private pendingGraphPosition: { x: number; y: number } | null = null
 
   private dragHopDistances: Map<string, number> = new Map()
@@ -2915,6 +2917,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingPhysicsBridgeFrame = null
 
     if (!this.forceRuntime?.isRunning()) {
+      this.physicsBridgeFrameSkipCount = 0
       if (this.forceRuntime?.isSuspended() || this.draggedNodePubkey) {
         return
       }
@@ -2946,6 +2949,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
       }
       return
     }
+
+    const isDegraded = this.avatarBudget?.snapshot()?.isDegraded ?? false
+    if (isDegraded && this.physicsBridgeFrameSkipCount < 3) {
+      this.physicsBridgeFrameSkipCount += 1
+      this.pendingPhysicsBridgeFrame = requestAnimationFrame(
+        this.flushPhysicsPositionBridge,
+      )
+      return
+    }
+    this.physicsBridgeFrameSkipCount = 0
 
     const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
     const priority = this.collectPhysicsBridgePubkeys()
