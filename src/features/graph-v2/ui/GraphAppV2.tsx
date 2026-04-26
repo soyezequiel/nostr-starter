@@ -1861,7 +1861,14 @@ export default function GraphAppV2() {
   const renderConfig = useAppStore((state) => state.renderConfig)
   const setRenderConfig = useAppStore((state) => state.setRenderConfig)
   const applyDevicePerformanceProfile = useAppStore((state) => state.applyDevicePerformanceProfile)
-  const isMobileViewport = useMemo(() => isMobileGraphViewport(), [])
+  const [isMobileViewport, setIsMobileViewport] = useState(isMobileGraphViewport)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia(MOBILE_PHYSICS_QUERY)
+    const handler = (e: MediaQueryListEvent) => setIsMobileViewport(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
