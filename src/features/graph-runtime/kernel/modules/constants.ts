@@ -102,9 +102,12 @@ const MOBILE_KERNEL_TUNING: KernelNetworkTuning = {
   nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
   nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
   nodeExpandInboundCountTimeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
-  rootInboundDiscoveryPageConcurrency: 4,
-  targetedReciprocalQueryConcurrency: 4,
-  followRelayListQueryConcurrency: 4,
+  // NOTA: concurrencia 4 en mobile causo regresion (189→117 nodos). Los relays
+  // rate-limitean y el celular satura CPU con 4 streams de paginacion.
+  // Mantener en 2 como antes.
+  rootInboundDiscoveryPageConcurrency: 2,
+  targetedReciprocalQueryConcurrency: 2,
+  followRelayListQueryConcurrency: 2,
 }
 
 let cachedKernelTuning: KernelNetworkTuning | null = null
