@@ -20,7 +20,7 @@ export interface DevicePerformanceDetectionResult {
 const MOBILE_VIEWPORT_MAX_WIDTH = 900
 
 const DESKTOP_GRAPH_CAPS: EffectiveGraphCaps = {
-  maxNodes: 2200,
+  maxNodes: 10000,
   coldStartLayoutTicks: 90,
   warmStartLayoutTicks: 50,
 }
