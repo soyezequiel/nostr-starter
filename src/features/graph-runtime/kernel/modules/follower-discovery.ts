@@ -48,9 +48,7 @@ export function createFollowerDiscoveryModule(
           kinds: [ROOT_RELAY_LIST_KIND],
         } satisfies Filter,
       ], {
-        // PERF: relay list del root es camino critico para el discovery; usar
-        // prioridad interactiva para minimizar delay de flush (32ms vs 120ms).
-        priority: 'interactive',
+        priority: 'background',
       })
 
       if (isStale()) {

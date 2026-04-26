@@ -92,12 +92,12 @@ const DESKTOP_KERNEL_TUNING: KernelNetworkTuning = {
 // Mobile: jitter de red requiere timeouts mas generosos. Valores probados
 // que dieron paridad con desktop (~189 nodos en ambos).
 const MOBILE_KERNEL_TUNING: KernelNetworkTuning = {
-  nodeExpandConnectTimeoutMs: NODE_EXPAND_CONNECT_TIMEOUT_MS,
-  nodeExpandPageTimeoutMs: NODE_EXPAND_PAGE_TIMEOUT_MS,
-  nodeExpandHardTimeoutMs: NODE_EXPAND_HARD_TIMEOUT_MS,
-  nodeExpandRetryCount: NODE_EXPAND_RETRY_COUNT,
-  nodeExpandStragglerGraceMs: NODE_EXPAND_STRAGGLER_GRACE_MS,
-  nodeExpandInboundCountTimeoutMs: NODE_EXPAND_INBOUND_COUNT_TIMEOUT_MS,
+  nodeExpandConnectTimeoutMs: 5_000,
+  nodeExpandPageTimeoutMs: 9_000,
+  nodeExpandHardTimeoutMs: 24_000,
+  nodeExpandRetryCount: 2,
+  nodeExpandStragglerGraceMs: 1500,
+  nodeExpandInboundCountTimeoutMs: 4_000,
   rootInboundDiscoveryPageConcurrency: ROOT_INBOUND_DISCOVERY_PAGE_CONCURRENCY,
   targetedReciprocalQueryConcurrency: TARGETED_RECIPROCAL_QUERY_CONCURRENCY,
   followRelayListQueryConcurrency: FOLLOW_RELAY_LIST_QUERY_CONCURRENCY,
