@@ -1,4 +1,4 @@
-﻿import type { Event } from 'nostr-tools'
+import type { Event } from 'nostr-tools'
 
 import { detectDevicePerformance } from '@/features/graph-runtime/devicePerformance'
 import {
@@ -34,7 +34,7 @@ const resolveVerifyWorkerCount = () => {
     hardwareConcurrency: readOptionalNumber(navigator.hardwareConcurrency),
   })
 
-  return detection.profile === 'low-end-mobile' ? 1 : 2
+  return detection.profile === 'desktop' ? 4 : 2
 }
 
 export class VerifyWorkerPool {
