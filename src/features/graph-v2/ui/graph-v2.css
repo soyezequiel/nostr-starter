@@ -1548,6 +1548,25 @@
   border-radius: 8px;
   background: oklch(100% 0 0 / 0.025);
   box-shadow: inset 2px 0 0 var(--sg-zap);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+[data-graph-v2] .sg-zap-feed__item:hover {
+  background: oklch(100% 0 0 / 0.055);
+  border-color: oklch(82% 0.17 75 / 0.55);
+}
+
+[data-graph-v2] .sg-zap-feed__item:focus-visible {
+  outline: 2px solid var(--sg-zap);
+  outline-offset: 2px;
+}
+
+[data-graph-v2] .sg-zap-feed__item:active {
+  transform: translateY(1px);
 }
 
 [data-graph-v2] .sg-zap-feed__item--dropped {

@@ -2796,6 +2796,20 @@ export default function GraphAppV2() {
     return played
   }, [sceneConnectionLookup, sceneState.activeLayer, showZaps, visibleNodeSet])
 
+  const handleReplayZapActivity = useCallback((entry: ZapActivityLogEntry) => {
+    const played = handleZap(entry)
+    setZapActivityLog((current) =>
+      current.map((item) =>
+        item.id === entry.id ? { ...item, played } : item,
+      ),
+    )
+    setZapFeedback(
+      played
+        ? `Zap reproducido: ${formatInteger(entry.sats)} sats`
+        : 'No se pudo reproducir ese zap en la vista actual.',
+    )
+  }, [handleZap])
+
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {
     sigmaHostRef.current?.setPhysicsSuspended(!physicsEnabled)
@@ -4184,8 +4198,17 @@ export default function GraphAppV2() {
         <div className="sg-zap-feed__list">
           {zapActivityLog.map((entry) => (
             <article
+              aria-label={`Reproducir zap de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
               className={`sg-zap-feed__item${entry.played ? '' : ' sg-zap-feed__item--dropped'}`}
               key={entry.id}
+              onClick={() => handleReplayZapActivity(entry)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                handleReplayZapActivity(entry)
+              }}
+              role="button"
+              tabIndex={0}
             >
               <div className="sg-zap-feed__meta">
                 <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
