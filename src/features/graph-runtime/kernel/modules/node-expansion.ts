@@ -502,7 +502,7 @@ export function createNodeExpansionModule(
         nodo: pubkey.slice(0, 12),
         motivo: summarizeHumanTerminalError(error),
       })
-      return
+      return Promise.resolve()
     }
 
     const request = loadTargetedReciprocalFollowerEvidence({
@@ -565,7 +565,7 @@ export function createNodeExpansionModule(
         nodo: pubkey.slice(0, 12),
         motivo: summarizeHumanTerminalError(error),
       })
-      return
+      return Promise.resolve()
     }
 
     const request = loadDirectInboundFollowerEvidence({
@@ -860,7 +860,7 @@ export function createNodeExpansionModule(
           'Actualizando el grafo con la evidencia disponible...',
           startedAt,
         )
-        return applyExpandedStructureEvidence(
+        const result = applyExpandedStructureEvidence(
           pubkey,
           [],
           inboundFollowerEvidence.followerPubkeys,
@@ -950,7 +950,7 @@ export function createNodeExpansionModule(
           'Actualizando el grafo con la evidencia disponible...',
           startedAt,
         )
-        return applyExpandedStructureEvidence(
+        const result = applyExpandedStructureEvidence(
           pubkey,
           [],
           inboundFollowerEvidence.followerPubkeys,
