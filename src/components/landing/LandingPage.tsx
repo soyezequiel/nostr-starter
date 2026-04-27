@@ -140,14 +140,6 @@ export default function LandingPage() {
                   Explorar conexiones
                 </Link>
                 <div className="flex flex-wrap gap-3 text-sm">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[#ff4b5d]/35 bg-[#ff4b5d]/10 px-3 py-2 text-[#f6d7d3]">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#ff6675]" />
-                    Disponible en escritorio
-                  </span>
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">
-                    <span className="h-2.5 w-2.5 rounded-full border border-[#ada59b]/60" />
-                    Celular en desarrollo
-                  </span>
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">
                     <span className="h-2.5 w-2.5 rounded-full border border-[#ada59b]/60" />
                     Grafo interactivo
