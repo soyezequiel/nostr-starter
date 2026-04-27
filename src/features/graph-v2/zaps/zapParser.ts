@@ -1,4 +1,4 @@
-﻿// Lightweight NIP-57 zap receipt parser for the /labs/sigma real-time feed.
+// Lightweight NIP-57 zap receipt parser for the /labs/sigma real-time feed.
 // Mirrors the decoding rules from the worker-based pipeline in
 // src/features/graph-runtime/workers/events/handlers.ts (parseAmountTagToSats,
 // parseBolt11ToSats, parseZapDescription) without the persistence/diagnostics
@@ -82,8 +82,13 @@ export function parseZapReceiptEvent(event: RawZapReceiptEvent): ParsedZap | nul
       senderPubkey = (parsed as { pubkey: string }).pubkey
     }
   } catch {
-    return null
+    // Ignorar el error de parseo, intentaremos con el tag P
   }
+
+  if (!senderPubkey) {
+    senderPubkey = findTag(event.tags, 'P')
+  }
+
   if (!senderPubkey) return null
 
   const sats =

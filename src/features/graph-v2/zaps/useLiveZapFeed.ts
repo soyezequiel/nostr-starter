@@ -205,9 +205,20 @@ export function useLiveZapFeed({
         onZapRef.current(parsed)
       }
 
-      subscriptions = targetBatches.map((pubkeys) => {
+      subscriptions = targetBatches.map((batch) => {
         const subscription = ndk.subscribe(
-          { kinds: [9735], '#p': pubkeys },
+          [
+            {
+              kinds: [9735],
+              '#p': [...batch],
+              since: Math.floor(Date.now() / 1_000) - 60,
+            },
+            {
+              kinds: [9735],
+              '#P': [...batch],
+              since: Math.floor(Date.now() / 1_000) - 60,
+            }
+          ],
           { closeOnEose: false },
         )
         subscription.on('event', handleEvent)

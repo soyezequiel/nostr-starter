@@ -276,13 +276,22 @@ async function collectZapReplayBatch({
     }, RECENT_ZAP_REPLAY_FETCH_TIMEOUT_MS)
 
     subscription = ndk.subscribe(
-      {
-        kinds: [9735],
-        '#p': [...batch],
-        since,
-        until,
-        limit: Math.min(RECENT_ZAP_REPLAY_MAX_EVENTS, Math.max(25, batch.length * 3)),
-      },
+      [
+        {
+          kinds: [9735],
+          '#p': [...batch],
+          since,
+          until,
+          limit: Math.min(RECENT_ZAP_REPLAY_MAX_EVENTS, Math.max(25, batch.length * 3)),
+        },
+        {
+          kinds: [9735],
+          '#P': [...batch],
+          since,
+          until,
+          limit: Math.min(RECENT_ZAP_REPLAY_MAX_EVENTS, Math.max(25, batch.length * 3)),
+        }
+      ],
       { closeOnEose: true },
     )
     subscription.on('event', (event: NDKEvent) => {
@@ -390,8 +399,9 @@ export function useRecentZapReplay({
   onZap: (zap: ParsedZap) => boolean
 }): RecentZapReplaySnapshot {
   const onZapRef = useRef(onZap)
-  const lastReplayKeyRef = useRef<number | null>(null)
-  const lastRefreshKeyRef = useRef<number | null>(null)
+  const handledReplayKeyRef = useRef<number>(replayKey)
+  const handledRefreshKeyRef = useRef<number>(refreshKey)
+
   useEffect(() => {
     onZapRef.current = onZap
   }, [onZap])
@@ -502,14 +512,13 @@ export function useRecentZapReplay({
     void (async () => {
       const requestedUntil = Math.floor(Date.now() / 1_000)
       const requestedSince = requestedUntil - RECENT_ZAP_REPLAY_LOOKBACK_SEC
-      const hasSeenReplayKey = lastReplayKeyRef.current !== null
-      const hasSeenRefreshKey = lastRefreshKeyRef.current !== null
-      const cacheOnlyReplay =
-        hasSeenReplayKey && lastReplayKeyRef.current !== replayKey
-      const forceRefresh =
-        hasSeenRefreshKey && lastRefreshKeyRef.current !== refreshKey
-      lastReplayKeyRef.current = replayKey
-      lastRefreshKeyRef.current = refreshKey
+      const cacheOnlyReplay = handledReplayKeyRef.current !== replayKey
+      const forceRefresh = handledRefreshKeyRef.current !== refreshKey
+
+      setTimeout(() => {
+        handledReplayKeyRef.current = replayKey
+        handledRefreshKeyRef.current = refreshKey
+      }, 0)
 
       try {
         const repositories = await getZapReplayRepositories()
@@ -575,42 +584,7 @@ export function useRecentZapReplay({
           return
         }
 
-        const canReplayFromCoverage = reusableCoverage !== null && !forceRefresh
-        if (canReplayFromCoverage) {
-          const replayZaps = cachedBeforeFetch.slice(-RECENT_ZAP_REPLAY_MAX_EVENTS)
-          traceZapFlow('recentZapReplay.cacheHit', {
-            targetCount: targets.length,
-            cachedCount: cachedBeforeFetch.length,
-            replayCount: replayZaps.length,
-            since: replaySince,
-            until: replayUntil,
-          })
-          setSnapshot({
-            phase: 'done',
-            stage: 'done',
-            message:
-              replayZaps.length > 0
-                ? `Replay desde cache: ${replayZaps.length} zaps guardados.`
-                : 'Cache consultada: no hubo zaps reproducibles guardados para esa ultima hora.',
-            targetCount: targets.length,
-            truncatedTargetCount: targetInfo.truncatedTargetCount,
-            batchCount: 0,
-            completedBatchCount: 0,
-            timedOutBatchCount: 0,
-            cachedCount: cachedBeforeFetch.length,
-            fetchedCount: 0,
-            decodedCount: cachedBeforeFetch.length,
-            playableCount: replayZaps.length,
-            playedCount: 0,
-            droppedCount: 0,
-            windowStartAt: replaySince,
-            windowEndAt: replayUntil,
-            currentZapCreatedAt: replaySince,
-            timelineProgress: 0,
-          })
-          replay(replayZaps)
-          return
-        }
+
 
         const fetchSince =
           reusableCoverage &&
@@ -674,7 +648,7 @@ export function useRecentZapReplay({
               ndk,
               batch,
               since: fetchSince,
-              until: requestedUntil,
+              until: requestedUntil + 60,
             })
             if (disposed) return
             if (batchResult.timedOut) {
@@ -713,7 +687,8 @@ export function useRecentZapReplay({
         const parsed = fetchedEvents
           .map((event) => parseZapReceiptEvent(toRawZapReceiptEvent(event)))
           .filter((zap): zap is ParsedZap => zap !== null)
-          .filter((zap) => zap.createdAt >= fetchSince && zap.createdAt <= requestedUntil)
+          // Use the clock drift buffer here too
+          .filter((zap) => zap.createdAt >= fetchSince && zap.createdAt <= requestedUntil + 60)
           .sort((left, right) => {
             if (left.createdAt !== right.createdAt) {
               return left.createdAt - right.createdAt
@@ -743,7 +718,7 @@ export function useRecentZapReplay({
           repositories,
           targets,
           since: requestedSince,
-          until: requestedUntil,
+          until: requestedUntil + 60,
         })
         if (disposed) return
 

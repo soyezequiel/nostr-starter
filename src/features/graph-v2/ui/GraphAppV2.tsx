@@ -2759,20 +2759,6 @@ export default function GraphAppV2() {
         sceneConnectionLookup.connections.get(
           createSceneConnectionKey(zap.fromPubkey, zap.toPubkey),
         ) ?? null
-      
-      if (!matchedConnection) {
-        if (shouldTrace) {
-          traceZapFlow('uiZapGate.dropped', {
-            reason: 'missing-scene-connection',
-            fromPubkey: zap.fromPubkey,
-            toPubkey: zap.toPubkey,
-            sats: zap.sats,
-            sceneEdgeCount: sceneConnectionLookup.edgeCount,
-            visibleNodeCount: visibleNodeSet.size,
-          })
-        }
-        return false
-      }
     }
 
     const played = sigmaHostRef.current?.playZap(zap) ?? false
