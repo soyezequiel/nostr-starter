@@ -170,7 +170,7 @@ import {
   clearSiteCache,
   requestBrowserSiteDataClear,
 } from '@/lib/dev/clearSiteCache'
-import type { NostrProfile } from '@/lib/nostr'
+import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
 
 type SigmaSettingsTab = 'performance' | 'visuals' | 'zaps' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
@@ -324,6 +324,8 @@ const VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY = 'sigma.visibleEdgeCountLabels'
 const INITIAL_CAMERA_ZOOM_STORAGE_KEY = 'sigma.initialCameraZoom'
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
+const ZAP_ACTOR_PROFILE_BATCH_SIZE = 6
+const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
 
 const clampInitialCameraZoom = (value: number) =>
   Number.isFinite(value)
@@ -436,9 +438,13 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
   zapLastUpdatedAt: state.zapLayer.lastUpdatedAt,
 })
 
-const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/i
-
 const formatInteger = (value: number) => INTEGER_FORMATTER.format(value)
+
+const resolveZapActorProfileLabel = (profile: NostrProfile) =>
+  profile.displayName?.trim() ||
+  profile.name?.trim() ||
+  profile.nip05?.trim() ||
+  null
 
 const createSceneConnectionKey = (a: string, b: string) =>
   a < b ? `${a}|${b}` : `${b}|${a}`
@@ -1927,7 +1933,11 @@ export default function GraphAppV2() {
   const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
     useState(false)
   const [zapActivityLog, setZapActivityLog] = useState<ZapActivityLogEntry[]>([])
+  const [zapActorLabelsByPubkey, setZapActorLabelsByPubkey] =
+    useState<Record<string, string>>({})
   const zapActivitySequenceRef = useRef(0)
+  const zapActorProfileAttemptedRef = useRef(new Set<string>())
+  const zapActorProfileInflightRef = useRef(new Set<string>())
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
   const pendingExpansionAutoFitRef = useRef<ExpansionAutoFitRequest | null>(
     null,
@@ -2814,6 +2824,66 @@ export default function GraphAppV2() {
   useEffect(() => {
     sigmaHostRef.current?.setPhysicsSuspended(!physicsEnabled)
   }, [physicsEnabled])
+
+  useEffect(() => {
+    if (zapActivityLog.length === 0) return
+
+    const attemptedPubkeys = zapActorProfileAttemptedRef.current
+    const inflightPubkeys = zapActorProfileInflightRef.current
+    const seenPubkeys = new Set<string>()
+    const pubkeys: string[] = []
+
+    for (const entry of zapActivityLog) {
+      for (const rawPubkey of [entry.fromPubkey, entry.toPubkey]) {
+        const pubkey = rawPubkey.toLowerCase()
+        if (seenPubkeys.has(pubkey)) continue
+        seenPubkeys.add(pubkey)
+        if (!HEX_PUBKEY_RE.test(pubkey)) continue
+        if (sceneState.nodesByPubkey[pubkey]?.label?.trim()) continue
+        if (zapActorLabelsByPubkey[pubkey]?.trim()) continue
+        if (attemptedPubkeys.has(pubkey) || inflightPubkeys.has(pubkey)) continue
+
+        pubkeys.push(pubkey)
+        if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
+      }
+      if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
+    }
+
+    if (pubkeys.length === 0) return
+
+    let cancelled = false
+    for (const pubkey of pubkeys) {
+      attemptedPubkeys.add(pubkey)
+      inflightPubkeys.add(pubkey)
+    }
+
+    void Promise.all(
+      pubkeys.map(async (pubkey) => {
+        try {
+          const profile = await fetchProfileByPubkey(pubkey)
+          return [pubkey, resolveZapActorProfileLabel(profile)] as const
+        } catch {
+          return [pubkey, null] as const
+        } finally {
+          inflightPubkeys.delete(pubkey)
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return
+      const nextLabels: Record<string, string> = {}
+      for (const [pubkey, label] of results) {
+        if (label) {
+          nextLabels[pubkey] = label
+        }
+      }
+      if (Object.keys(nextLabels).length === 0) return
+      setZapActorLabelsByPubkey((current) => ({ ...current, ...nextLabels }))
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [sceneState.nodesByPubkey, zapActivityLog, zapActorLabelsByPubkey])
 
   const canRunZapFeed = canRunZapFeedForScene({
     showZaps,
@@ -4156,9 +4226,11 @@ export default function GraphAppV2() {
   )
 
   const getZapActorLabel = (pubkey: string) => {
-    const node = sceneState.nodesByPubkey[pubkey]
+    const normalizedPubkey = pubkey.toLowerCase()
+    const node = sceneState.nodesByPubkey[normalizedPubkey]
     const label = node?.label?.trim()
-    return label || `${pubkey.slice(0, 8)}...`
+    const zapActorLabel = zapActorLabelsByPubkey[normalizedPubkey]?.trim()
+    return label || zapActorLabel || `${pubkey.slice(0, 8)}...`
   }
 
   const zapFeedStatus = shouldEnableLiveZapFeed
