@@ -23,7 +23,9 @@ export interface ViewportPositionResolver {
 
 interface ActiveElectron {
   fromPubkey: string | null
-  toPubkey: string
+  toPubkey: string | null
+  virtualFrom?: { x: number; y: number }
+  virtualTo?: { x: number; y: number }
   radiusPx: number
   label: string
   startMs: number
@@ -79,16 +81,65 @@ export class ZapElectronOverlay {
     }
   }
 
+  private getOutsidePoint(target: { x: number; y: number }): { x: number; y: number } {
+    const widthCss = this.canvas.width / this.devicePixelRatio
+    const heightCss = this.canvas.height / this.devicePixelRatio
+    const cx = widthCss / 2
+    const cy = heightCss / 2
+
+    let dx = target.x - cx
+    let dy = target.y - cy
+
+    if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+      dy = -1
+    }
+
+    const dist = Math.hypot(dx, dy)
+    dx /= dist
+    dy /= dist
+
+    const margin = 50
+    const left = -margin
+    const right = widthCss + margin
+    const top = -margin
+    const bottom = heightCss + margin
+
+    const tX = dx > 0 ? (right - target.x) / dx : dx < 0 ? (left - target.x) / dx : Infinity
+    const tY = dy > 0 ? (bottom - target.y) / dy : dy < 0 ? (top - target.y) / dy : Infinity
+    
+    const t = Math.min(tX, tY)
+    
+    return {
+      x: target.x + dx * t,
+      y: target.y + dy * t
+    }
+  }
+
   public play(zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>): boolean {
     if (this.disposed) return false
     
-    const fromPos = this.getCssViewportPosition(zap.fromPubkey)
-    const toPos = this.getCssViewportPosition(zap.toPubkey)
+    let fromPos = this.getCssViewportPosition(zap.fromPubkey)
+    let toPos = this.getCssViewportPosition(zap.toPubkey)
+    if (!fromPos && !toPos) return false
+
+    let isFromOutside = false
+    let isToOutside = false
+
+    if (!fromPos && toPos) {
+      fromPos = this.getOutsidePoint(toPos)
+      isFromOutside = true
+    } else if (fromPos && !toPos) {
+      toPos = this.getOutsidePoint(fromPos)
+      isToOutside = true
+    }
+
     if (!fromPos || !toPos) return false
 
     this.animations.push({
-      fromPubkey: zap.fromPubkey,
-      toPubkey: zap.toPubkey,
+      fromPubkey: isFromOutside ? null : zap.fromPubkey,
+      toPubkey: isToOutside ? null : zap.toPubkey,
+      virtualFrom: isFromOutside ? fromPos : undefined,
+      virtualTo: isToOutside ? toPos : undefined,
       radiusPx: satsToRadiusPx(zap.sats),
       label: formatSatsLabel(zap.sats),
       startMs: performance.now(),
@@ -159,17 +210,17 @@ export class ZapElectronOverlay {
       const elapsed = timestamp - anim.startMs
       if (elapsed >= anim.durationMs) continue
 
-      const to = this.getCssViewportPosition(anim.toPubkey)
+      const to = anim.toPubkey === null ? anim.virtualTo : this.getCssViewportPosition(anim.toPubkey)
       if (!to) continue
 
-      if (anim.fromPubkey === null) {
+      if (anim.fromPubkey === null && !anim.virtualFrom) {
         const progress = Math.min(1, Math.max(0, elapsed / anim.durationMs))
         this.drawArrivalZap(ctx, to, progress, anim)
         next.push(anim)
         continue
       }
 
-      const from = this.getCssViewportPosition(anim.fromPubkey)
+      const from = anim.fromPubkey === null ? anim.virtualFrom : this.getCssViewportPosition(anim.fromPubkey)
       // If a node left the viewport/graph mid-flight, drop the animation so we
       // never paint on stale or offscreen positions.
       if (!from) continue

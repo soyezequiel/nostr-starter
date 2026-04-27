@@ -2734,30 +2734,10 @@ export default function GraphAppV2() {
       return false
     }
     
-    // Animar el zap sólo si ambos nodos están presentes en el renderizado
+    // Animar el zap si al menos un nodo está presente en el renderizado
     const hasVisibleFrom = visibleNodeSet.has(zap.fromPubkey)
     const hasVisibleTo = visibleNodeSet.has(zap.toPubkey)
-    if (!hasVisibleFrom || !hasVisibleTo) {
-      if (hasVisibleTo && !hasVisibleFrom) {
-        const played = sigmaHostRef.current?.playZapArrival({
-          toPubkey: zap.toPubkey,
-          sats: zap.sats,
-        }) ?? false
-        if (shouldTrace) {
-          traceZapFlow(played ? 'uiZapGate.played' : 'uiZapGate.dropped', {
-            reason: played ? 'arrival-only' : 'arrival-overlay-rejected',
-            fromPubkey: zap.fromPubkey,
-            toPubkey: zap.toPubkey,
-            sats: zap.sats,
-            hasVisibleFrom,
-            hasVisibleTo,
-            activeLayer: sceneState.activeLayer,
-            visibleNodeCount: visibleNodeSet.size,
-          })
-        }
-        return played
-      }
-
+    if (!hasVisibleFrom && !hasVisibleTo) {
       if (shouldTrace) {
         traceZapFlow('uiZapGate.dropped', {
           reason: 'endpoint-not-visible',
@@ -2773,23 +2753,26 @@ export default function GraphAppV2() {
       return false
     }
     
-    const matchedConnection =
-      sceneConnectionLookup.connections.get(
-        createSceneConnectionKey(zap.fromPubkey, zap.toPubkey),
-      ) ?? null
-    
-    if (!matchedConnection) {
-      if (shouldTrace) {
-        traceZapFlow('uiZapGate.dropped', {
-          reason: 'missing-scene-connection',
-          fromPubkey: zap.fromPubkey,
-          toPubkey: zap.toPubkey,
-          sats: zap.sats,
-          sceneEdgeCount: sceneConnectionLookup.edgeCount,
-          visibleNodeCount: visibleNodeSet.size,
-        })
+    let matchedConnection = null
+    if (hasVisibleFrom && hasVisibleTo) {
+      matchedConnection =
+        sceneConnectionLookup.connections.get(
+          createSceneConnectionKey(zap.fromPubkey, zap.toPubkey),
+        ) ?? null
+      
+      if (!matchedConnection) {
+        if (shouldTrace) {
+          traceZapFlow('uiZapGate.dropped', {
+            reason: 'missing-scene-connection',
+            fromPubkey: zap.fromPubkey,
+            toPubkey: zap.toPubkey,
+            sats: zap.sats,
+            sceneEdgeCount: sceneConnectionLookup.edgeCount,
+            visibleNodeCount: visibleNodeSet.size,
+          })
+        }
+        return false
       }
-      return false
     }
 
     const played = sigmaHostRef.current?.playZap(zap) ?? false
