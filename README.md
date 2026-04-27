@@ -42,6 +42,13 @@ La propuesta no se limita a "ver un perfil". El foco esta en **identidad como re
 - senales de zaps entre los conexiones presentes
 
 
+## Cómo interactuar con el grafo
+
+El explorador de identidades de nostr espacial ofrece varias interacciones clave para navegar la red Nostr y descubrir conexiones:
+
+- **Expandir nodos:** Puedes expandir cualquier nodo para descubrir y cargar sus conexiones directas (follows y followers). Para hacerlo, haz **doble clic** sobre el nodo, o bien selecciónalo y usa el botón de "Expandir conexiones" en el panel lateral.
+- **Fijar (Anclar) nodos:** Para organizar visualmente el grafo y mantener la estructura estable, puedes "fijar" un nodo en una posición de la pantalla, evitando que el motor de físicas lo mueva. Para anclar o desanclar un nodo, simplemente **arrástralo y suéltalo** libremente en el lienzo, o utiliza el botón de anclar en el panel del perfil seleccionado.
+
 ## Superficies del producto
 
 | Ruta | Para que sirve |
