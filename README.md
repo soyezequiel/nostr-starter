@@ -99,4 +99,8 @@ src/
 
 La superficie principal del producto es el grafo Sigma en `/labs/sigma`. `/` funciona como landing de entrada para orientar la demo y enviar a las rutas clave; `profile` sigue siendo util, pero la historia mas fuerte del proyecto esta en la exploracion de identidad, y la visualizacion de los zaps en vivo.
 
+## Solución de problemas
+
+Si experimentas algún error de sincronización, datos desactualizados o problemas al cargar el grafo de una identidad, puedes probar limpiar la caché local. Para hacer esto, simplemente abre el selector de perfiles y haz clic en el botón de "Limpiar caché local" (ícono de escoba).
+
 
