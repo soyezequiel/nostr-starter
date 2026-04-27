@@ -172,7 +172,7 @@ import {
 } from '@/lib/dev/clearSiteCache'
 import type { NostrProfile } from '@/lib/nostr'
 
-type SigmaSettingsTab = 'performance' | 'visuals' | 'relays' | 'dev'
+type SigmaSettingsTab = 'performance' | 'visuals' | 'zaps' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
 type ZapFeedMode = 'live' | 'recent-hour'
 type MobileUtilityPanel = 'filters' | null
@@ -308,6 +308,7 @@ interface LoadRootInput
 const PUBLIC_SIGMA_SETTINGS_TABS: Array<{ id: SigmaSettingsTab; label: string }> = [
   { id: 'performance', label: 'Rendimiento' },
   { id: 'visuals', label: 'Visuales' },
+  { id: 'zaps', label: 'Zaps' },
   { id: 'relays', label: 'Red' },
 ]
 
@@ -3813,20 +3814,19 @@ export default function GraphAppV2() {
         )
       case 'visuals':
         return (
-          <div>
-            <VisualOptionsPanel
-              avatarRuntimeOptions={avatarRuntimeOptions}
-              initialCameraZoom={initialCameraZoom}
-              onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
-              onInitialCameraZoomChange={handleInitialCameraZoomChange}
-              onToggleVisibleEdgeCountLabels={() => {
-                setShowVisibleEdgeCountLabels((current) => !current)
-              }}
-              showVisibleEdgeCountLabels={showVisibleEdgeCountLabels}
-            />
-            {renderZapSettingsContent()}
-          </div>
+          <VisualOptionsPanel
+            avatarRuntimeOptions={avatarRuntimeOptions}
+            initialCameraZoom={initialCameraZoom}
+            onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
+            onInitialCameraZoomChange={handleInitialCameraZoomChange}
+            onToggleVisibleEdgeCountLabels={() => {
+              setShowVisibleEdgeCountLabels((current) => !current)
+            }}
+            showVisibleEdgeCountLabels={showVisibleEdgeCountLabels}
+          />
         )
+      case 'zaps':
+        return renderZapSettingsContent()
       case 'relays':
         return (
           <div>
@@ -3941,27 +3941,6 @@ export default function GraphAppV2() {
             {isDev ? (
               <div className="sg-settings-section">
                 <h4>Zaps dev</h4>
-                <div className="sg-setting-row">
-                  <div>
-                    <div className="sg-setting-row__lbl">Pausar live en escenas grandes</div>
-                    <div className="sg-setting-row__desc">
-                      Limita filtros de relay cuando hay mas de {MAX_ZAP_FILTER_PUBKEYS} nodos visibles.
-                    </div>
-                  </div>
-                  <button
-                    aria-pressed={pauseLiveZapsWhenSceneIsLarge}
-                    className={`sg-toggle${pauseLiveZapsWhenSceneIsLarge ? ' sg-toggle--on' : ''}`}
-                    onClick={() => {
-                      setPauseLiveZapsWhenSceneIsLarge((current) => !current)
-                    }}
-                    title={
-                      pauseLiveZapsWhenSceneIsLarge
-                        ? 'Desactivar limite de zaps live'
-                        : 'Activar pausa de zaps live en escenas grandes'
-                    }
-                    type="button"
-                  />
-                </div>
                 <button
                   className={`sg-btn${!simulationPair ? ' ' : ' sg-btn--primary'}`}
                   disabled={!simulationPair}
@@ -4132,6 +4111,31 @@ export default function GraphAppV2() {
             </div>
           </div>
         ) : null}
+      </div>
+
+      <div className="sg-settings-section">
+        <h4>Proteccion operativa</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">Pausar live en escenas grandes</div>
+            <div className="sg-setting-row__desc">
+              Limita filtros de relay cuando hay mas de {MAX_ZAP_FILTER_PUBKEYS} nodos visibles.
+            </div>
+          </div>
+          <button
+            aria-pressed={pauseLiveZapsWhenSceneIsLarge}
+            className={`sg-toggle${pauseLiveZapsWhenSceneIsLarge ? ' sg-toggle--on' : ''}`}
+            onClick={() => {
+              setPauseLiveZapsWhenSceneIsLarge((current) => !current)
+            }}
+            title={
+              pauseLiveZapsWhenSceneIsLarge
+                ? 'Desactivar limite de zaps live'
+                : 'Activar pausa de zaps live en escenas grandes'
+            }
+            type="button"
+          />
+        </div>
       </div>
 
     </div>
