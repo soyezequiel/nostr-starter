@@ -198,6 +198,7 @@ interface ZapActivityLogEntry {
   sats: number
   played: boolean
   createdAt: number
+  eventId?: string
 }
 
 const INTEGER_FORMATTER = new Intl.NumberFormat('es-AR')
@@ -2702,7 +2703,7 @@ export default function GraphAppV2() {
     [sceneState.edgesById],
   )
   const appendZapActivity = useCallback((
-    zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>,
+    zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'> & { eventId?: string },
     source: ZapActivitySource,
     played: boolean,
   ) => {
@@ -2715,8 +2716,14 @@ export default function GraphAppV2() {
       sats: zap.sats,
       played,
       createdAt: Date.now(),
+      eventId: zap.eventId,
     }
-    setZapActivityLog((current) => [entry, ...current].slice(0, ZAP_ACTIVITY_LIMIT))
+    setZapActivityLog((current) => {
+      if (entry.eventId && current.some((e) => e.eventId === entry.eventId)) {
+        return current
+      }
+      return [entry, ...current].slice(0, ZAP_ACTIVITY_LIMIT)
+    })
   }, [])
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
