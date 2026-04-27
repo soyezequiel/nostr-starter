@@ -299,7 +299,53 @@ export function createProfileHydrationModule(ctx: KernelContext) {
             return true
           }
 
-          await new Promise<void>((resolve) => {
+          // Optimización: lanzamos la consulta a Primal cache (CDN de perfiles)
+          // EN PARALELO con la suscripción a relays. Antes era secuencial:
+          // esperábamos a que terminaran TODOS los relays (hasta page timeout)
+          // y recién después preguntábamos a Primal. Ahora ambos llegan al
+          // mismo tiempo; `syncProfileEnvelope` ya tiene dedupe por created_at
+          // y promueve la fuente correcta (relay > primal-cache) cuando empata.
+          // Filtramos los pubkeys cuyo perfil cacheado en disco ya está completo
+          // y fresco para no sobrecargar Primal innecesariamente.
+          const primalCandidatePubkeys = batch.filter((pubkey) => {
+            const cachedProfile = cachedProfilesByPubkey.get(pubkey)
+            return (
+              !cachedProfile ||
+              !cachedProfile.picture ||
+              !hasUsefulProfileFields(cachedProfile)
+            )
+          })
+
+          const primalPromise =
+            primalCandidatePubkeys.length > 0
+              ? primalCacheClient
+                  .fetchUserInfoProfileEvents(primalCandidatePubkeys)
+                  .then((cachedProfiles) => {
+                    if (isStale()) {
+                      return
+                    }
+                    for (const cacheProfile of cachedProfiles) {
+                      const envelope: RelayEventEnvelope = {
+                        event: cacheProfile.event,
+                        relayUrl: cacheProfile.cacheUrl,
+                        receivedAtMs: cacheProfile.receivedAtMs,
+                        attempt: 1,
+                      }
+                      syncProfileEnvelope(envelope, {
+                        profileSource: 'primal-cache',
+                        mediaFallbacks: cacheProfile.mediaFallbacks,
+                      })
+                    }
+                  })
+                  .catch((error) => {
+                    logTerminalWarning('Perfiles', 'No respondio cache de perfiles', {
+                      cantidad: primalCandidatePubkeys.length,
+                      motivo: summarizeHumanTerminalError(error),
+                    })
+                  })
+              : Promise.resolve()
+
+          const relayPromise = new Promise<void>((resolve) => {
             let settled = false
             let cancel = () => {}
 
@@ -327,47 +373,10 @@ export function createProfileHydrationModule(ctx: KernelContext) {
               })
           })
 
+          await Promise.all([relayPromise, primalPromise])
+
           if (isStale()) {
             return
-          }
-
-          const primalCandidatePubkeys = batch.filter((pubkey) =>
-            shouldQueryPrimalCache(
-              pubkey,
-              latestEnvelopesByPubkey,
-              cachedProfilesByPubkey,
-            ),
-          )
-
-          if (primalCandidatePubkeys.length > 0) {
-            try {
-              const cachedProfiles =
-                await primalCacheClient.fetchUserInfoProfileEvents(
-                  primalCandidatePubkeys,
-                )
-
-              if (isStale()) {
-                return
-              }
-
-              for (const cacheProfile of cachedProfiles) {
-                const envelope: RelayEventEnvelope = {
-                  event: cacheProfile.event,
-                  relayUrl: cacheProfile.cacheUrl,
-                  receivedAtMs: cacheProfile.receivedAtMs,
-                  attempt: 1,
-                }
-                syncProfileEnvelope(envelope, {
-                  profileSource: 'primal-cache',
-                  mediaFallbacks: cacheProfile.mediaFallbacks,
-                })
-              }
-            } catch (error) {
-              logTerminalWarning('Perfiles', 'No respondio cache de perfiles', {
-                cantidad: primalCandidatePubkeys.length,
-                motivo: summarizeHumanTerminalError(error),
-              })
-            }
           }
 
           const envelopes = Array.from(latestEnvelopesByPubkey.values()).sort(
@@ -455,29 +464,6 @@ export function createProfileHydrationModule(ctx: KernelContext) {
     }
 
     return envelope.event.id.localeCompare(profile.eventId) < 0
-  }
-
-  function shouldQueryPrimalCache(
-    pubkey: string,
-    latestEnvelopesByPubkey: ReadonlyMap<string, RelayEventEnvelope>,
-    cachedProfilesByPubkey: ReadonlyMap<string, ProfileRecord>,
-  ): boolean {
-    const latestEnvelope = latestEnvelopesByPubkey.get(pubkey)
-    if (latestEnvelope) {
-      const parsedProfile = safeParseProfile(latestEnvelope.event.content)
-      return (
-        !parsedProfile ||
-        Boolean(parsedProfile.picture) ||
-        !hasUsefulProfileFields(parsedProfile)
-      )
-    }
-
-    const cachedProfile = cachedProfilesByPubkey.get(pubkey)
-    return (
-      !cachedProfile ||
-      Boolean(cachedProfile.picture) ||
-      !hasUsefulProfileFields(cachedProfile)
-    )
   }
 
   function isSameReplaceableEnvelope(

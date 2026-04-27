@@ -55,7 +55,10 @@ export const FOLLOW_RELAY_LIST_KIND = 10002
 export const DISCOVERED_GRAPH_ANALYSIS_LOADING_MESSAGE =
   'Calculando comunidades, lideres y puentes sobre el vecindario descubierto...'
 export const NODE_PROFILE_HYDRATION_BATCH_SIZE = 150
-export const NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY = 3
+// Subido de 3 a 5: más batches de perfiles en paralelo. Cada batch sigue
+// respetando los timeouts del adapter, así que no se castiga la cobertura;
+// sólo aprovechamos mejor el ancho de banda mientras esperamos respuestas.
+export const NODE_PROFILE_HYDRATION_BATCH_CONCURRENCY = 5
 export const NODE_PROFILE_PERSIST_CONCURRENCY = 8
 export const RELAY_HEALTH_FLUSH_DELAY_MS = 32
 
