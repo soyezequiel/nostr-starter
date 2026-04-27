@@ -1389,6 +1389,26 @@ function PerformanceOptionsPanel({
             type="button"
           />
         </div>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">Ocultar al alejar la vista</div>
+            <div className="sg-setting-row__desc">
+              Pasa a monograma cuando los nodos se ven muy pequeños en la pantalla.
+            </div>
+          </div>
+          <button
+            className={`sg-toggle${!avatarRuntimeOptions.allowZoomedOutImages ? ' sg-toggle--on' : ''}`}
+            onClick={() => {
+              const nextVal = !avatarRuntimeOptions.allowZoomedOutImages
+              onAvatarRuntimeOptionsChange({
+                ...avatarRuntimeOptions,
+                allowZoomedOutImages: nextVal,
+                showAllVisibleImages: nextVal,
+              })
+            }}
+            type="button"
+          />
+        </div>
       </div>
     </div>
   )
@@ -1497,20 +1517,7 @@ function AdvancedAvatarOptionsPanel({
           type="button"
         />
       </div>
-      <div className="sg-setting-row">
-        <div>
-          <div className="sg-setting-row__lbl">Fotos en nodos chicos</div>
-          <div className="sg-setting-row__desc">Permite fotos fuera del umbral de tamaño sin forzar todos los nodos</div>
-        </div>
-        <button
-          className={`sg-toggle${avatarRuntimeOptions.allowZoomedOutImages ? ' sg-toggle--on' : ''}`}
-          onClick={() => onAvatarRuntimeOptionsChange({
-            ...avatarRuntimeOptions,
-            allowZoomedOutImages: !avatarRuntimeOptions.allowZoomedOutImages,
-          })}
-          type="button"
-        />
-      </div>
+
       <div className="sg-setting-row">
         <div>
           <div className="sg-setting-row__lbl">Bucket interactivo max</div>

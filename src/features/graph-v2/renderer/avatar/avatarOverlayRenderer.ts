@@ -811,7 +811,7 @@ export class AvatarOverlayRenderer {
     const effectiveLoadConcurrency = resolveAvatarLoadConcurrency({
       baseConcurrency: budget.concurrency,
       visiblePhotoCount,
-      showAllVisibleImages: budget.showAllVisibleImages && !isDegraded,
+      showAllVisibleImages: budget.showAllVisibleImages,
     })
     const schedulerBudget = {
       ...budget,
@@ -821,7 +821,7 @@ export class AvatarOverlayRenderer {
       resolveAvatarCacheCap({
         baseCap: budget.lruCap,
         visiblePhotoCount,
-        showAllVisibleImages: budget.showAllVisibleImages && !isDegraded,
+        showAllVisibleImages: budget.showAllVisibleImages,
       }),
     )
     const selectedDrawItems = selectAvatarDrawItemsForFrame(
@@ -829,7 +829,7 @@ export class AvatarOverlayRenderer {
       resolveAvatarFrameDrawCap({
         baseCap: budget.maxAvatarDrawsPerFrame,
         visibleCount: resolvedDrawItems.length,
-        showAllVisibleImages: budget.showAllVisibleImages && !isDegraded,
+        showAllVisibleImages: budget.showAllVisibleImages,
       }),
       forcedAvatarPubkeys,
     )
@@ -847,7 +847,7 @@ export class AvatarOverlayRenderer {
     const maxImageDrawsPerFrame = resolveAvatarFrameDrawCap({
       baseCap: budget.maxImageDrawsPerFrame,
       visibleCount: visiblePhotoCount,
-      showAllVisibleImages: budget.showAllVisibleImages && !isDegraded,
+      showAllVisibleImages: budget.showAllVisibleImages,
     })
     let nodesWithPictureUrlCount = 0
     let selectedForImageCount = 0
@@ -1340,8 +1340,7 @@ export class AvatarOverlayRenderer {
       fastNodeVelocityThreshold: snapshot.isDegraded
         ? Math.min(runtimeOptions.fastNodeVelocityThreshold, 180)
         : runtimeOptions.fastNodeVelocityThreshold,
-      allowZoomedOutImages:
-        runtimeOptions.allowZoomedOutImages && !snapshot.isDegraded,
+      allowZoomedOutImages: runtimeOptions.allowZoomedOutImages,
       showAllVisibleImages: runtimeOptions.showAllVisibleImages,
       maxInteractiveBucket: runtimeOptions.maxInteractiveBucket,
     }
