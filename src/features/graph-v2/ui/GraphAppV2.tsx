@@ -4160,11 +4160,20 @@ export default function GraphAppV2() {
           <span className="sg-section-label">Zaps visibles</span>
           <strong>{zapActivityLog.length} zap{zapActivityLog.length === 1 ? '' : 's'}</strong>
         </div>
-        <span
-          className={`sg-zap-feed__status${shouldEnableLiveZapFeed ? ' sg-zap-feed__status--live' : ''}`}
-        >
-          {zapFeedStatus}
-        </span>
+        <div className="sg-zap-feed__actions">
+          <span
+            className={`sg-zap-feed__status${shouldEnableLiveZapFeed ? ' sg-zap-feed__status--live' : ''}`}
+          >
+            {zapFeedStatus}
+          </span>
+          <button
+            className="sg-mini-action"
+            onClick={() => openSettingsTab('zaps')}
+            type="button"
+          >
+            Configurar
+          </button>
+        </div>
       </div>
 
       {liveZapFeedFeedback ? (

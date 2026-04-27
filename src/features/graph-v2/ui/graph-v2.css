@@ -1502,6 +1502,14 @@
   font-weight: 600;
 }
 
+[data-graph-v2] .sg-zap-feed__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 [data-graph-v2] .sg-zap-feed__status {
   flex: 0 0 auto;
   padding: 5px 8px;
