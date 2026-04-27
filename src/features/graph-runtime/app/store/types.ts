@@ -191,6 +191,7 @@ export type NodeExpansionPhase =
   | 'fetching-structure'
   | 'correlating-followers'
   | 'merging'
+  | 'enriching'
 
 export interface NodeExpansionState {
   status: NodeExpansionStatus

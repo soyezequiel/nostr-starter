@@ -484,6 +484,7 @@ export class AvatarOverlayRenderer {
   private readonly avatarUrlMetadata = createAvatarUrlMetadataResolver()
   private readonly lastBucketByUrl = new Map<string, ImageLodBucket>()
   private readonly lastMotionByNode = new Map<string, AvatarNodeMotionSample>()
+  private expansionAnimationFrameId: number | null = null
   private lastFrameTs = 0
   private lastCameraSignature: string | null = null
   private lastVisibleNodePubkeys: string[] = []
@@ -514,6 +515,9 @@ export class AvatarOverlayRenderer {
     if (this.disposed) return
     this.disposed = true
     this.sigma.off('afterRender', this.boundAfterRender)
+    if (this.expansionAnimationFrameId !== null) {
+      cancelAnimationFrame(this.expansionAnimationFrameId)
+    }
   }
 
   public getDebugSnapshot(): AvatarOverlayDebugSnapshot | null {
@@ -758,6 +762,15 @@ export class AvatarOverlayRenderer {
       this.traceFrameSummary(nowMs, this.lastDebugSnapshot)
       this.pruneMotionSamples(seenNodes)
       return
+    }
+
+    if (expansionRingItems.length > 0 && this.expansionAnimationFrameId === null) {
+      this.expansionAnimationFrameId = requestAnimationFrame(() => {
+        this.expansionAnimationFrameId = null
+        if (this.sigma) {
+          this.sigma.refresh()
+        }
+      })
     }
 
     const includeDebugNodes = this.debugDetailsEnabled || isAvatarTraceEnabled()
@@ -1247,8 +1260,12 @@ export class AvatarOverlayRenderer {
       ),
     )
     const radius = item.r + EXPANSION_RING_GAP_PX + lineWidth * 0.5
-    const startAngle = -Math.PI / 2
-    const endAngle = startAngle + FULL_CIRCLE_RADIANS * item.progress
+    const now = typeof performance !== 'undefined' ? performance.now() : 0
+    
+    // Animate a 1/4 circle spanning around the node
+    const speed = 0.006 // radians per millisecond
+    const startAngle = now * speed
+    const endAngle = startAngle + FULL_CIRCLE_RADIANS * 0.25
 
     ctx.save()
 

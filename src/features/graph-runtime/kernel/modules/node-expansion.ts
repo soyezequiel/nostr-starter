@@ -43,7 +43,7 @@ import {
 } from '@/features/graph-runtime/debug/humanTerminalLog'
 import type { RelayEventEnvelope } from '@/features/graph-runtime/nostr'
 
-const NODE_EXPANSION_TOTAL_STEPS = 4
+const NODE_EXPANSION_TOTAL_STEPS = 5
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
 const NODE_RELAY_LIST_KIND = 10002
 
@@ -477,7 +477,7 @@ export function createNodeExpansionModule(
     followPubkeys: readonly string[],
     relayUrls: readonly string[],
     extraRelayHints: readonly string[] = [],
-  ) => {
+  ): Promise<void> => {
     const candidatePubkeys = Array.from(
       new Set(
         followPubkeys.filter(
@@ -490,7 +490,7 @@ export function createNodeExpansionModule(
       candidatePubkeys.length === 0 ||
       activeReciprocalEnrichmentRequests.has(pubkey)
     ) {
-      return
+      return activeReciprocalEnrichmentRequests.get(pubkey) || Promise.resolve()
     }
 
     const reciprocalRelayUrls = mergeBoundedRelayUrlSets(
@@ -544,15 +544,16 @@ export function createNodeExpansionModule(
       })
 
     activeReciprocalEnrichmentRequests.set(pubkey, request)
+    return request
   }
 
   const scheduleDirectInboundEnrichment = (
     pubkey: string,
     relayUrls: readonly string[],
     extraRelayHints: readonly string[] = [],
-  ) => {
+  ): Promise<void> => {
     if (activeInboundEnrichmentRequests.has(pubkey)) {
-      return
+      return activeInboundEnrichmentRequests.get(pubkey) || Promise.resolve()
     }
 
     const inboundRelayUrls = mergeBoundedRelayUrlSets(
@@ -604,6 +605,7 @@ export function createNodeExpansionModule(
       })
 
     activeInboundEnrichmentRequests.set(pubkey, request)
+    return request
   }
 
   async function expandNode(pubkey: string, options?: { force?: boolean }): Promise<ExpandNodeResult> {
@@ -622,6 +624,26 @@ export function createNodeExpansionModule(
 
   async function expandNodeOnce(pubkey: string, options?: { force?: boolean }): Promise<ExpandNodeResult> {
     const state = ctx.store.getState()
+
+    const finalizeExpansion = async (
+      result: ExpandNodeResult,
+      startedAt: number,
+      enrichmentPromises: Array<Promise<void> | undefined | false>,
+    ) => {
+      const promises = enrichmentPromises.filter((p): p is Promise<void> => Boolean(p))
+      if (promises.length > 0) {
+        setLoadingState(
+          pubkey,
+          'enriching',
+          5,
+          'Buscando conexiones entrantes y mutuas...',
+          startedAt,
+        )
+        await Promise.allSettled(promises)
+      }
+      setTerminalState(pubkey, result.status, result.message, startedAt)
+      return result
+    }
 
     if (!state.nodes[pubkey]) {
       setTerminalState(
@@ -785,20 +807,22 @@ export function createNodeExpansionModule(
                 cachedContactList.follows.length > 0
                   ? cachePreviewMessage
                   : `Sin lista de follows descubierta para ${pubkey.slice(0, 8)}...`,
+              deferTerminalState: true,
             },
           )
-          scheduleReciprocalInboundEnrichment(
-            pubkey,
-            cachedContactList.follows,
-            relayUrls,
-            cachedContactList.relayHints,
-          )
-          scheduleDirectInboundEnrichment(
-            pubkey,
-            relayUrls,
-            cachedContactList.relayHints,
-          )
-          return result
+          return finalizeExpansion(result, startedAt, [
+            scheduleReciprocalInboundEnrichment(
+              pubkey,
+              cachedContactList.follows,
+              relayUrls,
+              cachedContactList.relayHints,
+            ),
+            scheduleDirectInboundEnrichment(
+              pubkey,
+              relayUrls,
+              cachedContactList.relayHints,
+            ),
+          ])
         }
 
         const inboundFollowerEvidence = await loadDirectInboundFollowerEvidenceSafely({
@@ -821,8 +845,10 @@ export function createNodeExpansionModule(
             authoredHasPartialSignals: authoredRelayHadPartialSignals,
             inboundHasPartialSignals: inboundFollowerEvidence.partial,
             previewMessage: `Sin lista de follows descubierta para ${pubkey.slice(0, 8)}...`,
+            deferTerminalState: true,
           },
         )
+        return finalizeExpansion(result, startedAt, [])
       }
 
       let parsedContactList: ParseContactListResult
@@ -870,20 +896,22 @@ export function createNodeExpansionModule(
                 cachedContactList.follows.length > 0
                   ? cachePreviewMessage
                   : `Sin lista de follows descubierta para ${pubkey.slice(0, 8)}...`,
+              deferTerminalState: true,
             },
           )
-          scheduleReciprocalInboundEnrichment(
-            pubkey,
-            cachedContactList.follows,
-            relayUrls,
-            cachedContactList.relayHints,
-          )
-          scheduleDirectInboundEnrichment(
-            pubkey,
-            relayUrls,
-            cachedContactList.relayHints,
-          )
-          return result
+          return finalizeExpansion(result, startedAt, [
+            scheduleReciprocalInboundEnrichment(
+              pubkey,
+              cachedContactList.follows,
+              relayUrls,
+              cachedContactList.relayHints,
+            ),
+            scheduleDirectInboundEnrichment(
+              pubkey,
+              relayUrls,
+              cachedContactList.relayHints,
+            ),
+          ])
         }
 
         const inboundFollowerEvidence =
@@ -907,8 +935,10 @@ export function createNodeExpansionModule(
             authoredHasPartialSignals: true,
             inboundHasPartialSignals: inboundFollowerEvidence.partial,
             previewMessage: `Sin lista de follows confiable para ${pubkey.slice(0, 8)}...`,
+            deferTerminalState: true,
           },
         )
+        return finalizeExpansion(result, startedAt, [])
       }
 
       const cachedContactListBeforePersist =
@@ -969,20 +999,22 @@ export function createNodeExpansionModule(
             authoredDiagnostics: [],
             authoredLoadedFromCache: true,
             previewMessage: cachePreviewMessage,
+            deferTerminalState: true,
           },
         )
-        scheduleReciprocalInboundEnrichment(
-          pubkey,
-          cachedContactListBeforePersist.follows,
-          relayUrls,
-          cachedContactListBeforePersist.relayHints,
-        )
-        scheduleDirectInboundEnrichment(
-          pubkey,
-          relayUrls,
-          cachedContactListBeforePersist.relayHints,
-        )
-        return result
+        return finalizeExpansion(result, startedAt, [
+          scheduleReciprocalInboundEnrichment(
+            pubkey,
+            cachedContactListBeforePersist.follows,
+            relayUrls,
+            cachedContactListBeforePersist.relayHints,
+          ),
+          scheduleDirectInboundEnrichment(
+            pubkey,
+            relayUrls,
+            cachedContactListBeforePersist.relayHints,
+          ),
+        ])
       }
 
       setLoadingState(
@@ -1008,20 +1040,22 @@ export function createNodeExpansionModule(
             parsedContactList.diagnostics.length > 0,
           inboundHasPartialSignals: false,
           authoredDiagnostics: parsedContactList.diagnostics,
+          deferTerminalState: true,
         },
       )
-      scheduleDirectInboundEnrichment(
-        pubkey,
-        relayUrls,
-        parsedContactList.relayHints,
-      )
-      scheduleReciprocalInboundEnrichment(
-        pubkey,
-        parsedContactList.followPubkeys,
-        relayUrls,
-        parsedContactList.relayHints,
-      )
-      return result
+      return finalizeExpansion(result, startedAt, [
+        scheduleDirectInboundEnrichment(
+          pubkey,
+          relayUrls,
+          parsedContactList.relayHints,
+        ),
+        scheduleReciprocalInboundEnrichment(
+          pubkey,
+          parsedContactList.followPubkeys,
+          relayUrls,
+          parsedContactList.relayHints,
+        ),
+      ])
     } catch (error) {
       logTerminalWarning('Expansion', 'La expansion quedo parcial', {
         nodo: pubkey.slice(0, 12),
@@ -1052,6 +1086,7 @@ export function createNodeExpansionModule(
       authoredDiagnostics?: readonly { code: string }[]
       authoredLoadedFromCache?: boolean
       previewMessage?: string
+      deferTerminalState?: boolean
     },
   ): ExpandNodeResult {
     const state = ctx.store.getState()
@@ -1189,7 +1224,9 @@ export function createNodeExpansionModule(
       message: options.previewMessage ?? null,
       discoveredFollowCount: followPubkeys.length,
     })
-    setTerminalState(pubkey, status, expansionMessage)
+    if (!options.deferTerminalState) {
+      setTerminalState(pubkey, status, expansionMessage)
+    }
 
     ctx.emitter.emit({
       type: 'node-expanded',
