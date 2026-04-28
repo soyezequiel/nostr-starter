@@ -1276,6 +1276,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.draggedNodePubkey = pubkey
     this.cancelHighlightTransition()
     this.setNodeDragEdgeRendering(true)
+    this.setGraphBoundsLocked(true)
     this.shouldPinDraggedNodeOnRelease = false
     this.markMotion()
     this.dragHopDistances = buildDragHopDistances(
@@ -1322,7 +1323,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.flushPendingDragFrame()
 
     const draggedNodePubkey = this.draggedNodePubkey
-    const position = this.renderStore.getNodePosition(draggedNodePubkey)
     const shouldPinOnRelease =
       options?.pinOnRelease ?? this.shouldPinDraggedNodeOnRelease
 
@@ -1339,6 +1339,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
         ? [draggedNodePubkey]
         : (this.scene?.render.pins.pubkeys ?? []),
     )
+    this.setCameraLocked(false)
+    const releasePosition = this.renderStore.getNodePosition(draggedNodePubkey)
     this.dragHopDistances = new Map()
     this.dragInfluenceState = null
     this.lastDragGraphPosition = null
@@ -1365,8 +1367,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.cancelPhysicsPositionBridge()
     }
     this.resumePhysicsAfterDrag = true
-    this.setCameraLocked(false)
-    this.setGraphBoundsLocked(false)
     this.safeRender()
 
     if (isMobileGraphInteractionMode()) {
@@ -1376,8 +1376,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.recalculateHoverAfterDrag()
     }
 
-    if (position) {
-      this.callbacks.onNodeDragEnd(draggedNodePubkey, position, {
+    if (releasePosition) {
+      this.callbacks.onNodeDragEnd(draggedNodePubkey, releasePosition, {
         pinNode: shouldPinOnRelease,
       })
     }
@@ -1652,6 +1652,21 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const physicsApplyResult = this.physicsStore.applyScene(scene.physics)
     this.nodeHitTester?.markDirty()
 
+    if (draggedNodePubkey && draggedNodePosition) {
+      this.renderStore.setNodePosition(
+        draggedNodePubkey,
+        draggedNodePosition.x,
+        draggedNodePosition.y,
+      )
+      this.physicsStore.setNodePosition(
+        draggedNodePubkey,
+        draggedNodePosition.x,
+        draggedNodePosition.y,
+        true,
+      )
+      this.nodeHitTester?.markDirty()
+    }
+
     if (draggedNodePubkey) {
       this.dragHopDistances = buildDragHopDistances(
         this.physicsStore.getGraph(),
@@ -1673,21 +1688,6 @@ export class SigmaRendererAdapter implements RendererAdapter {
     } else {
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
-    }
-
-    if (draggedNodePubkey && draggedNodePosition) {
-      this.renderStore.setNodePosition(
-        draggedNodePubkey,
-        draggedNodePosition.x,
-        draggedNodePosition.y,
-      )
-      this.physicsStore.setNodePosition(
-        draggedNodePubkey,
-        draggedNodePosition.x,
-        draggedNodePosition.y,
-        true,
-      )
-      this.nodeHitTester?.markDirty()
     }
 
     this.forceRuntime.sync(scene.physics, {
@@ -2691,9 +2691,47 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     if (locked) {
       const bbox = this.sigma.getBBox()
+      const sigmaWithViewport = this.sigma as Sigma<
+        RenderNodeAttributes,
+        RenderEdgeAttributes
+      > & {
+        getDimensions?: () => { width: number; height: number }
+        viewportToGraph?: (point: { x: number; y: number }) => {
+          x: number
+          y: number
+        }
+      }
+      const dimensions =
+        typeof sigmaWithViewport.getDimensions === 'function'
+          ? sigmaWithViewport.getDimensions()
+          : this.container
+            ? {
+                width: this.container.offsetWidth,
+                height: this.container.offsetHeight,
+              }
+            : null
+      const viewportGraphCorners =
+        dimensions &&
+        typeof sigmaWithViewport.viewportToGraph === 'function'
+          ? [
+              sigmaWithViewport.viewportToGraph({ x: 0, y: 0 }),
+              sigmaWithViewport.viewportToGraph({ x: dimensions.width, y: 0 }),
+              sigmaWithViewport.viewportToGraph({ x: 0, y: dimensions.height }),
+              sigmaWithViewport.viewportToGraph({
+                x: dimensions.width,
+                y: dimensions.height,
+              }),
+            ]
+          : []
+      const minX = Math.min(bbox.x[0], ...viewportGraphCorners.map((point) => point.x))
+      const maxX = Math.max(bbox.x[1], ...viewportGraphCorners.map((point) => point.x))
+      const minY = Math.min(bbox.y[0], ...viewportGraphCorners.map((point) => point.y))
+      const maxY = Math.max(bbox.y[1], ...viewportGraphCorners.map((point) => point.y))
+      const paddingX = Math.max(maxX - minX, 1)
+      const paddingY = Math.max(maxY - minY, 1)
       this.sigma.setCustomBBox({
-        x: [...bbox.x] as [number, number],
-        y: [...bbox.y] as [number, number],
+        x: [minX - paddingX, maxX + paddingX],
+        y: [minY - paddingY, maxY + paddingY],
       })
       this.isGraphBoundsLocked = true
       return
