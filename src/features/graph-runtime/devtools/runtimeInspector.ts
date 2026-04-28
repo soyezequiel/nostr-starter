@@ -16,7 +16,15 @@ import {
   type PerfBudgetSnapshot,
 } from '@/features/graph-v2/renderer/avatar/perfBudget'
 import type { GraphSceneSnapshot } from '@/features/graph-v2/renderer/contracts'
-import type { DebugPhysicsDiagnostics } from '@/features/graph-v2/testing/browserDebug'
+import type {
+  DebugDragRuntimeState,
+  DebugDragTimelineEvent,
+  DebugNodePosition,
+  DebugPhysicsDiagnostics,
+  DebugProjectionDiagnostics,
+  DebugRenderInvalidationState,
+  DebugViewportPosition,
+} from '@/features/graph-v2/testing/browserDebug'
 import type { VisibleProfileWarmupDebugSnapshot } from '@/features/graph-v2/ui/visibleProfileWarmup'
 import { hasUsableCanonicalProfile } from '@/features/graph-v2/ui/visibleProfileWarmup'
 
@@ -51,6 +59,7 @@ export interface RuntimeInspectorSummaryItem {
     | 'avatars'
     | 'zaps'
     | 'performance'
+    | 'renderer'
     | 'relays'
   title: string
   tone: RuntimeInspectorTone
@@ -69,6 +78,7 @@ export interface RuntimeInspectorPrimaryIssue {
     | 'avatars'
     | 'zaps'
     | 'performance'
+    | 'renderer'
     | 'relays'
     | 'load'
   tone: RuntimeInspectorTone
@@ -138,6 +148,57 @@ export interface RuntimeInspectorLoadSection
   metricas: RuntimeInspectorMetric[]
 }
 
+export type RuntimeInspectorRendererNodeRole =
+  | 'root'
+  | 'selected'
+  | 'dragged'
+  | 'released'
+  | 'hovered'
+  | 'visible'
+
+export interface RuntimeInspectorRendererNodeSample {
+  pubkey: string
+  role: RuntimeInspectorRendererNodeRole
+  viewport: DebugViewportPosition | null
+  render: DebugNodePosition | null
+  physics: DebugNodePosition | null
+  renderFixed: boolean | null
+  physicsFixed: boolean | null
+  renderPhysicsDelta: number | null
+  renderDeltaFromPreviousGraph: number | null
+  physicsDeltaFromPreviousGraph: number | null
+  viewportDeltaFromPreviousPx: number | null
+}
+
+export interface RuntimeInspectorProjectionDelta {
+  cameraCenterDelta: number | null
+  cameraRatioDelta: number | null
+  bboxDelta: number | null
+  customBBoxChanged: boolean | null
+}
+
+export interface RuntimeInspectorRendererDiagnostics {
+  capturedAtMs: number
+  rootPubkey: string | null
+  selectedNodePubkey: string | null
+  hoveredNodePubkey: string | null
+  drag: DebugDragRuntimeState
+  projection: DebugProjectionDiagnostics
+  previousProjection: DebugProjectionDiagnostics | null
+  projectionDeltaFromPrevious: RuntimeInspectorProjectionDelta | null
+  invalidation: DebugRenderInvalidationState
+  timeline: DebugDragTimelineEvent[]
+  samples: RuntimeInspectorRendererNodeSample[]
+}
+
+export interface RuntimeInspectorRendererSection
+  extends RuntimeInspectorSectionBase {
+  metricas: RuntimeInspectorMetric[]
+  muestras: RuntimeInspectorRendererNodeSample[]
+  notas: string[]
+  raw: RuntimeInspectorRendererDiagnostics | null
+}
+
 export interface RuntimeInspectorSnapshot {
   generadoA: string
   primary: RuntimeInspectorPrimaryIssue
@@ -147,6 +208,7 @@ export interface RuntimeInspectorSnapshot {
   avatars: RuntimeInspectorAvatarsSection
   zaps: RuntimeInspectorZapsSection
   performance: RuntimeInspectorPerformanceSection
+  renderer: RuntimeInspectorRendererSection
   relays: RuntimeInspectorRelaysSection
   load: RuntimeInspectorLoadSection
   resourceTop: RuntimeInspectorResourceMode[]
@@ -180,6 +242,7 @@ export interface RuntimeInspectorBuildInput {
   avatarPerfSnapshot: PerfBudgetSnapshot | null
   avatarRuntimeSnapshot: AvatarRuntimeStateDebugSnapshot | null
   physicsDiagnostics: DebugPhysicsDiagnostics | null
+  rendererDiagnostics: RuntimeInspectorRendererDiagnostics | null
   visibleProfileWarmup: VisibleProfileWarmupDebugSnapshot | null
   visibleNodePubkeys: string[]
   liveZapFeedback: string | null
@@ -191,6 +254,7 @@ export interface RuntimeInspectorBuildInput {
 }
 
 const PRIORITY: Array<RuntimeInspectorSummaryItem['id']> = [
+  'renderer',
   'coverage',
   'profiles',
   'avatars',
@@ -217,6 +281,22 @@ const formatDecimal = (value: number | null | undefined, digits = 1) => {
   }
   return value.toFixed(digits)
 }
+
+const formatGraphDelta = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'sin dato'
+  }
+  return `${formatDecimal(value, 2)} unid. grafo`
+}
+
+const formatPixelDelta = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'sin dato'
+  }
+  return `${formatDecimal(value, 1)} px`
+}
+
+const formatYesNo = (value: boolean) => (value ? 'Si' : 'No')
 
 const formatFps = (frameMs: number | null | undefined) => {
   const fps = resolveFpsFromFrameMs(frameMs)
@@ -1610,12 +1690,365 @@ const buildLoadSection = (
   }
 }
 
+const maxFinite = (values: Array<number | null | undefined>) => {
+  const finite = values.filter(
+    (value): value is number =>
+      typeof value === 'number' && Number.isFinite(value),
+  )
+  return finite.length > 0 ? Math.max(...finite) : null
+}
+
+const buildRendererSection = (
+  input: RuntimeInspectorBuildInput,
+): RuntimeInspectorRendererSection => {
+  const diagnostics = input.rendererDiagnostics
+
+  if (!diagnostics) {
+    return {
+      tone: 'neutral',
+      titulo: 'Renderer / Drag',
+      resumen: 'Sin muestra de renderer',
+      estado: 'Host Sigma sin diagnostico',
+      queSignifica:
+        'Esta seccion separa coordenadas de grafo, proyeccion, cache visual y fisica durante el drag.',
+      quePasaAhora:
+        'El inspector todavia no recibio datos del host Sigma. Abri el inspector con el canvas montado y volve a mover el nodo.',
+      queLeerAhora:
+      'Cuando ocurra el salto, copia el snapshot: renderer.raw trae drag, projection, invalidation y muestras por nodo.',
+      metricas: [
+        { label: 'Probe renderer', value: 'Sin datos', tone: 'neutral' },
+      ],
+      muestras: [],
+      notas: [
+        'Esta seccion necesita el host Sigma montado; no depende de DevTools ni de un trace externo.',
+      ],
+      raw: null,
+    }
+  }
+
+  const dragActive = diagnostics.drag.draggedNodePubkey !== null
+  const pendingGesture = diagnostics.drag.pendingDragGesturePubkey !== null
+  const activeOrPendingDrag = dragActive || pendingGesture
+  const manualLockCount = diagnostics.drag.manualDragFixedNodeCount
+  const boundsLocked = diagnostics.projection.graphBoundsLocked
+  const customBBoxActive = diagnostics.projection.customBBox !== null
+  const pendingUnlock = diagnostics.invalidation.pendingGraphBoundsUnlockFrame
+  const pendingRenderWork =
+    diagnostics.invalidation.pendingContainerRefresh ||
+    diagnostics.invalidation.pendingContainerRefreshFrame ||
+    diagnostics.invalidation.pendingDragFrame ||
+    diagnostics.invalidation.pendingPhysicsBridgeFrame ||
+    diagnostics.invalidation.pendingFitCameraAfterPhysicsFrame ||
+    pendingUnlock
+  const maxRenderPhysicsDelta = maxFinite(
+    diagnostics.samples.map((sample) => sample.renderPhysicsDelta),
+  )
+  const maxRenderDelta = maxFinite(
+    diagnostics.samples.map((sample) => sample.renderDeltaFromPreviousGraph),
+  )
+  const maxPhysicsDelta = maxFinite(
+    diagnostics.samples.map((sample) => sample.physicsDeltaFromPreviousGraph),
+  )
+  const maxViewportDelta = maxFinite(
+    diagnostics.samples.map((sample) => sample.viewportDeltaFromPreviousPx),
+  )
+  const projectionDelta = diagnostics.projectionDeltaFromPrevious
+  const deferredUnlockCount =
+    diagnostics.invalidation.graphBoundsUnlockDeferredCount
+  const staleBoundsWithoutDrag =
+    boundsLocked && !activeOrPendingDrag && !pendingUnlock
+  const stalledReleaseUnlock =
+    boundsLocked &&
+    !activeOrPendingDrag &&
+    pendingUnlock &&
+    deferredUnlockCount > 12
+  const staleManualLockWithoutDrag =
+    manualLockCount > 0 && !activeOrPendingDrag && !pendingUnlock
+  const dragWithoutBounds = activeOrPendingDrag && !boundsLocked
+  const largeViewportJump =
+    maxViewportDelta !== null && maxViewportDelta > 80
+  const renderPhysicsMismatch =
+    maxRenderPhysicsDelta !== null && maxRenderPhysicsDelta > 1
+  const renderStableDuringJump =
+    maxRenderDelta === null || maxRenderDelta <= 1
+  const physicsStableDuringJump =
+    maxPhysicsDelta === null || maxPhysicsDelta <= 1
+  const projectionChanged = Boolean(
+    (projectionDelta?.cameraCenterDelta !== null &&
+      projectionDelta?.cameraCenterDelta !== undefined &&
+      projectionDelta.cameraCenterDelta > 0.002) ||
+    (projectionDelta?.cameraRatioDelta !== null &&
+      projectionDelta?.cameraRatioDelta !== undefined &&
+      projectionDelta.cameraRatioDelta > 0.01) ||
+    (projectionDelta?.bboxDelta !== null &&
+      projectionDelta?.bboxDelta !== undefined &&
+      projectionDelta.bboxDelta > 0.5) ||
+    projectionDelta?.customBBoxChanged === true,
+  )
+  const projectionOnlyJump =
+    largeViewportJump &&
+    !renderPhysicsMismatch &&
+    renderStableDuringJump &&
+    physicsStableDuringJump
+  const coordinateWriteJump =
+    largeViewportJump &&
+    !renderPhysicsMismatch &&
+    ((maxRenderDelta !== null && maxRenderDelta > 1) ||
+      (maxPhysicsDelta !== null && maxPhysicsDelta > 1))
+  const missingSamples = diagnostics.samples.length === 0
+
+  let tone: RuntimeInspectorTone = 'ok'
+  let resumen = activeOrPendingDrag ? 'Drag monitoreado' : 'Renderer estable'
+  let quePasaAhora = activeOrPendingDrag
+    ? 'Hay un drag activo o por promover, con muestras de proyeccion y nodos para comparar contra el puntero.'
+    : 'No hay drag activo y la proyeccion no muestra un estado bloqueado sospechoso.'
+  let queLeerAhora =
+      'Si el nodo salta, copia el snapshot inmediatamente y mira renderer.raw.drag, renderer.raw.projection y renderer.muestras.'
+
+  if (stalledReleaseUnlock) {
+    tone = 'bad'
+    resumen = 'Unlock de bounds demorado'
+    quePasaAhora =
+      'La caja temporal sigue activa despues del release y el desbloqueo lleva demasiados frames diferido.'
+    queLeerAhora =
+      'Revisar releaseDrag.unlockGraphBounds: el customBBox no debe esperar indefinidamente a que ForceAtlas termine.'
+  } else if (projectionOnlyJump) {
+    tone = 'bad'
+    resumen = 'Salto de proyeccion detectado'
+    quePasaAhora =
+      projectionChanged
+        ? 'El viewport cambio mucho, pero render y fisica casi no se movieron. La diferencia viene de camara/bounds/proyeccion.'
+        : 'El viewport cambio mucho aunque las posiciones render/fisica quedaron estables. Falta un delta de proyeccion claro, asi que conviene copiar raw.previousProjection.'
+    queLeerAhora =
+      'Comparar projectionDeltaFromPrevious con renderDeltaFromPreviousGraph: si render casi no cambia, el bug esta en bounds/camara, no en el nodo.'
+  } else if (coordinateWriteJump) {
+    tone = 'bad'
+    resumen = 'Write de posicion detectado'
+    quePasaAhora =
+      'Render y fisica se movieron juntos entre polls; esto no es camara ni cache visual, es una escritura real de coordenadas.'
+    queLeerAhora =
+      'Revisar renderer.raw.drag.lastReleasedNodePubkey y las muestras con role released/visible para confirmar si ForceAtlas movio el nodo soltado.'
+  } else if (staleManualLockWithoutDrag) {
+    tone = 'bad'
+    resumen = 'Lock manual de release quedo activo'
+    quePasaAhora =
+      'Hay un nodo soltado mantenido como fixed (fijo) aunque ya no hay drag activo ni desbloqueo pendiente.'
+    queLeerAhora =
+      'Revisar releaseDrag.manualFixedLock.clear: si el nodo no fue pineado, el fixed temporal debe limpiarse despues del release.'
+  } else if (staleBoundsWithoutDrag) {
+    tone = 'bad'
+    resumen = 'Bounds lock quedo prendido'
+    quePasaAhora =
+      'La caja de limites del grafo sigue bloqueada aunque no hay drag activo ni frame de desbloqueo pendiente.'
+    queLeerAhora =
+      'Revisar releaseDrag y setGraphBoundsLocked: este estado puede dejar la proyeccion vieja hasta otra interaccion.'
+  } else if (largeViewportJump) {
+    tone = 'bad'
+    resumen = 'Salto visual detectado'
+    quePasaAhora =
+      'Al menos una muestra visible cambio mucho en viewport entre polls del inspector.'
+    queLeerAhora =
+      'Comparar viewportDeltaFromPreviousPx con projection.camera/customBBox para saber si fue proyeccion o write de posicion.'
+  } else if (dragWithoutBounds) {
+    tone = 'warn'
+    resumen = 'Drag sin bounds lock'
+    quePasaAhora =
+      'El drag esta activo, pero la proyeccion no esta bloqueada. Un cambio de bbox puede transformar una posicion correcta en un salto visual.'
+    queLeerAhora =
+      'Revisar startDrag y setGraphBoundsLocked(true) antes de calcular viewportToGraph.'
+  } else if (renderPhysicsMismatch) {
+    tone = 'warn'
+    resumen = 'Render y fisica divergen'
+    quePasaAhora =
+      'La posicion renderizada y la posicion de fisica difieren en al menos una muestra.'
+    queLeerAhora =
+      'Revisar flushPhysicsPositionBridge y el sync puntual de nodos visibles al soltar.'
+  } else if (pendingRenderWork) {
+    tone = 'warn'
+    resumen = 'Renderer con trabajo pendiente'
+    quePasaAhora =
+      'Hay invalidaciones pendientes de render, bridge de fisica o desbloqueo de bounds.'
+    queLeerAhora =
+      'Si el salto aparece mientras estas flags quedan prendidas, el problema esta en la fase de release/settle.'
+  } else if (missingSamples) {
+    tone = 'warn'
+    resumen = 'Sin muestras de nodos'
+    quePasaAhora =
+      'El inspector recibio estado de renderer, pero no pudo muestrear nodos visibles/root/seleccionados.'
+    queLeerAhora =
+      'Verificar que el host exponga getViewportPosition y getRenderPhysicsPosition para los nodos visibles.'
+  }
+
+  const forceState = diagnostics.drag.forceAtlasSuspended
+    ? 'Suspendida'
+    : diagnostics.drag.forceAtlasRunning
+      ? 'Corriendo'
+      : 'Detenida'
+  const pointer = diagnostics.drag.lastMoveBodyPointer
+    ? `${formatDecimal(diagnostics.drag.lastMoveBodyPointer.x)}, ${formatDecimal(diagnostics.drag.lastMoveBodyPointer.y)}`
+    : 'sin dato'
+
+  return {
+    tone,
+    titulo: 'Renderer / Drag',
+    resumen,
+    estado: `capturado ${new Date(diagnostics.capturedAtMs).toLocaleTimeString('es-AR')}`,
+    queSignifica:
+      'Cruza drag, projection (proyeccion), invalidation (invalidacion), render y fisica para encontrar saltos de coordenadas.',
+    quePasaAhora,
+    queLeerAhora,
+    metricas: [
+      {
+        label: 'Drag activo',
+        value: diagnostics.drag.draggedNodePubkey
+          ? compactPubkey(diagnostics.drag.draggedNodePubkey)
+          : 'No',
+        tone: dragActive ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Gesto pendiente',
+        value: diagnostics.drag.pendingDragGesturePubkey
+          ? compactPubkey(diagnostics.drag.pendingDragGesturePubkey)
+          : 'No',
+        tone: pendingGesture ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Ultimo release',
+        value: diagnostics.drag.lastReleasedNodePubkey
+          ? compactPubkey(diagnostics.drag.lastReleasedNodePubkey)
+          : 'No',
+        tone: 'neutral',
+      },
+      {
+        label: 'Locks manuales',
+        value: formatInteger(manualLockCount),
+        tone: staleManualLockWithoutDrag ? 'bad' : manualLockCount > 0 ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Bounds lock (bloqueo de limites)',
+        value: formatYesNo(boundsLocked),
+        tone:
+          staleBoundsWithoutDrag || stalledReleaseUnlock
+            ? 'bad'
+            : boundsLocked
+              ? 'warn'
+              : 'ok',
+      },
+      {
+        label: 'customBBox (caja temporal)',
+        value: customBBoxActive
+          ? 'Activa'
+          : diagnostics.projection.customBBoxKnown
+            ? 'Conocida, limpia'
+            : 'Sin dato',
+        tone: customBBoxActive ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Unlock pendiente',
+        value: formatYesNo(pendingUnlock),
+        tone: stalledReleaseUnlock ? 'bad' : pendingUnlock ? 'warn' : 'ok',
+      },
+      {
+        label: 'Frame drag pendiente',
+        value: formatYesNo(diagnostics.invalidation.pendingDragFrame),
+        tone: diagnostics.invalidation.pendingDragFrame ? 'warn' : 'ok',
+      },
+      {
+        label: 'Bridge fisica pendiente',
+        value: formatYesNo(diagnostics.invalidation.pendingPhysicsBridgeFrame),
+        tone: diagnostics.invalidation.pendingPhysicsBridgeFrame ? 'warn' : 'ok',
+      },
+      {
+        label: 'Ultima invalidacion',
+        value: diagnostics.invalidation.lastInvalidation.action ?? 'sin dato',
+        tone:
+          diagnostics.invalidation.lastInvalidation.action === 'refresh'
+            ? 'ok'
+            : 'neutral',
+      },
+      {
+        label: 'Camara ratio',
+        value: formatDecimal(diagnostics.projection.camera?.ratio ?? null, 3),
+        tone: 'neutral',
+      },
+      {
+        label: 'Ultimo puntero',
+        value: pointer,
+        tone: diagnostics.drag.lastMoveBodyPointer ? 'neutral' : 'warn',
+      },
+      {
+        label: 'Delta viewport max',
+        value: formatPixelDelta(maxViewportDelta),
+        tone: largeViewportJump ? 'bad' : maxViewportDelta !== null && maxViewportDelta > 20 ? 'warn' : 'ok',
+      },
+      {
+        label: 'Delta render max',
+        value: formatGraphDelta(maxRenderDelta),
+        tone: maxRenderDelta !== null && maxRenderDelta > 1 ? 'warn' : 'ok',
+      },
+      {
+        label: 'Delta fisica max',
+        value: formatGraphDelta(maxPhysicsDelta),
+        tone: maxPhysicsDelta !== null && maxPhysicsDelta > 1 ? 'warn' : 'ok',
+      },
+      {
+        label: 'Delta render/fisica max',
+        value: formatGraphDelta(maxRenderPhysicsDelta),
+        tone: renderPhysicsMismatch ? 'warn' : 'ok',
+      },
+      {
+        label: 'Delta proyeccion',
+        value: projectionDelta
+          ? `cam ${formatDecimal(projectionDelta.cameraCenterDelta, 4)} / ratio ${formatDecimal(projectionDelta.cameraRatioDelta, 3)} / bbox ${formatDecimal(projectionDelta.bboxDelta, 1)}`
+          : 'sin dato',
+        tone: projectionChanged ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Unlock diferidos',
+        value: formatInteger(
+          diagnostics.invalidation.graphBoundsUnlockDeferredCount,
+        ),
+        tone:
+          diagnostics.invalidation.graphBoundsUnlockDeferredCount > 0
+            ? 'warn'
+            : 'ok',
+      },
+      {
+        label: 'ForceAtlas',
+        value: forceState,
+        tone: diagnostics.drag.forceAtlasSuspended ? 'neutral' : diagnostics.drag.forceAtlasRunning ? 'warn' : 'ok',
+      },
+      {
+        label: 'Muestras',
+        value: formatInteger(diagnostics.samples.length),
+        tone: missingSamples ? 'warn' : 'ok',
+      },
+      {
+        label: 'Timeline drag',
+        value: formatInteger(diagnostics.timeline.length),
+        tone: diagnostics.timeline.length > 0 ? 'ok' : 'neutral',
+      },
+    ],
+    muestras: diagnostics.samples,
+    notas: [
+      'Viewport delta compara este poll contra el poll anterior del inspector; sirve para capturar el salto aunque no haya trace.',
+      'Delta render/fisica contra el poll anterior separa write de posicion de cambio de proyeccion.',
+      'render/fisica delta separa si Sigma quedo mostrando una posicion vieja o si ForceAtlas escribio otra posicion.',
+      'role released identifica el ultimo nodo soltado para no confundirlo con un visible cualquiera.',
+      'projectionDeltaFromPrevious y previousProjection quedan en raw para confirmar si cambio la proyeccion al soltar.',
+      'renderer.raw.timeline conserva los ultimos eventos secuenciales del drag, no solo el ultimo poll.',
+    ],
+    raw: diagnostics,
+  }
+}
+
 const buildSummary = (sections: {
   coverage: RuntimeInspectorCoverageSection
   profiles: RuntimeInspectorProfilesSection
   avatars: RuntimeInspectorAvatarsSection
   zaps: RuntimeInspectorZapsSection
   performance: RuntimeInspectorPerformanceSection
+  renderer: RuntimeInspectorRendererSection
   relays: RuntimeInspectorRelaysSection
 }): RuntimeInspectorSummaryItem[] => [
   {
@@ -1659,6 +2092,14 @@ const buildSummary = (sections: {
     detalle: sections.performance.resumen,
   },
   {
+    id: 'renderer',
+    title: 'Renderer',
+    tone: sections.renderer.tone,
+    estado: formatToneLabel(sections.renderer.tone),
+    valor: sections.renderer.estado,
+    detalle: sections.renderer.resumen,
+  },
+  {
     id: 'relays',
     title: 'Relays',
     tone: sections.relays.tone,
@@ -1676,6 +2117,7 @@ const buildPrimaryIssue = (
     avatars: RuntimeInspectorAvatarsSection
     zaps: RuntimeInspectorZapsSection
     performance: RuntimeInspectorPerformanceSection
+    renderer: RuntimeInspectorRendererSection
     relays: RuntimeInspectorRelaysSection
     load: RuntimeInspectorLoadSection
   },
@@ -1686,6 +2128,7 @@ const buildPrimaryIssue = (
     avatars: sections.avatars,
     zaps: sections.zaps,
     performance: sections.performance,
+    renderer: sections.renderer,
     relays: sections.relays,
   }
   const ordered = [...summary].sort((left, right) => {
@@ -1724,6 +2167,8 @@ const buildPrimaryIssue = (
     confianza:
       top.id === 'performance'
         ? 'media'
+        : top.id === 'renderer'
+          ? 'media'
         : top.id === 'relays'
           ? 'media'
           : 'alta',
@@ -1740,6 +2185,7 @@ export function buildRuntimeInspectorSnapshot(
   const avatars = buildAvatarSection(input)
   const zaps = buildZapSection(input)
   const performance = buildPerformanceSection(input)
+  const renderer = buildRendererSection(input)
   const relays = buildRelaysSection(input)
   const load = buildLoadSection(input)
   const resourceTop = buildResourceTop(input)
@@ -1749,6 +2195,7 @@ export function buildRuntimeInspectorSnapshot(
     avatars,
     zaps,
     performance,
+    renderer,
     relays,
   })
   const primary = buildPrimaryIssue(summary, {
@@ -1757,6 +2204,7 @@ export function buildRuntimeInspectorSnapshot(
     avatars,
     zaps,
     performance,
+    renderer,
     relays,
     load,
   })
@@ -1773,6 +2221,7 @@ export function buildRuntimeInspectorSnapshot(
     avatars,
     zaps,
     performance,
+    renderer,
     relays,
     load,
     resourceTop,

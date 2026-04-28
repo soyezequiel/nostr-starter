@@ -5,6 +5,7 @@ import { hasRenderableSigmaContainer } from '@/features/graph-v2/renderer/contai
 import { installSigmaPixelRatioCap } from '@/features/graph-v2/renderer/sigmaPixelRatio'
 import type {
   GraphInteractionCallbacks,
+  GraphPhysicsSnapshot,
   GraphSceneSnapshot,
   RendererAdapter,
 } from '@/features/graph-v2/renderer/contracts'
@@ -66,12 +67,18 @@ import type {
   DebugDragCandidate,
   DebugNeighborGroups,
   DebugDragRuntimeState,
+  DebugDragTimelineEvent,
+  DebugDragTimelineStage,
   DebugNodePosition,
   DebugPhysicsDiagnostics,
+  DebugProjectionDiagnostics,
+  DebugRenderInvalidationState,
+  DebugRenderPhysicsPosition,
 } from '@/features/graph-v2/testing/browserDebug'
 import {
   isGraphPerfTraceEnabled,
   nowGraphPerfMs,
+  traceGraphPerf,
   traceGraphPerfDuration,
 } from '@/features/graph-runtime/debug/perfTrace'
 
@@ -88,6 +95,10 @@ const MOBILE_GRAPH_INTERACTION_QUERY = '(max-width: 720px)'
 const PHYSICS_BRIDGE_BACKGROUND_SYNC_CAP = 96
 const PHYSICS_BRIDGE_VIEWPORT_PADDING_RATIO = 0.12
 const PHYSICS_AUTO_FIT_INTERVAL_MS = 120
+const DRAG_TIMELINE_LIMIT = 200
+const GRAPH_BOUNDS_UNLOCK_INITIAL_FRAME_DELAY = 2
+const GRAPH_BOUNDS_UNLOCK_MAX_DEFERRED_FRAMES = 8
+const GRAPH_BOUNDS_UNLOCK_MAX_WAIT_MS = 180
 export const DEFAULT_INITIAL_CAMERA_ZOOM = 2.5
 export const MIN_INITIAL_CAMERA_ZOOM = 0.75
 export const MAX_INITIAL_CAMERA_ZOOM = 3
@@ -108,6 +119,77 @@ const EMPTY_HOVER_NEIGHBORS = new Set<string>()
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
+
+const getRendererNowMs = () =>
+  typeof performance !== 'undefined' &&
+  typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+
+interface GraphBoundsSnapshot {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+interface SigmaGraphExtent {
+  x: [number, number]
+  y: [number, number]
+}
+
+const normalizeGraphPointForExtent = (
+  point: { x: number; y: number },
+  extent: SigmaGraphExtent,
+) => {
+  const width = extent.x[1] - extent.x[0]
+  const height = extent.y[1] - extent.y[0]
+  const ratio = Math.max(width, height, 1)
+  const centerX = (extent.x[0] + extent.x[1]) / 2
+  const centerY = (extent.y[0] + extent.y[1]) / 2
+
+  return {
+    x: 0.5 + (point.x - centerX) / ratio,
+    y: 0.5 + (point.y - centerY) / ratio,
+  }
+}
+
+const resolveGraphDimensionCorrection = (
+  viewport: { width: number; height: number },
+  graph: { width: number; height: number },
+) => {
+  const viewportRatio = viewport.height / viewport.width
+  const graphRatio = graph.height / graph.width
+  if (
+    (viewportRatio < 1 && graphRatio > 1) ||
+    (viewportRatio > 1 && graphRatio < 1)
+  ) {
+    return 1
+  }
+
+  return Math.min(
+    Math.max(graphRatio, 1 / graphRatio),
+    Math.max(1 / viewportRatio, viewportRatio),
+  )
+}
+
+const cloneSigmaGraphExtent = (
+  extent: SigmaGraphExtent,
+): SigmaGraphExtent => ({
+  x: [extent.x[0], extent.x[1]],
+  y: [extent.y[0], extent.y[1]],
+})
+
+const isUsableSigmaGraphExtent = (
+  extent: SigmaGraphExtent | null | undefined,
+): extent is SigmaGraphExtent =>
+  !!extent &&
+  Number.isFinite(extent.x[0]) &&
+  Number.isFinite(extent.x[1]) &&
+  Number.isFinite(extent.y[0]) &&
+  Number.isFinite(extent.y[1]) &&
+  extent.x[0] !== extent.x[1] &&
+  extent.y[0] !== extent.y[1]
 
 const normalizeBucketOption = <T extends readonly ImageLodBucket[]>(
   value: ImageLodBucket | undefined,
@@ -294,6 +376,19 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private shouldPinDraggedNodeOnRelease = false
 
+  private manualDragFixedNodes = new Map<
+    string,
+    { x: number; y: number; atMs: number }
+  >()
+
+  private lastReleasedNodePubkey: string | null = null
+
+  private lastReleasedGraphPosition: { x: number; y: number } | null = null
+
+  private lastReleasedAtMs: number | null = null
+
+  private dragTimeline: DebugDragTimelineEvent[] = []
+
   private resumePhysicsAfterDrag = true
 
   private pendingDragFrame: number | null = null
@@ -301,6 +396,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
   private pendingPhysicsBridgeFrame: number | null = null
 
   private pendingFitCameraAfterPhysicsFrame: number | null = null
+
+  private pendingGraphBoundsUnlockFrame: number | null = null
+
+  private graphBoundsUnlockStartedAtMs: number | null = null
+
+  private graphBoundsUnlockDeferredCount = 0
 
   private shouldRepeatFitCameraUntilPhysicsSettles = false
 
@@ -373,6 +474,9 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private isGraphBoundsLocked = false
 
+  private lastRenderInvalidation: DebugRenderInvalidationState['lastInvalidation'] =
+    { action: null, atMs: null }
+
   private avatarCache: AvatarBitmapCache | null = null
 
   private avatarLoader: AvatarLoader | null = null
@@ -425,6 +529,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     this.pendingContainerRefresh = false
+    this.recordRenderInvalidation('container-refresh')
+    this.traceRendererEvent('safeRefresh.flush', {
+      via: 'container-refresh',
+    })
     this.sigma.refresh()
   }
 
@@ -443,6 +551,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
+    this.recordRenderInvalidation('refresh')
+    this.traceRendererEvent('safeRefresh', {
+      renderable: hasRenderableSigmaContainer(this.container),
+    })
+
     if (!hasRenderableSigmaContainer(this.container)) {
       this.pendingContainerRefresh = true
       return
@@ -457,12 +570,60 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
+    this.recordRenderInvalidation('render')
+    this.traceRendererEvent('safeRender', {
+      renderable: hasRenderableSigmaContainer(this.container),
+    })
+
     if (!hasRenderableSigmaContainer(this.container)) {
       this.pendingContainerRefresh = true
       return
     }
 
     this.sigma.scheduleRender()
+  }
+
+  private recordRenderInvalidation(
+    action: DebugRenderInvalidationState['lastInvalidation']['action'],
+  ) {
+    this.lastRenderInvalidation = {
+      action,
+      atMs: nowGraphPerfMs(),
+    }
+  }
+
+  private traceRendererEvent(
+    stage: string,
+    details: Record<string, unknown> = {},
+  ) {
+    if (!isGraphPerfTraceEnabled()) {
+      return
+    }
+
+    const forceRuntime = this.forceRuntime as {
+      isRunning?: () => boolean
+      isSuspended?: () => boolean
+    } | null
+
+    traceGraphPerf(`renderer.${stage}`, {
+      ...details,
+      graphBoundsLocked: this.isGraphBoundsLocked,
+      cameraLocked: this.isCameraLocked,
+      draggedNodePubkey: this.draggedNodePubkey,
+      pendingDragFrame: this.pendingDragFrame !== null,
+      pendingPhysicsBridgeFrame: this.pendingPhysicsBridgeFrame !== null,
+      pendingGraphBoundsUnlockFrame: this.pendingGraphBoundsUnlockFrame !== null,
+      graphBoundsUnlockStartedAtMs: this.graphBoundsUnlockStartedAtMs,
+      graphBoundsUnlockDeferredCount: this.graphBoundsUnlockDeferredCount,
+      forceAtlasRunning:
+        typeof forceRuntime?.isRunning === 'function'
+          ? forceRuntime.isRunning()
+          : false,
+      forceAtlasSuspended:
+        typeof forceRuntime?.isSuspended === 'function'
+          ? forceRuntime.isSuspended()
+          : false,
+    })
   }
 
   private observeContainer(container: HTMLElement) {
@@ -512,6 +673,225 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     return this.sigma.graphToViewport(position)
+  }
+
+  public getProjectionDiagnostics(): DebugProjectionDiagnostics {
+    const sigma = this.sigma as (Sigma<
+      RenderNodeAttributes,
+      RenderEdgeAttributes
+    > & {
+      getDimensions?: () => { width: number; height: number }
+      getBBox?: () => { x: [number, number]; y: [number, number] }
+      getCustomBBox?: () => { x: [number, number]; y: [number, number] } | null
+    }) | null
+    const camera =
+      typeof sigma?.getCamera === 'function' ? sigma.getCamera() : null
+    const cameraState = camera?.getState?.() ?? null
+    const hasCustomBBoxGetter = typeof sigma?.getCustomBBox === 'function'
+
+    return {
+      graphBoundsLocked: this.isGraphBoundsLocked,
+      cameraLocked: this.isCameraLocked,
+      dimensions:
+        typeof sigma?.getDimensions === 'function'
+          ? sigma.getDimensions()
+          : this.container
+            ? {
+                width: this.container.offsetWidth,
+                height: this.container.offsetHeight,
+              }
+            : null,
+      camera: cameraState
+        ? {
+            x: cameraState.x,
+            y: cameraState.y,
+            ratio: cameraState.ratio,
+            angle: cameraState.angle,
+          }
+        : null,
+      bbox: typeof sigma?.getBBox === 'function' ? sigma.getBBox() : null,
+      customBBox: hasCustomBBoxGetter ? (sigma.getCustomBBox?.() ?? null) : null,
+      customBBoxKnown: hasCustomBBoxGetter,
+    }
+  }
+
+  public getRenderPhysicsPosition(pubkey: string): DebugRenderPhysicsPosition {
+    const renderStore = this.renderStore as
+      | (RenderGraphStore & {
+          getGraph?: RenderGraphStore['getGraph']
+          getNodePosition?: RenderGraphStore['getNodePosition']
+        })
+      | null
+    const physicsStore = this.physicsStore as
+      | (PhysicsGraphStore & {
+          getGraph?: PhysicsGraphStore['getGraph']
+          getNodePosition?: PhysicsGraphStore['getNodePosition']
+          isNodeFixed?: PhysicsGraphStore['isNodeFixed']
+        })
+      | null
+    const renderGraph =
+      typeof renderStore?.getGraph === 'function'
+        ? renderStore.getGraph()
+        : null
+    const physicsGraph =
+      typeof physicsStore?.getGraph === 'function'
+        ? physicsStore.getGraph()
+        : null
+    const renderAttributes =
+      renderGraph?.hasNode(pubkey) === true
+        ? renderGraph.getNodeAttributes(pubkey)
+        : null
+    const physicsAttributes =
+      physicsGraph?.hasNode(pubkey) === true
+        ? physicsGraph.getNodeAttributes(pubkey)
+        : null
+    const renderFallbackPosition =
+      renderAttributes || typeof renderStore?.getNodePosition !== 'function'
+        ? null
+        : renderStore.getNodePosition(pubkey)
+    const physicsFallbackPosition =
+      physicsAttributes || typeof physicsStore?.getNodePosition !== 'function'
+        ? null
+        : physicsStore.getNodePosition(pubkey)
+
+    return {
+      render: renderAttributes
+        ? { x: renderAttributes.x, y: renderAttributes.y }
+        : renderFallbackPosition
+          ? { x: renderFallbackPosition.x, y: renderFallbackPosition.y }
+        : null,
+      physics: physicsAttributes
+        ? { x: physicsAttributes.x, y: physicsAttributes.y }
+        : physicsFallbackPosition
+          ? { x: physicsFallbackPosition.x, y: physicsFallbackPosition.y }
+        : null,
+      renderFixed: renderAttributes?.fixed ?? null,
+      physicsFixed:
+        physicsAttributes?.fixed ??
+        (typeof physicsStore?.isNodeFixed === 'function'
+          ? physicsStore.isNodeFixed(pubkey)
+          : null),
+    }
+  }
+
+  public getRenderInvalidationState(): DebugRenderInvalidationState {
+    return {
+      pendingContainerRefresh: this.pendingContainerRefresh,
+      pendingContainerRefreshFrame: this.pendingContainerRefreshFrame !== null,
+      pendingDragFrame: this.pendingDragFrame !== null,
+      pendingPhysicsBridgeFrame: this.pendingPhysicsBridgeFrame !== null,
+      pendingFitCameraAfterPhysicsFrame:
+        this.pendingFitCameraAfterPhysicsFrame !== null,
+      pendingGraphBoundsUnlockFrame: this.pendingGraphBoundsUnlockFrame !== null,
+      graphBoundsUnlockStartedAtMs: this.graphBoundsUnlockStartedAtMs,
+      graphBoundsUnlockDeferredCount: this.graphBoundsUnlockDeferredCount,
+      graphBoundsLocked: this.isGraphBoundsLocked,
+      cameraLocked: this.isCameraLocked,
+      forceAtlasRunning: this.forceRuntime?.isRunning() ?? false,
+      forceAtlasSuspended: this.forceRuntime?.isSuspended() ?? false,
+      lastInvalidation: this.lastRenderInvalidation,
+    }
+  }
+
+  public getDragTimeline(): DebugDragTimelineEvent[] {
+    return this.dragTimeline.map((event) => ({
+      ...event,
+      pointerViewport: event.pointerViewport
+        ? { ...event.pointerViewport }
+        : null,
+      pointerGraph: event.pointerGraph ? { ...event.pointerGraph } : null,
+      nodeRenderPosition: event.nodeRenderPosition
+        ? { ...event.nodeRenderPosition }
+        : null,
+      nodePhysicsPosition: event.nodePhysicsPosition
+        ? { ...event.nodePhysicsPosition }
+        : null,
+      nodeViewportPosition: event.nodeViewportPosition
+        ? { ...event.nodeViewportPosition }
+        : null,
+      camera: event.camera ? { ...event.camera } : null,
+      bbox: event.bbox
+        ? { x: [...event.bbox.x], y: [...event.bbox.y] }
+        : null,
+      customBBox: event.customBBox
+        ? { x: [...event.customBBox.x], y: [...event.customBBox.y] }
+        : null,
+      details: event.details ? { ...event.details } : undefined,
+    }))
+  }
+
+  private recordDragTimelineEvent(
+    stage: DebugDragTimelineStage,
+    options: {
+      pubkey?: string | null
+      pointerViewport?: { x: number; y: number } | null
+      pointerGraph?: { x: number; y: number } | null
+      details?: Record<string, unknown>
+    } = {},
+  ) {
+    const pubkey =
+      options.pubkey ?? this.draggedNodePubkey ?? this.lastReleasedNodePubkey
+    const renderPhysics = pubkey
+      ? this.getRenderPhysicsPosition(pubkey)
+      : {
+          render: null,
+          physics: null,
+          renderFixed: null,
+          physicsFixed: null,
+        }
+    const projection = this.getProjectionDiagnostics()
+    const canProjectViewport =
+      typeof (this.sigma as { graphToViewport?: unknown } | null)
+        ?.graphToViewport === 'function'
+    const viewportPosition =
+      pubkey && canProjectViewport ? this.getViewportPosition(pubkey) : null
+    const forceRuntime = this.forceRuntime as {
+      isRunning?: () => boolean
+      isSuspended?: () => boolean
+    } | null
+    const event: DebugDragTimelineEvent = {
+      stage,
+      timestampMs: getRendererNowMs(),
+      pubkey,
+      pointerViewport: options.pointerViewport
+        ? { x: options.pointerViewport.x, y: options.pointerViewport.y }
+        : null,
+      pointerGraph: options.pointerGraph
+        ? { x: options.pointerGraph.x, y: options.pointerGraph.y }
+        : null,
+      nodeRenderPosition: renderPhysics.render,
+      nodePhysicsPosition: renderPhysics.physics,
+      nodeViewportPosition: viewportPosition
+        ? { x: viewportPosition.x, y: viewportPosition.y }
+        : null,
+      camera: projection.camera,
+      bbox: projection.bbox,
+      customBBox: projection.customBBox,
+      graphBoundsLocked: this.isGraphBoundsLocked,
+      pendingGraphBoundsUnlockFrame:
+        this.pendingGraphBoundsUnlockFrame !== null,
+      graphBoundsUnlockDeferredCount: this.graphBoundsUnlockDeferredCount,
+      manualDragFixedNodeCount: this.manualDragFixedNodes.size,
+      renderFixed: renderPhysics.renderFixed,
+      physicsFixed: renderPhysics.physicsFixed,
+      forceAtlasRunning:
+        typeof forceRuntime?.isRunning === 'function'
+          ? forceRuntime.isRunning()
+          : false,
+      forceAtlasSuspended:
+        typeof forceRuntime?.isSuspended === 'function'
+          ? forceRuntime.isSuspended()
+          : false,
+      details: options.details,
+    }
+
+    this.dragTimeline.push(event)
+    if (this.dragTimeline.length > DRAG_TIMELINE_LIMIT) {
+      this.dragTimeline.splice(
+        0,
+        this.dragTimeline.length - DRAG_TIMELINE_LIMIT,
+      )
+    }
   }
 
   public getNeighborGroups(pubkey: string): DebugNeighborGroups | null {
@@ -620,6 +1000,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     return {
       draggedNodePubkey: this.draggedNodePubkey,
       pendingDragGesturePubkey: this.pendingDragGesture?.pubkey ?? null,
+      lastReleasedNodePubkey: this.lastReleasedNodePubkey,
+      lastReleasedGraphPosition: this.lastReleasedGraphPosition,
+      lastReleasedAtMs: this.lastReleasedAtMs,
+      manualDragFixedNodeCount: this.manualDragFixedNodes.size,
       forceAtlasRunning: this.forceRuntime?.isRunning() ?? false,
       forceAtlasSuspended: this.forceRuntime?.isSuspended() ?? false,
       moveBodyCount: this.moveBodyCount,
@@ -664,6 +1048,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
   }
 
   public setNodePinned(pubkey: string, pinned: boolean) {
+    this.manualDragFixedNodes.delete(pubkey)
+
     const position =
       this.renderStore?.getNodePosition(pubkey) ??
       this.physicsStore?.getNodePosition(pubkey)
@@ -681,6 +1067,166 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.forceRuntime?.reheat()
     this.safeRefresh()
     this.ensurePhysicsPositionBridge()
+  }
+
+  private rememberReleasedNodePosition(
+    pubkey: string,
+    position: { x: number; y: number },
+  ) {
+    const atMs = getRendererNowMs()
+    const lock = { x: position.x, y: position.y, atMs }
+    this.lastReleasedNodePubkey = pubkey
+    this.lastReleasedGraphPosition = { x: position.x, y: position.y }
+    this.lastReleasedAtMs = atMs
+    this.manualDragFixedNodes.set(pubkey, lock)
+    this.applyManualDragFixedNode(pubkey, lock)
+  }
+
+  private applyManualDragFixedNode(
+    pubkey: string,
+    lock: { x: number; y: number },
+  ) {
+    let changed = false
+    const renderStore = this.renderStore as
+      | (RenderGraphStore & { hasNode?: (pubkey: string) => boolean })
+      | null
+    const physicsStore = this.physicsStore as
+      | (PhysicsGraphStore & { hasNode?: (pubkey: string) => boolean })
+      | null
+    const renderCanSetPosition =
+      typeof renderStore?.setNodePosition === 'function'
+    const physicsCanSetPosition =
+      typeof physicsStore?.setNodePosition === 'function'
+    const physicsCanSetFixed = typeof physicsStore?.setNodeFixed === 'function'
+    const renderHasNode =
+      renderCanSetPosition &&
+      (typeof renderStore?.hasNode === 'function'
+        ? renderStore.hasNode(pubkey)
+        : typeof renderStore?.getNodePosition === 'function'
+          ? (renderStore.getNodePosition(pubkey) ?? null) !== null
+          : true)
+    const physicsHasNode =
+      (physicsCanSetPosition || physicsCanSetFixed) &&
+      (typeof physicsStore?.hasNode === 'function'
+        ? physicsStore.hasNode(pubkey)
+        : typeof physicsStore?.getNodePosition === 'function'
+          ? (physicsStore.getNodePosition(pubkey) ?? null) !== null
+          : true)
+
+    if (renderHasNode) {
+      changed = renderStore?.setNodePosition(pubkey, lock.x, lock.y) || changed
+    }
+    if (physicsHasNode) {
+      if (physicsCanSetPosition) {
+        changed =
+          physicsStore?.setNodePosition(pubkey, lock.x, lock.y, true) ||
+          changed
+      } else {
+        physicsStore?.setNodeFixed(pubkey, true)
+        changed = true
+      }
+    }
+
+    if (changed) {
+      this.nodeHitTester?.markDirty()
+    }
+    return renderHasNode || physicsHasNode
+  }
+
+  private applyManualDragFixedNodes() {
+    if (this.manualDragFixedNodes.size === 0) {
+      return
+    }
+
+    const pinnedPubkeys = new Set(this.scene?.render.pins.pubkeys ?? [])
+    for (const [pubkey, lock] of this.manualDragFixedNodes) {
+      const applied = this.applyManualDragFixedNode(pubkey, lock)
+      if (!applied || pinnedPubkeys.has(pubkey)) {
+        this.manualDragFixedNodes.delete(pubkey)
+      }
+    }
+  }
+
+  private clearManualDragFixedNode(pubkey: string, keepFixed = false) {
+    const lock = this.manualDragFixedNodes.get(pubkey)
+    if (!lock) {
+      return false
+    }
+
+    this.manualDragFixedNodes.delete(pubkey)
+
+    const shouldRemainFixed =
+      keepFixed || (this.scene?.render.pins.pubkeys ?? []).includes(pubkey)
+    const position = {
+      x: lock.x,
+      y: lock.y,
+    }
+    let changed = false
+    const renderCanSetPosition =
+      typeof this.renderStore?.setNodePosition === 'function'
+    const renderHasPosition =
+      typeof this.renderStore?.getNodePosition === 'function'
+        ? this.renderStore.getNodePosition(pubkey) !== null
+        : renderCanSetPosition
+    const physicsCanSetPosition =
+      typeof this.physicsStore?.setNodePosition === 'function'
+    const physicsHasPosition =
+      typeof this.physicsStore?.getNodePosition === 'function'
+        ? this.physicsStore.getNodePosition(pubkey) !== null
+        : physicsCanSetPosition
+
+    if (renderCanSetPosition && renderHasPosition) {
+      changed =
+        this.renderStore.setNodePosition(pubkey, position.x, position.y) ||
+        changed
+    }
+    if (physicsCanSetPosition && physicsHasPosition) {
+      changed =
+        this.physicsStore.setNodePosition(
+          pubkey,
+          position.x,
+          position.y,
+          shouldRemainFixed,
+        ) || changed
+    } else if (typeof this.physicsStore?.setNodeFixed === 'function') {
+      this.physicsStore?.setNodeFixed(pubkey, shouldRemainFixed)
+    }
+
+    if (changed) {
+      this.nodeHitTester?.markDirty()
+    }
+    this.traceRendererEvent('releaseDrag.manualFixedLock.clear', {
+      pubkey,
+      keepFixed: shouldRemainFixed,
+      position,
+    })
+    this.recordDragTimelineEvent('manual-lock-clear', {
+      pubkey,
+      details: {
+        keepFixed: shouldRemainFixed,
+        position,
+      },
+    })
+    return true
+  }
+
+  private createPhysicsSceneWithManualDragFixes(
+    scene: GraphPhysicsSnapshot,
+  ): GraphPhysicsSnapshot {
+    if (this.manualDragFixedNodes.size === 0) {
+      return scene
+    }
+
+    let changed = false
+    const nodes = scene.nodes.map((node) => {
+      if (!this.manualDragFixedNodes.has(node.pubkey) || node.fixed) {
+        return node
+      }
+      changed = true
+      return { ...node, fixed: true }
+    })
+
+    return changed ? { ...scene, nodes } : scene
   }
 
   public recenterCamera() {
@@ -1204,6 +1750,29 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.nodeHitTester?.markDirty()
     }
     this.lastDragFlushTimestamp = now
+    this.traceRendererEvent('flushPendingDragFrame', {
+      draggedNodePubkey,
+      draggedRenderChanged,
+      physicsChanged,
+      syncedInfluence,
+      dirtyPubkeyCount: dirtyPubkeys.size,
+      dragInfluenceActive,
+      shouldEmitDragMove,
+    })
+    this.recordDragTimelineEvent('flush', {
+      pubkey: draggedNodePubkey,
+      pointerViewport: this.lastMoveBodyPointer,
+      pointerGraph: this.lastScheduledGraphPosition,
+      details: {
+        graphPosition,
+        draggedRenderChanged,
+        physicsChanged,
+        syncedInfluence,
+        dirtyPubkeyCount: dirtyPubkeys.size,
+        dragInfluenceActive,
+        shouldEmitDragMove,
+      },
+    })
     this.safeRender()
     if (shouldEmitDragMove) {
       this.callbacks.onNodeDragMove(draggedNodePubkey, graphPosition)
@@ -1257,17 +1826,413 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.pendingGraphPosition = null
   }
 
+  private cancelPendingGraphBoundsUnlock() {
+    if (this.pendingGraphBoundsUnlockFrame === null) {
+      this.graphBoundsUnlockStartedAtMs = null
+      this.graphBoundsUnlockDeferredCount = 0
+      return
+    }
+
+    cancelAnimationFrame(this.pendingGraphBoundsUnlockFrame)
+    this.pendingGraphBoundsUnlockFrame = null
+    this.graphBoundsUnlockStartedAtMs = null
+    this.graphBoundsUnlockDeferredCount = 0
+  }
+
+  private collectReleasePhysicsSyncPubkeys(draggedNodePubkey: string) {
+    const physicsStore = this.physicsStore
+    if (!physicsStore || typeof physicsStore.hasNode !== 'function') {
+      return []
+    }
+
+    const pubkeys: string[] = []
+    const seen = new Set<string>()
+    const addPubkey = (pubkey: string | null | undefined) => {
+      if (!pubkey || seen.has(pubkey) || !physicsStore.hasNode(pubkey)) {
+        return false
+      }
+
+      seen.add(pubkey)
+      pubkeys.push(pubkey)
+      return true
+    }
+
+    addPubkey(draggedNodePubkey)
+    addPubkey(this.scene?.render.cameraHint.rootPubkey)
+    addPubkey(this.scene?.render.selection.selectedNodePubkey)
+    addPubkey(this.hoveredNodePubkey)
+
+    for (const pubkey of this.scene?.render.pins.pubkeys ?? []) {
+      addPubkey(pubkey)
+    }
+    this.avatarOverlay?.forEachVisibleNodePubkey(addPubkey)
+    for (const pubkey of this.resolveRendererFocus().neighbors) {
+      addPubkey(pubkey)
+    }
+    for (const [pubkey] of this.dragHopDistances) {
+      addPubkey(pubkey)
+    }
+    this.collectViewportRenderPubkeys(addPubkey)
+
+    return pubkeys
+  }
+
+  private scheduleGraphBoundsUnlockAfterRelease(
+    draggedNodePubkey: string,
+    releaseSyncPubkeys: readonly string[],
+    keepReleasedNodeFixed: boolean,
+    startedAtMs: number = getRendererNowMs(),
+    frameDelay = GRAPH_BOUNDS_UNLOCK_INITIAL_FRAME_DELAY,
+  ) {
+    const shouldPreserveDeferredCount =
+      this.graphBoundsUnlockStartedAtMs === startedAtMs
+    const deferredCount = shouldPreserveDeferredCount
+      ? this.graphBoundsUnlockDeferredCount
+      : 0
+
+    this.cancelPendingGraphBoundsUnlock()
+    this.graphBoundsUnlockStartedAtMs = startedAtMs
+    this.graphBoundsUnlockDeferredCount = deferredCount
+    this.recordDragTimelineEvent('unlock-start', {
+      pubkey: draggedNodePubkey,
+      details: {
+        releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+        keepReleasedNodeFixed,
+        frameDelay,
+        startedAtMs,
+      },
+    })
+
+    const unlock = () => {
+      this.pendingGraphBoundsUnlockFrame = null
+      this.unlockGraphBoundsAfterRelease(
+        draggedNodePubkey,
+        releaseSyncPubkeys,
+        keepReleasedNodeFixed,
+        startedAtMs,
+      )
+    }
+
+    if (typeof globalThis.requestAnimationFrame !== 'function') {
+      unlock()
+      return
+    }
+
+    const scheduleNextFrame = (remainingFrames: number) => {
+      if (typeof globalThis.requestAnimationFrame !== 'function') {
+        unlock()
+        return
+      }
+      this.pendingGraphBoundsUnlockFrame = globalThis.requestAnimationFrame(() => {
+        if (remainingFrames <= 1) {
+          unlock()
+          return
+        }
+        scheduleNextFrame(remainingFrames - 1)
+      })
+    }
+
+    scheduleNextFrame(Math.max(1, frameDelay))
+  }
+
+  private captureCurrentViewportGraphBounds(): GraphBoundsSnapshot | null {
+    const sigma = this.sigma as (Sigma<
+      RenderNodeAttributes,
+      RenderEdgeAttributes
+    > & {
+      getDimensions?: () => { width: number; height: number }
+      viewportToGraph?: (point: { x: number; y: number }) => {
+        x: number
+        y: number
+      }
+    }) | null
+
+    if (!sigma || typeof sigma.viewportToGraph !== 'function') {
+      return null
+    }
+
+    const dimensions =
+      typeof sigma.getDimensions === 'function'
+        ? sigma.getDimensions()
+        : this.container
+          ? {
+              width: this.container.offsetWidth,
+              height: this.container.offsetHeight,
+            }
+          : null
+
+    if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+      return null
+    }
+
+    const corners = [
+      sigma.viewportToGraph({ x: 0, y: 0 }),
+      sigma.viewportToGraph({ x: dimensions.width, y: 0 }),
+      sigma.viewportToGraph({ x: 0, y: dimensions.height }),
+      sigma.viewportToGraph({ x: dimensions.width, y: dimensions.height }),
+    ].filter(
+      (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
+    )
+
+    if (corners.length === 0) {
+      return null
+    }
+
+    return {
+      minX: Math.min(...corners.map((point) => point.x)),
+      minY: Math.min(...corners.map((point) => point.y)),
+      maxX: Math.max(...corners.map((point) => point.x)),
+      maxY: Math.max(...corners.map((point) => point.y)),
+    }
+  }
+
+  private preserveCameraForGraphBounds(bounds: GraphBoundsSnapshot | null) {
+    const sigma = this.sigma as (Sigma<
+      RenderNodeAttributes,
+      RenderEdgeAttributes
+    > & {
+      getDimensions?: () => { width: number; height: number }
+      getBBox?: () => SigmaGraphExtent
+      getSetting?: (key: string) => unknown
+    }) | null
+
+    if (!sigma || !bounds || typeof sigma.getBBox !== 'function') {
+      return false
+    }
+
+    const getCamera = (
+      sigma as {
+        getCamera?: () => ReturnType<
+          Sigma<RenderNodeAttributes, RenderEdgeAttributes>['getCamera']
+        >
+      }
+    ).getCamera
+    if (typeof getCamera !== 'function') {
+      return false
+    }
+
+    const camera = getCamera.call(sigma)
+    if (
+      !camera ||
+      typeof camera.getState !== 'function' ||
+      typeof camera.setState !== 'function'
+    ) {
+      return false
+    }
+
+    const dimensions =
+      typeof sigma.getDimensions === 'function'
+        ? sigma.getDimensions()
+        : this.container
+          ? {
+              width: this.container.offsetWidth,
+              height: this.container.offsetHeight,
+            }
+          : null
+    if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+      return false
+    }
+
+    const bbox = sigma.getBBox()
+    const graphWidth = Math.max(bbox.x[1] - bbox.x[0], 1)
+    const graphHeight = Math.max(bbox.y[1] - bbox.y[0], 1)
+    const centerGraph = {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    }
+    const minNormalized = normalizeGraphPointForExtent(
+      { x: bounds.minX, y: bounds.minY },
+      bbox,
+    )
+    const maxNormalized = normalizeGraphPointForExtent(
+      { x: bounds.maxX, y: bounds.maxY },
+      bbox,
+    )
+    const centerNormalized = normalizeGraphPointForExtent(centerGraph, bbox)
+    const targetWidth = Math.abs(maxNormalized.x - minNormalized.x)
+    const targetHeight = Math.abs(maxNormalized.y - minNormalized.y)
+    const stagePadding =
+      sigma.getSetting?.('autoRescale') === false
+        ? 0
+        : Number(sigma.getSetting?.('stagePadding') ?? 0) || 0
+    const stageSize = Math.max(
+      1,
+      Math.min(dimensions.width, dimensions.height) - stagePadding * 2,
+    )
+    const correction = resolveGraphDimensionCorrection(dimensions, {
+      width: graphWidth,
+      height: graphHeight,
+    })
+    const rawRatio = Math.max(
+      (targetWidth * stageSize * correction) / Math.max(dimensions.width, 1),
+      (targetHeight * stageSize * correction) / Math.max(dimensions.height, 1),
+      0.0001,
+    )
+    const currentState = camera.getState()
+    const ratio =
+      typeof camera.getBoundedRatio === 'function'
+        ? camera.getBoundedRatio(rawRatio)
+        : rawRatio
+
+    camera.setState({
+      ...currentState,
+      x: centerNormalized.x,
+      y: centerNormalized.y,
+      ratio,
+    })
+    return true
+  }
+
+  private lockGraphBoundsPreservingViewport(
+    graphBoundsBBox?: SigmaGraphExtent | null,
+  ) {
+    const viewportGraphBounds = this.captureCurrentViewportGraphBounds()
+    this.setGraphBoundsLocked(true, graphBoundsBBox)
+    const preservedViewport =
+      this.preserveCameraForGraphBounds(viewportGraphBounds)
+    this.traceRendererEvent('startDrag.lockGraphBounds', {
+      preservedViewport,
+    })
+    return preservedViewport
+  }
+
+  private refreshAfterGraphBoundsUnlock() {
+    if (!this.sigma) {
+      return false
+    }
+
+    if (!hasRenderableSigmaContainer(this.container)) {
+      this.safeRefresh()
+      return false
+    }
+
+    this.recordRenderInvalidation('refresh')
+    this.traceRendererEvent('releaseDrag.unlockGraphBounds.refresh', {
+      immediate: true,
+    })
+    this.sigma.refresh()
+    return true
+  }
+
+  private unlockGraphBoundsAfterRelease(
+    draggedNodePubkey: string,
+    releaseSyncPubkeys: readonly string[],
+    keepReleasedNodeFixed: boolean,
+    startedAtMs: number,
+  ) {
+    if (!this.sigma || !this.renderStore || !this.physicsStore) {
+      this.setGraphBoundsLocked(false)
+      this.graphBoundsUnlockStartedAtMs = null
+      this.graphBoundsUnlockDeferredCount = 0
+      return
+    }
+
+    if (!this.isGraphBoundsLocked) {
+      this.graphBoundsUnlockStartedAtMs = null
+      this.graphBoundsUnlockDeferredCount = 0
+      return
+    }
+
+    const forceRuntime = this.forceRuntime as {
+      isRunning?: () => boolean
+    } | null
+    const physicsStillRunning =
+      typeof forceRuntime?.isRunning === 'function'
+        ? forceRuntime.isRunning()
+        : false
+    const waitedMs = getRendererNowMs() - startedAtMs
+    const shouldDeferForPhysics =
+      physicsStillRunning &&
+      this.graphBoundsUnlockDeferredCount <
+        GRAPH_BOUNDS_UNLOCK_MAX_DEFERRED_FRAMES &&
+      waitedMs < GRAPH_BOUNDS_UNLOCK_MAX_WAIT_MS &&
+      typeof globalThis.requestAnimationFrame === 'function'
+    if (shouldDeferForPhysics) {
+      this.graphBoundsUnlockDeferredCount += 1
+      this.traceRendererEvent('releaseDrag.unlockGraphBounds.deferred', {
+        draggedNodePubkey,
+        releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+        startedAtMs,
+        waitedMs,
+        deferredCount: this.graphBoundsUnlockDeferredCount,
+      })
+      this.scheduleGraphBoundsUnlockAfterRelease(
+        draggedNodePubkey,
+        releaseSyncPubkeys,
+        keepReleasedNodeFixed,
+        startedAtMs,
+        1,
+      )
+      this.recordDragTimelineEvent('unlock-defer', {
+        pubkey: draggedNodePubkey,
+        details: {
+          releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+          startedAtMs,
+          waitedMs,
+          deferredCount: this.graphBoundsUnlockDeferredCount,
+        },
+      })
+      return
+    }
+
+    const viewportGraphBounds = this.captureCurrentViewportGraphBounds()
+    this.setGraphBoundsLocked(false)
+    this.graphBoundsUnlockStartedAtMs = null
+    this.graphBoundsUnlockDeferredCount = 0
+    const preservedViewport =
+      this.preserveCameraForGraphBounds(viewportGraphBounds)
+
+    const syncedVisible =
+      releaseSyncPubkeys.length > 0
+        ? this.syncPhysicsPositionsToRenderForPubkeys(releaseSyncPubkeys)
+        : false
+    if (syncedVisible) {
+      this.nodeHitTester?.markDirty()
+    }
+    const manualFixedLockCleared = this.clearManualDragFixedNode(
+      draggedNodePubkey,
+      keepReleasedNodeFixed,
+    )
+    if (manualFixedLockCleared) {
+      if (typeof this.forceRuntime?.reheat === 'function') {
+        this.forceRuntime.reheat()
+      }
+      this.ensurePhysicsPositionBridge()
+    }
+
+    this.traceRendererEvent('releaseDrag.unlockGraphBounds', {
+      preservedViewport,
+      syncedVisible,
+      releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+      draggedNodePubkey,
+      forcedWhilePhysicsRunning: physicsStillRunning,
+      manualFixedLockCleared,
+    })
+    this.recordDragTimelineEvent('unlock-done', {
+      pubkey: draggedNodePubkey,
+      details: {
+        preservedViewport,
+        syncedVisible,
+        releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+        forcedWhilePhysicsRunning: physicsStillRunning,
+        manualFixedLockCleared,
+      },
+    })
+    this.refreshAfterGraphBoundsUnlock()
+  }
+
   private readonly startDrag = (
     pubkey: string,
     anchorOffset?: { dx: number; dy: number },
+    anchorViewportOrigin?: { x: number; y: number },
+    graphBoundsBBox?: SigmaGraphExtent | null,
   ) => {
     if (!this.renderStore || !this.physicsStore || !this.callbacks) {
       return
     }
 
-    this.dragAnchorOffset = anchorOffset
-      ? { dx: anchorOffset.dx, dy: anchorOffset.dy }
-      : { dx: 0, dy: 0 }
+    this.cancelPendingGraphBoundsUnlock()
+    this.manualDragFixedNodes.delete(pubkey)
     this.lastScheduledGraphPosition = null
     this.resumePhysicsAfterDrag = !(this.forceRuntime?.isSuspended() ?? false)
     this.draggedNodeFocus = this.createFocusSnapshot(pubkey, {
@@ -1276,7 +2241,13 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.draggedNodePubkey = pubkey
     this.cancelHighlightTransition()
     this.setNodeDragEdgeRendering(true)
-    this.setGraphBoundsLocked(true)
+    this.lockGraphBoundsPreservingViewport(graphBoundsBBox)
+    const currentNodePosition =
+      this.renderStore.getNodePosition(pubkey) ??
+      this.physicsStore.getNodePosition(pubkey)
+    this.dragAnchorOffset = anchorOffset
+      ? { dx: anchorOffset.dx, dy: anchorOffset.dy }
+      : { dx: 0, dy: 0 }
     this.shouldPinDraggedNodeOnRelease = false
     this.markMotion()
     this.dragHopDistances = buildDragHopDistances(
@@ -1291,14 +2262,29 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.dragInfluenceConfig,
     )
     this.lastDragGraphPosition =
-      this.renderStore.getNodePosition(pubkey) ??
-      this.physicsStore.getNodePosition(pubkey)
+      currentNodePosition
     this.lastDragFlushTimestamp = null
     this.cancelPendingDragFrame()
     this.physicsStore.setNodeFixed(pubkey, true)
     this.forceRuntime?.suspend()
     this.cancelPendingHoverFocus()
     this.applyHoverFocusSnapshot(pubkey, this.draggedNodeFocus)
+    this.traceRendererEvent('startDrag', {
+      pubkey,
+      anchorOffset: this.dragAnchorOffset,
+      anchorViewportOrigin,
+      graphBoundsBBox,
+      dragHopDistanceCount: this.dragHopDistances.size,
+    })
+    this.recordDragTimelineEvent('promote', {
+      pubkey,
+      pointerViewport: anchorViewportOrigin,
+      details: {
+        anchorOffset: this.dragAnchorOffset,
+        currentNodePosition,
+        dragHopDistanceCount: this.dragHopDistances.size,
+      },
+    })
     this.callbacks.onNodeDragStart(pubkey)
   }
 
@@ -1309,6 +2295,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.setNodeDragEdgeRendering(false)
       this.setCameraLocked(false)
       this.setGraphBoundsLocked(false)
+      this.cancelPendingGraphBoundsUnlock()
       this.cancelPendingDragFrame()
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
@@ -1325,6 +2312,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const draggedNodePubkey = this.draggedNodePubkey
     const shouldPinOnRelease =
       options?.pinOnRelease ?? this.shouldPinDraggedNodeOnRelease
+    const keepReleasedNodeFixed =
+      shouldPinOnRelease ||
+      (this.scene?.render.pins.pubkeys ?? []).includes(draggedNodePubkey)
+    const releaseViewportPosition = this.getViewportPosition(draggedNodePubkey)
+    const releaseSyncPubkeys =
+      this.collectReleasePhysicsSyncPubkeys(draggedNodePubkey)
 
     // Drain residual spring velocities before resuming FA2 so small clusters
     // don't get kicked out by leftover momentum from the influence engine.
@@ -1332,15 +2325,28 @@ export class SigmaRendererAdapter implements RendererAdapter {
       dampInfluenceVelocities(this.dragInfluenceState, 0.2)
     }
 
-    releaseDraggedNode(
-      this.physicsStore,
-      draggedNodePubkey,
-      shouldPinOnRelease
-        ? [draggedNodePubkey]
-        : (this.scene?.render.pins.pubkeys ?? []),
-    )
+    const releasePosition =
+      this.renderStore.getNodePosition(draggedNodePubkey) ??
+      this.physicsStore.getNodePosition(draggedNodePubkey)
+    if (releasePosition) {
+      this.rememberReleasedNodePosition(draggedNodePubkey, releasePosition)
+    } else {
+      releaseDraggedNode(
+        this.physicsStore,
+        draggedNodePubkey,
+        shouldPinOnRelease
+          ? [draggedNodePubkey]
+          : (this.scene?.render.pins.pubkeys ?? []),
+      )
+    }
+    const releaseSyncedVisible =
+      releaseSyncPubkeys.length > 0
+        ? this.syncPhysicsPositionsToRenderForPubkeys(releaseSyncPubkeys)
+        : false
+    if (releaseSyncedVisible) {
+      this.nodeHitTester?.markDirty()
+    }
     this.setCameraLocked(false)
-    const releasePosition = this.renderStore.getNodePosition(draggedNodePubkey)
     this.dragHopDistances = new Map()
     this.dragInfluenceState = null
     this.lastDragGraphPosition = null
@@ -1360,14 +2366,61 @@ export class SigmaRendererAdapter implements RendererAdapter {
     // Dragging edits graph coordinates while FA2 is suspended, so the last
     // convergence signal is no longer valid even if topology/settings stayed
     // the same. Resume from the current coordinates and let FA2 settle again.
-    if (this.resumePhysicsAfterDrag) {
+    const shouldResumePhysicsAfterRelease = this.resumePhysicsAfterDrag
+    if (shouldResumePhysicsAfterRelease) {
       this.forceRuntime?.resume({ invalidateConvergence: true })
+      this.recordDragTimelineEvent('physics-resume', {
+        pubkey: draggedNodePubkey,
+        details: { invalidateConvergence: true },
+      })
       this.ensurePhysicsPositionBridge()
     } else {
       this.cancelPhysicsPositionBridge()
     }
     this.resumePhysicsAfterDrag = true
     this.safeRender()
+    if (this.isGraphBoundsLocked) {
+      this.scheduleGraphBoundsUnlockAfterRelease(
+        draggedNodePubkey,
+        releaseSyncPubkeys,
+        keepReleasedNodeFixed,
+      )
+    } else {
+      const manualFixedLockCleared = this.clearManualDragFixedNode(
+        draggedNodePubkey,
+        keepReleasedNodeFixed,
+      )
+      if (
+        manualFixedLockCleared &&
+        shouldResumePhysicsAfterRelease &&
+        typeof this.forceRuntime?.reheat === 'function'
+      ) {
+        this.forceRuntime.reheat()
+      }
+    }
+    this.traceRendererEvent('releaseDrag', {
+      draggedNodePubkey,
+      shouldPinOnRelease,
+      releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+      releaseSyncedVisible,
+      releaseViewportPosition,
+      releaseGraphPosition: releasePosition,
+      manualDragFixedNodeCount: this.manualDragFixedNodes.size,
+      graphBoundsUnlockScheduled: this.pendingGraphBoundsUnlockFrame !== null,
+    })
+    this.recordDragTimelineEvent('release', {
+      pubkey: draggedNodePubkey,
+      pointerViewport: releaseViewportPosition,
+      details: {
+        shouldPinOnRelease,
+        releaseSyncPubkeyCount: releaseSyncPubkeys.length,
+        releaseSyncedVisible,
+        releaseGraphPosition: releasePosition,
+        manualDragFixedNodeCount: this.manualDragFixedNodes.size,
+        graphBoundsUnlockScheduled:
+          this.pendingGraphBoundsUnlockFrame !== null,
+      },
+    })
 
     if (isMobileGraphInteractionMode()) {
       this.clearInteractiveRendererFocus({ notifySelection: true })
@@ -1667,6 +2720,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.nodeHitTester?.markDirty()
     }
 
+    this.applyManualDragFixedNodes()
+
     if (draggedNodePubkey) {
       this.dragHopDistances = buildDragHopDistances(
         this.physicsStore.getGraph(),
@@ -1690,7 +2745,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.dragInfluenceState = null
     }
 
-    this.forceRuntime.sync(scene.physics, {
+    this.forceRuntime.sync(this.createPhysicsSceneWithManualDragFixes(scene.physics), {
       topologyChanged: physicsApplyResult.topologyChanged,
     })
     this.ensurePhysicsPositionBridge()
@@ -1702,6 +2757,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.handleTouchGestureEnd()
     this.releaseDrag()
     this.cancelPendingDragFrame()
+    this.cancelPendingGraphBoundsUnlock()
     this.cancelPhysicsPositionBridge()
     if (this.pendingHighlightTransitionFrame !== null) {
       cancelAnimationFrame(this.pendingHighlightTransitionFrame)
@@ -2228,6 +3284,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     })
 
     sigma.on('downNode', ({ node, event }) => {
+      const graphBoundsBBox = cloneSigmaGraphExtent(sigma.getBBox())
       this.setCameraLocked(true)
       const nodePosition =
         this.renderStore?.getNodePosition(node) ??
@@ -2243,10 +3300,21 @@ export class SigmaRendererAdapter implements RendererAdapter {
             dy: nodePosition.y - originGraph.y,
           }
         : { dx: 0, dy: 0 }
-      this.pendingDragGesture = createPendingNodeDragGesture(node, {
-        x: event.x,
-        y: event.y,
-      }, anchorOffset)
+      this.pendingDragGesture = createPendingNodeDragGesture(
+        node,
+        {
+          x: event.x,
+          y: event.y,
+        },
+        anchorOffset,
+        graphBoundsBBox,
+      )
+      this.recordDragTimelineEvent('down', {
+        pubkey: node,
+        pointerViewport: { x: event.x, y: event.y },
+        pointerGraph: originGraph,
+        details: { anchorOffset, graphBoundsBBox },
+      })
     })
 
     sigma.on('moveBody', ({ event, preventSigmaDefault }) => {
@@ -2274,13 +3342,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
         }
 
         preventSigmaDefault()
-        const currentGraphPosition = sigma.viewportToGraph({
+        const promotedGraphPosition = sigma.viewportToGraph({
           x: event.x,
           y: event.y,
         })
-        this.startDrag(pendingDragGesture.pubkey, pendingDragGesture.anchorOffset)
+        this.startDrag(
+          pendingDragGesture.pubkey,
+          pendingDragGesture.anchorOffset,
+          pendingDragGesture.origin,
+          pendingDragGesture.graphBoundsBBox,
+        )
         this.pendingDragGesture = null
-        this.scheduleDragFrame(currentGraphPosition)
+        this.scheduleDragFrame(promotedGraphPosition)
         return
       } else {
         preventSigmaDefault()
@@ -2684,61 +3757,86 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.isCameraLocked = false
   }
 
-  private readonly setGraphBoundsLocked = (locked: boolean) => {
+  private captureRenderGraphBBox(): SigmaGraphExtent | null {
+    const graph = this.renderStore?.getGraph()
+    if (!graph || graph.order === 0) {
+      return null
+    }
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+
+    graph.forEachNode((_pubkey, attributes) => {
+      if (!Number.isFinite(attributes.x) || !Number.isFinite(attributes.y)) {
+        return
+      }
+
+      minX = Math.min(minX, attributes.x)
+      minY = Math.min(minY, attributes.y)
+      maxX = Math.max(maxX, attributes.x)
+      maxY = Math.max(maxY, attributes.y)
+    })
+
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY)
+    ) {
+      return null
+    }
+
+    if (minX === maxX) {
+      minX -= 0.5
+      maxX += 0.5
+    }
+    if (minY === maxY) {
+      minY -= 0.5
+      maxY += 0.5
+    }
+
+    return {
+      x: [minX, maxX],
+      y: [minY, maxY],
+    }
+  }
+
+  private readonly setGraphBoundsLocked = (
+    locked: boolean,
+    graphBoundsBBox?: SigmaGraphExtent | null,
+  ) => {
     if (!this.sigma || this.isGraphBoundsLocked === locked) {
       return
     }
 
     if (locked) {
-      const bbox = this.sigma.getBBox()
-      const sigmaWithViewport = this.sigma as Sigma<
-        RenderNodeAttributes,
-        RenderEdgeAttributes
-      > & {
-        getDimensions?: () => { width: number; height: number }
-        viewportToGraph?: (point: { x: number; y: number }) => {
-          x: number
-          y: number
-        }
-      }
-      const dimensions =
-        typeof sigmaWithViewport.getDimensions === 'function'
-          ? sigmaWithViewport.getDimensions()
-          : this.container
-            ? {
-                width: this.container.offsetWidth,
-                height: this.container.offsetHeight,
-              }
-            : null
-      const viewportGraphCorners =
-        dimensions &&
-        typeof sigmaWithViewport.viewportToGraph === 'function'
-          ? [
-              sigmaWithViewport.viewportToGraph({ x: 0, y: 0 }),
-              sigmaWithViewport.viewportToGraph({ x: dimensions.width, y: 0 }),
-              sigmaWithViewport.viewportToGraph({ x: 0, y: dimensions.height }),
-              sigmaWithViewport.viewportToGraph({
-                x: dimensions.width,
-                y: dimensions.height,
-              }),
-            ]
-          : []
-      const minX = Math.min(bbox.x[0], ...viewportGraphCorners.map((point) => point.x))
-      const maxX = Math.max(bbox.x[1], ...viewportGraphCorners.map((point) => point.x))
-      const minY = Math.min(bbox.y[0], ...viewportGraphCorners.map((point) => point.y))
-      const maxY = Math.max(bbox.y[1], ...viewportGraphCorners.map((point) => point.y))
-      const paddingX = Math.max(maxX - minX, 1)
-      const paddingY = Math.max(maxY - minY, 1)
-      this.sigma.setCustomBBox({
-        x: [minX - paddingX, maxX + paddingX],
-        y: [minY - paddingY, maxY + paddingY],
-      })
+      const explicitBBox = isUsableSigmaGraphExtent(graphBoundsBBox)
+        ? cloneSigmaGraphExtent(graphBoundsBBox)
+        : null
+      const renderBBox = explicitBBox ? null : this.captureRenderGraphBBox()
+      const bbox = explicitBBox ?? renderBBox ?? this.sigma.getBBox()
+      this.sigma.setCustomBBox(cloneSigmaGraphExtent(bbox))
       this.isGraphBoundsLocked = true
+      this.traceRendererEvent('setGraphBoundsLocked', {
+        locked: true,
+        bbox,
+        source: explicitBBox
+          ? 'pending-drag'
+          : renderBBox
+            ? 'render-store'
+            : 'sigma',
+        mode: 'freeze-current-bbox',
+      })
       return
     }
 
     this.sigma.setCustomBBox(null)
     this.isGraphBoundsLocked = false
+    this.traceRendererEvent('setGraphBoundsLocked', {
+      locked: false,
+    })
   }
 
   private readonly syncPhysicsPositionsToRender = () => {
@@ -3012,6 +4110,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
         this.markMotion()
         this.safeRender()
       }
+      this.traceRendererEvent('flushPhysicsPositionBridge', {
+        syncMode: 'full_settle',
+        changed,
+        renderNodeCount: this.renderStore?.getGraph().order ?? 0,
+        physicsNodeCount: this.physicsStore?.getGraph().order ?? 0,
+      })
       return
     }
 
@@ -3065,6 +4169,16 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.markMotion()
       this.safeRender()
     }
+    this.traceRendererEvent('flushPhysicsPositionBridge', {
+      syncMode,
+      changed,
+      priorityNodeCount: priorityPubkeys.length,
+      visibleRenderNodeCount: priority.visibleRenderNodeCount,
+      visibleRenderSyncedNodeCount: priority.visibleRenderSyncedNodeCount,
+      avatarVisibleNodeCount: priority.avatarVisibleNodeCount,
+      backgroundSyncedNodeCount: priority.backgroundSyncedNodeCount,
+      physicsNodeCount,
+    })
 
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(
       this.flushPhysicsPositionBridge,
@@ -3079,6 +4193,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return
     }
 
+    this.recordDragTimelineEvent('physics-bridge', {
+      pubkey: this.draggedNodePubkey ?? this.lastReleasedNodePubkey,
+      details: { action: 'schedule' },
+    })
     this.pendingPhysicsBridgeFrame = requestAnimationFrame(
       this.flushPhysicsPositionBridge,
     )

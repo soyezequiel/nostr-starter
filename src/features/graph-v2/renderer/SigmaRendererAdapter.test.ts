@@ -14,10 +14,112 @@ import type {
   GraphSceneSnapshot,
 } from '@/features/graph-v2/renderer/contracts'
 
+globalThis.WebGL2RenderingContext ??= class {} as typeof WebGL2RenderingContext
+globalThis.WebGLRenderingContext ??= class {} as typeof WebGLRenderingContext
+
 const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const assertClosePoint = (
+  actual: { x: number; y: number },
+  expected: { x: number; y: number },
+  epsilon = 0.001,
+) => {
+  assert.ok(
+    Math.abs(actual.x - expected.x) <= epsilon,
+    `expected x ${actual.x} to be within ${epsilon} of ${expected.x}`,
+  )
+  assert.ok(
+    Math.abs(actual.y - expected.y) <= epsilon,
+    `expected y ${actual.y} to be within ${epsilon} of ${expected.y}`,
+  )
+}
+
+const createProjectionAwareSigmaMock = () => {
+  type BBox = { x: [number, number]; y: [number, number] }
+  const dimensions = { width: 1000, height: 1000 }
+  const graphBBox: BBox = { x: [0, 500], y: [0, 500] }
+  let customBBox: BBox | null = { x: [0, 100], y: [0, 100] }
+  let cameraState = { x: 0.5, y: 0.5, ratio: 1, angle: 0 }
+
+  const normalize = (point: { x: number; y: number }, bbox: BBox) => {
+    const width = bbox.x[1] - bbox.x[0]
+    const height = bbox.y[1] - bbox.y[0]
+    const ratio = Math.max(width, height, 1)
+    const centerX = (bbox.x[0] + bbox.x[1]) / 2
+    const centerY = (bbox.y[0] + bbox.y[1]) / 2
+    return {
+      x: 0.5 + (point.x - centerX) / ratio,
+      y: 0.5 + (point.y - centerY) / ratio,
+    }
+  }
+
+  const denormalize = (point: { x: number; y: number }, bbox: BBox) => {
+    const width = bbox.x[1] - bbox.x[0]
+    const height = bbox.y[1] - bbox.y[0]
+    const ratio = Math.max(width, height, 1)
+    const centerX = (bbox.x[0] + bbox.x[1]) / 2
+    const centerY = (bbox.y[0] + bbox.y[1]) / 2
+    return {
+      x: centerX + ratio * (point.x - 0.5),
+      y: centerY + ratio * (point.y - 0.5),
+    }
+  }
+
+  const activeBBox = () => customBBox ?? graphBBox
+
+  return {
+    getSetting: (key: string) => {
+      if (key === 'autoRescale') return true
+      if (key === 'stagePadding') return 0
+      if (key === 'hideEdgesOnMove') return false
+      return undefined
+    },
+    setSetting: () => {},
+    getDimensions: () => dimensions,
+    getBBox: () => graphBBox,
+    getCustomBBox: () => customBBox,
+    viewportToGraph: (point: { x: number; y: number }) => {
+      const normalized = {
+        x:
+          cameraState.x +
+          ((point.x - dimensions.width / 2) * cameraState.ratio) /
+            dimensions.width,
+        y:
+          cameraState.y -
+          ((point.y - dimensions.height / 2) * cameraState.ratio) /
+            dimensions.height,
+      }
+      return denormalize(normalized, activeBBox())
+    },
+    graphToViewport: (point: { x: number; y: number }) => {
+      const normalized = normalize(point, activeBBox())
+      return {
+        x:
+          dimensions.width / 2 +
+          ((normalized.x - cameraState.x) * dimensions.width) /
+            cameraState.ratio,
+        y:
+          dimensions.height / 2 -
+          ((normalized.y - cameraState.y) * dimensions.height) /
+            cameraState.ratio,
+      }
+    },
+    setCustomBBox: (bbox: BBox | null) => {
+      customBBox = bbox
+    },
+    getCamera: () => ({
+      enable: () => {},
+      getState: () => cameraState,
+      getBoundedRatio: (ratio: number) => ratio,
+      setState: (state: typeof cameraState) => {
+        cameraState = { ...cameraState, ...state }
+      },
+    }),
+  }
+}
 
 test('avatar image toggle disables and re-enables the avatar budget', async () => {
   const originalWebGL2RenderingContext = globalThis.WebGL2RenderingContext
@@ -1391,6 +1493,12 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   let bridgeCancels = 0
   let renderCalls = 0
   const fixedUpdates: Array<{ pubkey: string; pinned: boolean }> = []
+  const physicsPositionUpdates: Array<{
+    pubkey: string
+    x: number
+    y: number
+    fixed?: boolean
+  }> = []
   const dragEnds: Array<{
     position: { x: number; y: number }
     options?: { pinNode?: boolean }
@@ -1448,7 +1556,10 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
     setNodeFixed: (pubkey, pinned) => {
       fixedUpdates.push({ pubkey, pinned })
     },
-    setNodePosition: () => false,
+    setNodePosition: (pubkey, x, y, fixed) => {
+      physicsPositionUpdates.push({ pubkey, x, y, fixed })
+      return false
+    },
   }
   adapter.callbacks = {
     onNodeClick: () => {},
@@ -1495,13 +1606,415 @@ test('releaseDrag keeps physics paused when drag started from a suspended runtim
   assert.equal(renderCalls, 1)
   assert.equal(adapter.draggedNodePubkey, null)
   assert.equal(adapter.resumePhysicsAfterDrag, true)
-  assert.deepEqual(fixedUpdates, [{ pubkey: 'alice', pinned: false }])
+  assert.deepEqual(fixedUpdates, [])
+  assert.deepEqual(physicsPositionUpdates, [
+    { pubkey: 'alice', x: 10, y: 20, fixed: true },
+    { pubkey: 'alice', x: 10, y: 20, fixed: false },
+  ])
   assert.deepEqual(dragEnds, [
     { position: { x: 10, y: 20 }, options: { pinNode: false } },
   ])
 })
 
-test('releaseDrag keeps graph bounds locked so root drop stays visually stable', async () => {
+test('releaseDrag keeps root drop stable, then unlocks graph bounds', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const scene = createScene()
+    const ledger = new NodePositionLedger()
+    const renderStore = new RenderGraphStore(ledger)
+    const physicsStore = new PhysicsGraphStore(ledger)
+    renderStore.applyScene(scene.render)
+    physicsStore.applyScene(scene.physics)
+    renderStore.setNodePosition('A', 10, 12)
+    physicsStore.setNodePosition('A', 10, 12, true)
+    renderStore.setNodePosition('D', 80, 90)
+    physicsStore.setNodePosition('D', 80, 90, false)
+
+    const dragEnds: Array<{ x: number; y: number }> = []
+    const sigma = createProjectionAwareSigmaMock()
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: typeof sigma
+      isGraphBoundsLocked: boolean
+      draggedNodePubkey: string | null
+      lastMoveBodyPointer: { x: number; y: number } | null
+      lastDragFlushTimestamp: number | null
+      dragAnchorOffset: { dx: number; dy: number }
+      dragInfluenceState: null
+      resumePhysicsAfterDrag: boolean
+      renderStore: RenderGraphStore
+      physicsStore: PhysicsGraphStore
+      callbacks: GraphInteractionCallbacks
+      forceRuntime: { resume: (_options?: { invalidateConvergence?: boolean }) => void }
+      scene: GraphSceneSnapshot
+      flushPendingDragFrame: () => void
+      cancelPendingDragFrame: () => void
+      cancelPhysicsPositionBridge: () => void
+      ensurePhysicsPositionBridge: () => void
+      safeRender: () => void
+      recalculateHoverAfterDrag: () => void
+      releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+    }
+
+    adapter.sigma = sigma
+    adapter.isGraphBoundsLocked = true
+    adapter.draggedNodePubkey = 'A'
+    adapter.lastMoveBodyPointer = { x: 100, y: 120 }
+    adapter.lastDragFlushTimestamp = null
+    adapter.dragAnchorOffset = { dx: 0, dy: 0 }
+    adapter.dragInfluenceState = null
+    adapter.resumePhysicsAfterDrag = false
+    adapter.renderStore = renderStore
+    adapter.physicsStore = physicsStore
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onNodeDragEnd: (_pubkey, position) => {
+        dragEnds.push(position)
+      },
+    }
+    adapter.forceRuntime = { resume: () => {} }
+    adapter.scene = scene
+    adapter.flushPendingDragFrame = () => {}
+    adapter.cancelPendingDragFrame = () => {}
+    adapter.cancelPhysicsPositionBridge = () => {}
+    adapter.ensurePhysicsPositionBridge = () => {}
+    adapter.safeRender = () => {}
+    adapter.recalculateHoverAfterDrag = () => {}
+    const beforeUnlockViewport = adapter.sigma.graphToViewport(
+      renderStore.getNodePosition('A')!,
+    )
+    const beforeUnlockOtherViewport = adapter.sigma.graphToViewport(
+      renderStore.getNodePosition('D')!,
+    )
+
+    adapter.releaseDrag()
+
+    assert.notEqual(adapter.sigma.getCustomBBox(), null)
+    assert.deepEqual(renderStore.getNodePosition('A'), { x: 10, y: 12 })
+    assert.deepEqual(physicsStore.getNodePosition('A'), { x: 10, y: 12 })
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('A')!),
+      beforeUnlockViewport,
+    )
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!),
+      beforeUnlockOtherViewport,
+    )
+    assert.deepEqual(dragEnds, [{ x: 10, y: 12 }])
+
+    await wait(20)
+
+    assert.equal(adapter.sigma.getCustomBBox(), null)
+    assert.deepEqual(renderStore.getNodePosition('A'), { x: 10, y: 12 })
+    assert.deepEqual(physicsStore.getNodePosition('A'), { x: 10, y: 12 })
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('A')!),
+      beforeUnlockViewport,
+    )
+    assert.deepEqual(renderStore.getNodePosition('D'), { x: 80, y: 90 })
+    assert.deepEqual(physicsStore.getNodePosition('D'), { x: 80, y: 90 })
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!),
+      beforeUnlockOtherViewport,
+    )
+  } finally {
+    restoreAnimationFrame()
+  }
+})
+
+test('releaseDrag force-unlocks graph bounds even when resumed physics keeps running', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const scene = createScene()
+    const ledger = new NodePositionLedger()
+    const renderStore = new RenderGraphStore(ledger)
+    const physicsStore = new PhysicsGraphStore(ledger)
+    renderStore.applyScene(scene.render)
+    physicsStore.applyScene(scene.physics)
+    renderStore.setNodePosition('A', 10, 12)
+    physicsStore.setNodePosition('A', 10, 12, true)
+
+    const sigma = createProjectionAwareSigmaMock()
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: typeof sigma
+      isGraphBoundsLocked: boolean
+      pendingGraphBoundsUnlockFrame: number | null
+      graphBoundsUnlockDeferredCount: number
+      draggedNodePubkey: string | null
+      lastMoveBodyPointer: { x: number; y: number } | null
+      lastDragFlushTimestamp: number | null
+      dragAnchorOffset: { dx: number; dy: number }
+      dragInfluenceState: null
+      resumePhysicsAfterDrag: boolean
+      renderStore: RenderGraphStore
+      physicsStore: PhysicsGraphStore
+      callbacks: GraphInteractionCallbacks
+      forceRuntime: {
+        resume: (_options?: { invalidateConvergence?: boolean }) => void
+        isRunning: () => boolean
+        isSuspended: () => boolean
+      }
+      scene: GraphSceneSnapshot
+      flushPendingDragFrame: () => void
+      cancelPendingDragFrame: () => void
+      cancelPhysicsPositionBridge: () => void
+      ensurePhysicsPositionBridge: () => void
+      safeRender: () => void
+      recalculateHoverAfterDrag: () => void
+      getRenderInvalidationState: () => {
+        pendingGraphBoundsUnlockFrame: boolean
+        graphBoundsLocked: boolean
+        graphBoundsUnlockDeferredCount: number
+      }
+      releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+    }
+
+    adapter.sigma = sigma
+    adapter.isGraphBoundsLocked = true
+    adapter.pendingGraphBoundsUnlockFrame = null
+    adapter.graphBoundsUnlockDeferredCount = 0
+    adapter.draggedNodePubkey = 'A'
+    adapter.lastMoveBodyPointer = { x: 100, y: 120 }
+    adapter.lastDragFlushTimestamp = null
+    adapter.dragAnchorOffset = { dx: 0, dy: 0 }
+    adapter.dragInfluenceState = null
+    adapter.resumePhysicsAfterDrag = true
+    adapter.renderStore = renderStore
+    adapter.physicsStore = physicsStore
+    adapter.callbacks = createCallbacks(() => {})
+    adapter.forceRuntime = {
+      resume: () => {},
+      isRunning: () => true,
+      isSuspended: () => false,
+    }
+    adapter.scene = scene
+    adapter.flushPendingDragFrame = () => {}
+    adapter.cancelPendingDragFrame = () => {}
+    adapter.cancelPhysicsPositionBridge = () => {}
+    adapter.ensurePhysicsPositionBridge = () => {}
+    adapter.safeRender = () => {}
+    adapter.recalculateHoverAfterDrag = () => {}
+
+    adapter.releaseDrag()
+    await wait(240)
+
+    assert.equal(adapter.sigma.getCustomBBox(), null)
+    assert.equal(adapter.isGraphBoundsLocked, false)
+    assert.equal(adapter.draggedNodePubkey, null)
+    assert.equal(adapter.pendingGraphBoundsUnlockFrame, null)
+    assert.equal(adapter.graphBoundsUnlockDeferredCount, 0)
+    assert.equal(
+      adapter.getRenderInvalidationState().pendingGraphBoundsUnlockFrame,
+      false,
+    )
+    assert.equal(adapter.getRenderInvalidationState().graphBoundsLocked, false)
+  } finally {
+    restoreAnimationFrame()
+  }
+})
+
+test('releaseDrag unlocks graph bounds after resumed physics settles', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const scene = createScene()
+    const ledger = new NodePositionLedger()
+    const renderStore = new RenderGraphStore(ledger)
+    const physicsStore = new PhysicsGraphStore(ledger)
+    renderStore.applyScene(scene.render)
+    physicsStore.applyScene(scene.physics)
+    renderStore.setNodePosition('A', 10, 12)
+    physicsStore.setNodePosition('A', 10, 12, true)
+    renderStore.setNodePosition('D', 80, 90)
+    physicsStore.setNodePosition('D', 80, 90, false)
+
+    let physicsRunning = true
+    const sigma = createProjectionAwareSigmaMock()
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: typeof sigma
+      isGraphBoundsLocked: boolean
+      graphBoundsUnlockDeferredCount: number
+      draggedNodePubkey: string | null
+      lastMoveBodyPointer: { x: number; y: number } | null
+      lastDragFlushTimestamp: number | null
+      dragAnchorOffset: { dx: number; dy: number }
+      dragInfluenceState: null
+      resumePhysicsAfterDrag: boolean
+      renderStore: RenderGraphStore
+      physicsStore: PhysicsGraphStore
+      callbacks: GraphInteractionCallbacks
+      forceRuntime: {
+        resume: (_options?: { invalidateConvergence?: boolean }) => void
+        isRunning: () => boolean
+        isSuspended: () => boolean
+      }
+      scene: GraphSceneSnapshot
+      flushPendingDragFrame: () => void
+      cancelPendingDragFrame: () => void
+      cancelPhysicsPositionBridge: () => void
+      ensurePhysicsPositionBridge: () => void
+      safeRender: () => void
+      recalculateHoverAfterDrag: () => void
+      releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+    }
+
+    adapter.sigma = sigma
+    adapter.isGraphBoundsLocked = true
+    adapter.graphBoundsUnlockDeferredCount = 0
+    adapter.draggedNodePubkey = 'A'
+    adapter.lastMoveBodyPointer = { x: 100, y: 120 }
+    adapter.lastDragFlushTimestamp = null
+    adapter.dragAnchorOffset = { dx: 0, dy: 0 }
+    adapter.dragInfluenceState = null
+    adapter.resumePhysicsAfterDrag = true
+    adapter.renderStore = renderStore
+    adapter.physicsStore = physicsStore
+    adapter.callbacks = createCallbacks(() => {})
+    adapter.forceRuntime = {
+      resume: () => {},
+      isRunning: () => physicsRunning,
+      isSuspended: () => false,
+    }
+    adapter.scene = scene
+    adapter.flushPendingDragFrame = () => {}
+    adapter.cancelPendingDragFrame = () => {}
+    adapter.cancelPhysicsPositionBridge = () => {}
+    adapter.ensurePhysicsPositionBridge = () => {}
+    adapter.safeRender = () => {}
+    adapter.recalculateHoverAfterDrag = () => {}
+
+    const beforeUnlockViewport = adapter.sigma.graphToViewport(
+      renderStore.getNodePosition('A')!,
+    )
+    const beforeUnlockOtherViewport = adapter.sigma.graphToViewport(
+      renderStore.getNodePosition('D')!,
+    )
+
+    adapter.releaseDrag()
+    physicsRunning = false
+    await wait(20)
+
+    assert.equal(adapter.sigma.getCustomBBox(), null)
+    assert.equal(adapter.isGraphBoundsLocked, false)
+    assert.equal(adapter.graphBoundsUnlockDeferredCount, 0)
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('A')!),
+      beforeUnlockViewport,
+    )
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!),
+      beforeUnlockOtherViewport,
+    )
+  } finally {
+    restoreAnimationFrame()
+  }
+})
+
+test('releaseDrag preserves non-root anchor offset under locked graph bounds', async () => {
+  const restoreAnimationFrame = installAnimationFrameStub()
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  try {
+    const scene = createScene()
+    const ledger = new NodePositionLedger()
+    const renderStore = new RenderGraphStore(ledger)
+    const physicsStore = new PhysicsGraphStore(ledger)
+    renderStore.applyScene(scene.render)
+    physicsStore.applyScene(scene.physics)
+    renderStore.setNodePosition('D', 15, 9)
+    physicsStore.setNodePosition('D', 15, 9, true)
+
+    const dragEnds: Array<{ x: number; y: number }> = []
+    const sigma = createProjectionAwareSigmaMock()
+    const adapter = new SigmaRendererAdapter() as unknown as {
+      sigma: typeof sigma
+      isGraphBoundsLocked: boolean
+      draggedNodePubkey: string | null
+      lastMoveBodyPointer: { x: number; y: number } | null
+      lastDragFlushTimestamp: number | null
+      dragAnchorOffset: { dx: number; dy: number }
+      dragInfluenceState: null
+      resumePhysicsAfterDrag: boolean
+      renderStore: RenderGraphStore
+      physicsStore: PhysicsGraphStore
+      callbacks: GraphInteractionCallbacks
+      forceRuntime: { resume: (_options?: { invalidateConvergence?: boolean }) => void }
+      scene: GraphSceneSnapshot
+      flushPendingDragFrame: () => void
+      cancelPendingDragFrame: () => void
+      cancelPhysicsPositionBridge: () => void
+      ensurePhysicsPositionBridge: () => void
+      safeRender: () => void
+      recalculateHoverAfterDrag: () => void
+      releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+    }
+
+    adapter.sigma = sigma
+    adapter.isGraphBoundsLocked = true
+    adapter.draggedNodePubkey = 'D'
+    adapter.lastMoveBodyPointer = { x: 100, y: 120 }
+    adapter.lastDragFlushTimestamp = null
+    adapter.dragAnchorOffset = { dx: 5, dy: -3 }
+    adapter.dragInfluenceState = null
+    adapter.resumePhysicsAfterDrag = false
+    adapter.renderStore = renderStore
+    adapter.physicsStore = physicsStore
+    adapter.callbacks = {
+      ...createCallbacks(() => {}),
+      onNodeDragEnd: (_pubkey, position) => {
+        dragEnds.push(position)
+      },
+    }
+    adapter.forceRuntime = { resume: () => {} }
+    adapter.scene = scene
+    adapter.flushPendingDragFrame = () => {}
+    adapter.cancelPendingDragFrame = () => {}
+    adapter.cancelPhysicsPositionBridge = () => {}
+    adapter.ensurePhysicsPositionBridge = () => {}
+    adapter.safeRender = () => {}
+    adapter.recalculateHoverAfterDrag = () => {}
+    const beforeUnlockViewport = adapter.sigma.graphToViewport(
+      renderStore.getNodePosition('D')!,
+    )
+
+    adapter.releaseDrag()
+
+    assert.notEqual(adapter.sigma.getCustomBBox(), null)
+    assert.deepEqual(renderStore.getNodePosition('D'), { x: 15, y: 9 })
+    assert.deepEqual(physicsStore.getNodePosition('D'), { x: 15, y: 9 })
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!),
+      beforeUnlockViewport,
+    )
+    assert.deepEqual(dragEnds, [{ x: 15, y: 9 }])
+
+    await wait(20)
+
+    assert.equal(adapter.sigma.getCustomBBox(), null)
+    assert.deepEqual(renderStore.getNodePosition('D'), { x: 15, y: 9 })
+    assert.deepEqual(physicsStore.getNodePosition('D'), { x: 15, y: 9 })
+    assertClosePoint(
+      adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!),
+      beforeUnlockViewport,
+    )
+  } finally {
+    restoreAnimationFrame()
+  }
+})
+
+test('releaseDrag syncs visible non-dragged nodes before physics resumes', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
@@ -1512,18 +2025,18 @@ test('releaseDrag keeps graph bounds locked so root drop stays visually stable',
   const physicsStore = new PhysicsGraphStore(ledger)
   renderStore.applyScene(scene.render)
   physicsStore.applyScene(scene.physics)
-  renderStore.setNodePosition('A', 10, 12)
-  physicsStore.setNodePosition('A', 10, 12, true)
+  renderStore.setNodePosition('A', 0, 0)
+  physicsStore.setNodePosition('A', 25, -10, false)
+  renderStore.setNodePosition('D', 10, 12)
+  physicsStore.setNodePosition('D', 10, 12, true)
 
-  let boundsLocked = true
-  const dragEnds: Array<{ x: number; y: number }> = []
+  let resumeCalls = 0
+  let bridgeEnsures = 0
   const adapter = new SigmaRendererAdapter() as unknown as {
     sigma: {
       getSetting: (key: 'hideEdgesOnMove') => boolean
       setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
-      viewportToGraph: (_point: { x: number; y: number }) => { x: number; y: number }
-      graphToViewport: (_point: { x: number; y: number }) => { x: number; y: number }
-      setCustomBBox: (_bbox: { x: [number, number]; y: [number, number] } | null) => void
+      graphToViewport: (point: { x: number; y: number }) => { x: number; y: number }
       getCamera: () => { enable: () => void }
     }
     isGraphBoundsLocked: boolean
@@ -1533,10 +2046,15 @@ test('releaseDrag keeps graph bounds locked so root drop stays visually stable',
     dragAnchorOffset: { dx: number; dy: number }
     dragInfluenceState: null
     resumePhysicsAfterDrag: boolean
+    positionLedger: NodePositionLedger
     renderStore: RenderGraphStore
     physicsStore: PhysicsGraphStore
     callbacks: GraphInteractionCallbacks
-    forceRuntime: { resume: (_options?: { invalidateConvergence?: boolean }) => void }
+    forceRuntime: {
+      resume: (_options?: { invalidateConvergence?: boolean }) => void
+      isRunning: () => boolean
+      isSuspended: () => boolean
+    }
     scene: GraphSceneSnapshot
     flushPendingDragFrame: () => void
     cancelPendingDragFrame: () => void
@@ -1550,151 +2068,238 @@ test('releaseDrag keeps graph bounds locked so root drop stays visually stable',
   adapter.sigma = {
     getSetting: () => false,
     setSetting: () => {},
-    viewportToGraph: (point) =>
-      boundsLocked
-        ? { x: point.x / 10, y: point.y / 10 }
-        : { x: point.x / 2, y: point.y / 2 },
-    graphToViewport: (point) =>
-      boundsLocked
-        ? { x: point.x * 10, y: point.y * 10 }
-        : { x: point.x * 2, y: point.y * 2 },
-    setCustomBBox: (bbox) => {
-      boundsLocked = bbox !== null
-    },
+    graphToViewport: (point) => point,
     getCamera: () => ({ enable: () => {} }),
   }
-  adapter.isGraphBoundsLocked = true
-  adapter.draggedNodePubkey = 'A'
-  adapter.lastMoveBodyPointer = { x: 100, y: 120 }
+  adapter.isGraphBoundsLocked = false
+  adapter.draggedNodePubkey = 'D'
+  adapter.lastMoveBodyPointer = { x: 10, y: 12 }
+  adapter.lastDragFlushTimestamp = null
+  adapter.dragAnchorOffset = { dx: 0, dy: 0 }
+  adapter.dragInfluenceState = null
+  adapter.resumePhysicsAfterDrag = true
+  adapter.positionLedger = ledger
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = createCallbacks(() => {})
+  adapter.forceRuntime = {
+    resume: () => {
+      resumeCalls += 1
+    },
+    isRunning: () => true,
+    isSuspended: () => false,
+  }
+  adapter.scene = scene
+  adapter.flushPendingDragFrame = () => {}
+  adapter.cancelPendingDragFrame = () => {}
+  adapter.cancelPhysicsPositionBridge = () => {}
+  adapter.ensurePhysicsPositionBridge = () => {
+    bridgeEnsures += 1
+  }
+  adapter.safeRender = () => {}
+  adapter.recalculateHoverAfterDrag = () => {}
+
+  adapter.releaseDrag()
+
+  assert.deepEqual(renderStore.getNodePosition('A'), { x: 25, y: -10 })
+  assert.deepEqual(renderStore.getNodePosition('D'), { x: 10, y: 12 })
+  assert.equal(resumeCalls, 1)
+  assert.equal(bridgeEnsures, 1)
+})
+
+test('releaseDrag keeps a non-pinned released node fixed before physics resumes', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+  renderStore.setNodePosition('D', 120, 45)
+  physicsStore.setNodePosition('D', 120, 45, true)
+
+  let resumeSawFixed = false
+  const dragEnds: Array<{
+    pubkey: string
+    position: { x: number; y: number }
+    options?: { pinNode?: boolean }
+  }> = []
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: ReturnType<typeof createProjectionAwareSigmaMock>
+    isGraphBoundsLocked: boolean
+    draggedNodePubkey: string | null
+    lastMoveBodyPointer: { x: number; y: number } | null
+    lastDragFlushTimestamp: number | null
+    dragAnchorOffset: { dx: number; dy: number }
+    dragInfluenceState: null
+    resumePhysicsAfterDrag: boolean
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      resume: (_options?: { invalidateConvergence?: boolean }) => void
+      isRunning: () => boolean
+      isSuspended: () => boolean
+    }
+    scene: GraphSceneSnapshot
+    flushPendingDragFrame: () => void
+    cancelPendingDragFrame: () => void
+    cancelPhysicsPositionBridge: () => void
+    ensurePhysicsPositionBridge: () => void
+    safeRender: () => void
+    recalculateHoverAfterDrag: () => void
+    getDragRuntimeState: () => {
+      lastReleasedNodePubkey: string | null
+      lastReleasedGraphPosition: { x: number; y: number } | null
+      manualDragFixedNodeCount: number
+    }
+    releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+  }
+
+  adapter.sigma = createProjectionAwareSigmaMock()
+  adapter.isGraphBoundsLocked = false
+  adapter.draggedNodePubkey = 'D'
+  adapter.lastMoveBodyPointer = { x: 120, y: 45 }
+  adapter.lastDragFlushTimestamp = null
+  adapter.dragAnchorOffset = { dx: 0, dy: 0 }
+  adapter.dragInfluenceState = null
+  adapter.resumePhysicsAfterDrag = true
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = {
+    ...createCallbacks(() => {}),
+    onNodeDragEnd: (pubkey, position, options) => {
+      dragEnds.push({ pubkey, position, options })
+    },
+  }
+  adapter.forceRuntime = {
+    resume: () => {
+      resumeSawFixed = physicsStore.isNodeFixed('D')
+    },
+    isRunning: () => true,
+    isSuspended: () => false,
+  }
+  adapter.scene = scene
+  adapter.flushPendingDragFrame = () => {}
+  adapter.cancelPendingDragFrame = () => {}
+  adapter.cancelPhysicsPositionBridge = () => {}
+  adapter.ensurePhysicsPositionBridge = () => {}
+  adapter.safeRender = () => {}
+  adapter.recalculateHoverAfterDrag = () => {}
+
+  adapter.releaseDrag()
+
+  assert.equal(resumeSawFixed, true)
+  assert.equal(physicsStore.isNodeFixed('D'), false)
+  assert.deepEqual(renderStore.getNodePosition('D'), { x: 120, y: 45 })
+  assert.deepEqual(physicsStore.getNodePosition('D'), { x: 120, y: 45 })
+  assert.deepEqual(dragEnds, [
+    {
+      pubkey: 'D',
+      position: { x: 120, y: 45 },
+      options: { pinNode: false },
+    },
+  ])
+  assert.equal(adapter.getDragRuntimeState().lastReleasedNodePubkey, 'D')
+  assert.deepEqual(adapter.getDragRuntimeState().lastReleasedGraphPosition, {
+    x: 120,
+    y: 45,
+  })
+  assert.equal(adapter.getDragRuntimeState().manualDragFixedNodeCount, 0)
+})
+
+test('update does not keep a non-pinned released node fixed after release cleanup', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+  renderStore.setNodePosition('D', 120, 45)
+  physicsStore.setNodePosition('D', 120, 45, true)
+
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: ReturnType<typeof createProjectionAwareSigmaMock>
+    isGraphBoundsLocked: boolean
+    draggedNodePubkey: string | null
+    lastMoveBodyPointer: { x: number; y: number } | null
+    lastDragFlushTimestamp: number | null
+    dragAnchorOffset: { dx: number; dy: number }
+    dragInfluenceState: null
+    resumePhysicsAfterDrag: boolean
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      resume: (_options?: { invalidateConvergence?: boolean }) => void
+      sync: (
+        snapshot: GraphSceneSnapshot['physics'],
+        options?: { topologyChanged: boolean },
+      ) => void
+      isRunning: () => boolean
+      isSuspended: () => boolean
+    }
+    scene: GraphSceneSnapshot
+    nodeHitTester: { markDirty: () => void }
+    flushPendingDragFrame: () => void
+    cancelPendingDragFrame: () => void
+    cancelPhysicsPositionBridge: () => void
+    ensurePhysicsPositionBridge: () => void
+    safeRender: () => void
+    safeRefresh: () => void
+    recalculateHoverAfterDrag: () => void
+    releaseDrag: (options?: { pinOnRelease?: boolean }) => void
+    update: (scene: GraphSceneSnapshot) => void
+  }
+
+  let syncSawFixed = false
+  let syncSceneMarkedFixed = false
+  adapter.sigma = createProjectionAwareSigmaMock()
+  adapter.isGraphBoundsLocked = false
+  adapter.draggedNodePubkey = 'D'
+  adapter.lastMoveBodyPointer = { x: 120, y: 45 }
   adapter.lastDragFlushTimestamp = null
   adapter.dragAnchorOffset = { dx: 0, dy: 0 }
   adapter.dragInfluenceState = null
   adapter.resumePhysicsAfterDrag = false
   adapter.renderStore = renderStore
   adapter.physicsStore = physicsStore
-  adapter.callbacks = {
-    ...createCallbacks(() => {}),
-    onNodeDragEnd: (_pubkey, position) => {
-      dragEnds.push(position)
+  adapter.callbacks = createCallbacks(() => {})
+  adapter.forceRuntime = {
+    resume: () => {},
+    sync: (snapshot) => {
+      syncSawFixed = physicsStore.isNodeFixed('D')
+      syncSceneMarkedFixed =
+        snapshot.nodes.find((node) => node.pubkey === 'D')?.fixed ?? false
     },
+    isRunning: () => false,
+    isSuspended: () => false,
   }
-  adapter.forceRuntime = { resume: () => {} }
   adapter.scene = scene
+  adapter.nodeHitTester = { markDirty: () => {} }
   adapter.flushPendingDragFrame = () => {}
   adapter.cancelPendingDragFrame = () => {}
   adapter.cancelPhysicsPositionBridge = () => {}
   adapter.ensurePhysicsPositionBridge = () => {}
   adapter.safeRender = () => {}
+  adapter.safeRefresh = () => {}
   adapter.recalculateHoverAfterDrag = () => {}
-
   adapter.releaseDrag()
 
-  assert.equal(boundsLocked, true)
-  assert.deepEqual(renderStore.getNodePosition('A'), { x: 10, y: 12 })
-  assert.deepEqual(physicsStore.getNodePosition('A'), { x: 10, y: 12 })
-  assert.deepEqual(adapter.sigma.graphToViewport(renderStore.getNodePosition('A')!), {
-    x: 100,
-    y: 120,
-  })
-  assert.deepEqual(dragEnds, [{ x: 10, y: 12 }])
-})
+  renderStore.setNodePosition('D', 999, 999)
+  physicsStore.setNodePosition('D', 999, 999, false)
+  adapter.update(scene)
 
-test('releaseDrag preserves non-root anchor offset under locked graph bounds', async () => {
-  const { SigmaRendererAdapter } = await import(
-    '@/features/graph-v2/renderer/SigmaRendererAdapter'
-  )
-
-  const scene = createScene()
-  const ledger = new NodePositionLedger()
-  const renderStore = new RenderGraphStore(ledger)
-  const physicsStore = new PhysicsGraphStore(ledger)
-  renderStore.applyScene(scene.render)
-  physicsStore.applyScene(scene.physics)
-  renderStore.setNodePosition('D', 15, 9)
-  physicsStore.setNodePosition('D', 15, 9, true)
-
-  let boundsLocked = true
-  const dragEnds: Array<{ x: number; y: number }> = []
-  const adapter = new SigmaRendererAdapter() as unknown as {
-    sigma: {
-      getSetting: (key: 'hideEdgesOnMove') => boolean
-      setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
-      viewportToGraph: (_point: { x: number; y: number }) => { x: number; y: number }
-      graphToViewport: (_point: { x: number; y: number }) => { x: number; y: number }
-      setCustomBBox: (_bbox: { x: [number, number]; y: [number, number] } | null) => void
-      getCamera: () => { enable: () => void }
-    }
-    isGraphBoundsLocked: boolean
-    draggedNodePubkey: string | null
-    lastMoveBodyPointer: { x: number; y: number } | null
-    lastDragFlushTimestamp: number | null
-    dragAnchorOffset: { dx: number; dy: number }
-    dragInfluenceState: null
-    resumePhysicsAfterDrag: boolean
-    renderStore: RenderGraphStore
-    physicsStore: PhysicsGraphStore
-    callbacks: GraphInteractionCallbacks
-    forceRuntime: { resume: (_options?: { invalidateConvergence?: boolean }) => void }
-    scene: GraphSceneSnapshot
-    flushPendingDragFrame: () => void
-    cancelPendingDragFrame: () => void
-    cancelPhysicsPositionBridge: () => void
-    ensurePhysicsPositionBridge: () => void
-    safeRender: () => void
-    recalculateHoverAfterDrag: () => void
-    releaseDrag: (options?: { pinOnRelease?: boolean }) => void
-  }
-
-  adapter.sigma = {
-    getSetting: () => false,
-    setSetting: () => {},
-    viewportToGraph: (point) =>
-      boundsLocked
-        ? { x: point.x / 10, y: point.y / 10 }
-        : { x: point.x / 2, y: point.y / 2 },
-    graphToViewport: (point) =>
-      boundsLocked
-        ? { x: point.x * 10, y: point.y * 10 }
-        : { x: point.x * 2, y: point.y * 2 },
-    setCustomBBox: (bbox) => {
-      boundsLocked = bbox !== null
-    },
-    getCamera: () => ({ enable: () => {} }),
-  }
-  adapter.isGraphBoundsLocked = true
-  adapter.draggedNodePubkey = 'D'
-  adapter.lastMoveBodyPointer = { x: 100, y: 120 }
-  adapter.lastDragFlushTimestamp = null
-  adapter.dragAnchorOffset = { dx: 5, dy: -3 }
-  adapter.dragInfluenceState = null
-  adapter.resumePhysicsAfterDrag = false
-  adapter.renderStore = renderStore
-  adapter.physicsStore = physicsStore
-  adapter.callbacks = {
-    ...createCallbacks(() => {}),
-    onNodeDragEnd: (_pubkey, position) => {
-      dragEnds.push(position)
-    },
-  }
-  adapter.forceRuntime = { resume: () => {} }
-  adapter.scene = scene
-  adapter.flushPendingDragFrame = () => {}
-  adapter.cancelPendingDragFrame = () => {}
-  adapter.cancelPhysicsPositionBridge = () => {}
-  adapter.ensurePhysicsPositionBridge = () => {}
-  adapter.safeRender = () => {}
-  adapter.recalculateHoverAfterDrag = () => {}
-
-  adapter.releaseDrag()
-
-  assert.equal(boundsLocked, true)
-  assert.deepEqual(renderStore.getNodePosition('D'), { x: 15, y: 9 })
-  assert.deepEqual(physicsStore.getNodePosition('D'), { x: 15, y: 9 })
-  assert.deepEqual(adapter.sigma.graphToViewport(renderStore.getNodePosition('D')!), {
-    x: 150,
-    y: 90,
-  })
-  assert.deepEqual(dragEnds, [{ x: 15, y: 9 }])
+  assert.equal(syncSawFixed, false)
+  assert.equal(syncSceneMarkedFixed, false)
+  assert.equal(physicsStore.isNodeFixed('D'), false)
 })
 
 test('node drag temporarily keeps Sigma edge rendering enabled for first-order connections', async () => {
@@ -3732,14 +4337,19 @@ test('small pointer movement before click does not consume node clicks', async (
   }
 })
 
-test('node drag start keeps the down-node anchor and schedules with the pre-start viewport transform', async () => {
+test('node drag start keeps the down-node anchor and schedules with the pre-lock viewport transform', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
   )
 
   const originalWindow = globalThis.window
   const listeners = new Map<string, (event: unknown) => void>()
-  const startDragCalls: Array<{ pubkey: string; anchorOffset?: { dx: number; dy: number } }> = []
+  const startDragCalls: Array<{
+    pubkey: string
+    anchorOffset?: { dx: number; dy: number }
+    anchorViewportOrigin?: { x: number; y: number }
+    graphBoundsBBox?: { x: [number, number]; y: [number, number] } | null
+  }> = []
   const scheduledPositions: Array<{ x: number; y: number }> = []
   let prevented = 0
   let viewportScale = 1
@@ -3747,6 +4357,7 @@ test('node drag start keeps the down-node anchor and schedules with the pre-star
   const adapter = new SigmaRendererAdapter() as unknown as {
     sigma: {
       on: (eventName: string, listener: (event: unknown) => void) => void
+      getBBox: () => { x: [number, number]; y: [number, number] }
       viewportToGraph: (_point: { x: number; y: number }) => { x: number; y: number }
       getCamera: () => {
         on: (eventName: string, listener: (event: unknown) => void) => void
@@ -3756,7 +4367,12 @@ test('node drag start keeps the down-node anchor and schedules with the pre-star
     renderStore: { getNodePosition: (_pubkey: string) => { x: number; y: number } | null } | null
     physicsStore: { getNodePosition: (_pubkey: string) => { x: number; y: number } | null } | null
     callbacks: GraphInteractionCallbacks | null
-    startDrag: (_pubkey: string, _anchorOffset?: { dx: number; dy: number }) => void
+    startDrag: (
+      _pubkey: string,
+      _anchorOffset?: { dx: number; dy: number },
+      _anchorViewportOrigin?: { x: number; y: number },
+      _graphBoundsBBox?: { x: [number, number]; y: [number, number] } | null,
+    ) => void
     scheduleDragFrame: (_position: { x: number; y: number }) => void
     bindEvents: () => void
   }
@@ -3771,6 +4387,7 @@ test('node drag start keeps the down-node anchor and schedules with the pre-star
       on: (eventName, listener) => {
         listeners.set(eventName, listener)
       },
+      getBBox: () => ({ x: [-10, 90], y: [-30, 120] }),
       viewportToGraph: (point) => ({
         x: point.x * viewportScale,
         y: point.y * viewportScale,
@@ -3787,8 +4404,18 @@ test('node drag start keeps the down-node anchor and schedules with the pre-star
       getNodePosition: () => null,
     }
     adapter.callbacks = createCallbacks(() => {})
-    adapter.startDrag = (pubkey, anchorOffset) => {
-      startDragCalls.push({ pubkey, anchorOffset })
+    adapter.startDrag = (
+      pubkey,
+      anchorOffset,
+      anchorViewportOrigin,
+      graphBoundsBBox,
+    ) => {
+      startDragCalls.push({
+        pubkey,
+        anchorOffset,
+        anchorViewportOrigin,
+        graphBoundsBBox,
+      })
       viewportScale = 100
     }
     adapter.scheduleDragFrame = (position) => {
@@ -3810,12 +4437,228 @@ test('node drag start keeps the down-node anchor and schedules with the pre-star
 
     assert.equal(prevented, 1)
     assert.deepEqual(startDragCalls, [
-      { pubkey: 'alice', anchorOffset: { dx: 80, dy: 40 } },
+      {
+        pubkey: 'alice',
+        anchorOffset: { dx: 80, dy: 40 },
+        anchorViewportOrigin: { x: 20, y: 10 },
+        graphBoundsBBox: { x: [-10, 90], y: [-30, 120] },
+      },
     ])
     assert.deepEqual(scheduledPositions, [{ x: 25, y: 14 }])
   } finally {
     globalThis.window = originalWindow
   }
+})
+
+test('startDrag preserves the graph anchor captured before graph bounds lock', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+  renderStore.setNodePosition('A', 100, 50)
+  physicsStore.setNodePosition('A', 100, 50, false)
+
+  let boundsLocked = false
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getSetting: (key: 'hideEdgesOnMove') => boolean
+      setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
+      getBBox: () => { x: [number, number]; y: [number, number] }
+      getDimensions: () => { width: number; height: number }
+      viewportToGraph: (point: { x: number; y: number }) => { x: number; y: number }
+      setCustomBBox: (_bbox: { x: [number, number]; y: [number, number] } | null) => void
+    }
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      isSuspended: () => boolean
+      suspend: () => void
+    }
+    scene: GraphSceneSnapshot
+    dragAnchorOffset: { dx: number; dy: number }
+    startDrag: (
+      pubkey: string,
+      anchorOffset?: { dx: number; dy: number },
+      anchorViewportOrigin?: { x: number; y: number },
+    ) => void
+  }
+
+  adapter.sigma = {
+    getSetting: () => false,
+    setSetting: () => {},
+    getBBox: () => ({ x: [0, 100], y: [0, 100] }),
+    getDimensions: () => ({ width: 100, height: 100 }),
+    viewportToGraph: (point) =>
+      boundsLocked
+        ? { x: point.x * 100, y: point.y * 100 }
+        : { x: point.x, y: point.y },
+    setCustomBBox: (bbox) => {
+      boundsLocked = bbox !== null
+    },
+  }
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = createCallbacks(() => {})
+  adapter.forceRuntime = {
+    isSuspended: () => false,
+    suspend: () => {},
+  }
+  adapter.scene = scene
+
+  adapter.startDrag('A', { dx: 80, dy: 40 }, { x: 20, y: 10 })
+
+  assert.equal(boundsLocked, true)
+  assert.deepEqual(adapter.dragAnchorOffset, { dx: 80, dy: 40 })
+})
+
+test('startDrag freezes the current graph bbox instead of expanding custom bounds', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+  renderStore.setNodePosition('A', -10, 20)
+  renderStore.setNodePosition('D', 90, 120)
+  physicsStore.setNodePosition('A', -10, 20, false)
+  physicsStore.setNodePosition('D', 90, 120, false)
+
+  type BBox = { x: [number, number]; y: [number, number] }
+  const staleSigmaBBox: BBox = { x: [0, 1], y: [0, 1] }
+  const expectedRenderBBox: BBox = { x: [-10, 90], y: [20, 120] }
+  let customBBox: BBox | null = null
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getSetting: (key: 'hideEdgesOnMove') => boolean
+      setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
+      getBBox: () => BBox
+      getDimensions: () => { width: number; height: number }
+      viewportToGraph: (point: { x: number; y: number }) => { x: number; y: number }
+      setCustomBBox: (bbox: BBox | null) => void
+      getCustomBBox: () => BBox | null
+    }
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      isSuspended: () => boolean
+      suspend: () => void
+    }
+    scene: GraphSceneSnapshot
+    startDrag: (pubkey: string) => void
+  }
+
+  adapter.sigma = {
+    getSetting: () => false,
+    setSetting: () => {},
+    getBBox: () => staleSigmaBBox,
+    getDimensions: () => ({ width: 800, height: 600 }),
+    viewportToGraph: (point) => ({
+      x: point.x - 1000,
+      y: point.y + 2000,
+    }),
+    setCustomBBox: (bbox) => {
+      customBBox = bbox
+    },
+    getCustomBBox: () => customBBox,
+  }
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = createCallbacks(() => {})
+  adapter.forceRuntime = {
+    isSuspended: () => false,
+    suspend: () => {},
+  }
+  adapter.scene = scene
+
+  adapter.startDrag('A')
+
+  assert.deepEqual(customBBox, expectedRenderBBox)
+})
+
+test('startDrag prefers the down-time Sigma bbox over render-store bounds', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const scene = createScene()
+  const ledger = new NodePositionLedger()
+  const renderStore = new RenderGraphStore(ledger)
+  const physicsStore = new PhysicsGraphStore(ledger)
+  renderStore.applyScene(scene.render)
+  physicsStore.applyScene(scene.physics)
+  renderStore.setNodePosition('A', -10, 20)
+  renderStore.setNodePosition('D', 90, 120)
+  physicsStore.setNodePosition('A', -10, 20, false)
+  physicsStore.setNodePosition('D', 90, 120, false)
+
+  type BBox = { x: [number, number]; y: [number, number] }
+  const staleSigmaBBox: BBox = { x: [0, 1], y: [0, 1] }
+  const downTimeBBox: BBox = { x: [-180, 219], y: [-435, 434] }
+  let customBBox: BBox | null = null
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    sigma: {
+      getSetting: (key: 'hideEdgesOnMove') => boolean
+      setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
+      getBBox: () => BBox
+      getDimensions: () => { width: number; height: number }
+      viewportToGraph: (point: { x: number; y: number }) => { x: number; y: number }
+      setCustomBBox: (bbox: BBox | null) => void
+      getCustomBBox: () => BBox | null
+    }
+    renderStore: RenderGraphStore
+    physicsStore: PhysicsGraphStore
+    callbacks: GraphInteractionCallbacks
+    forceRuntime: {
+      isSuspended: () => boolean
+      suspend: () => void
+    }
+    scene: GraphSceneSnapshot
+    startDrag: (
+      pubkey: string,
+      anchorOffset?: { dx: number; dy: number },
+      anchorViewportOrigin?: { x: number; y: number },
+      graphBoundsBBox?: BBox | null,
+    ) => void
+  }
+
+  adapter.sigma = {
+    getSetting: () => false,
+    setSetting: () => {},
+    getBBox: () => staleSigmaBBox,
+    getDimensions: () => ({ width: 800, height: 600 }),
+    viewportToGraph: (point) => ({
+      x: point.x - 1000,
+      y: point.y + 2000,
+    }),
+    setCustomBBox: (bbox) => {
+      customBBox = bbox
+    },
+    getCustomBBox: () => customBBox,
+  }
+  adapter.renderStore = renderStore
+  adapter.physicsStore = physicsStore
+  adapter.callbacks = createCallbacks(() => {})
+  adapter.forceRuntime = {
+    isSuspended: () => false,
+    suspend: () => {},
+  }
+  adapter.scene = scene
+
+  adapter.startDrag('A', undefined, undefined, downTimeBBox)
+
+  assert.deepEqual(customBBox, downTimeBBox)
 })
 
 test('node drag release does not request pinning unless control is pressed', async () => {

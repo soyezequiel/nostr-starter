@@ -40,6 +40,10 @@ export interface DebugSelectionState {
 export interface DebugDragRuntimeState {
   draggedNodePubkey: string | null
   pendingDragGesturePubkey: string | null
+  lastReleasedNodePubkey: string | null
+  lastReleasedGraphPosition: DebugNodePosition | null
+  lastReleasedAtMs: number | null
+  manualDragFixedNodeCount: number
   forceAtlasRunning: boolean
   forceAtlasSuspended: boolean
   moveBodyCount: number
@@ -50,6 +54,91 @@ export interface DebugDragRuntimeState {
   influencedNodeCount: number
   maxHopDistance: number | null
   influenceHopSample: DebugInfluenceHopSample[]
+}
+
+export interface DebugProjectionDiagnostics {
+  graphBoundsLocked: boolean
+  cameraLocked: boolean
+  dimensions: {
+    width: number
+    height: number
+  } | null
+  camera: {
+    x: number
+    y: number
+    ratio: number
+    angle?: number
+  } | null
+  bbox: {
+    x: [number, number]
+    y: [number, number]
+  } | null
+  customBBox: {
+    x: [number, number]
+    y: [number, number]
+  } | null
+  customBBoxKnown: boolean
+}
+
+export interface DebugRenderPhysicsPosition {
+  render: DebugNodePosition | null
+  physics: DebugNodePosition | null
+  renderFixed: boolean | null
+  physicsFixed: boolean | null
+}
+
+export interface DebugRenderInvalidationState {
+  pendingContainerRefresh: boolean
+  pendingContainerRefreshFrame: boolean
+  pendingDragFrame: boolean
+  pendingPhysicsBridgeFrame: boolean
+  pendingFitCameraAfterPhysicsFrame: boolean
+  pendingGraphBoundsUnlockFrame: boolean
+  graphBoundsUnlockStartedAtMs: number | null
+  graphBoundsUnlockDeferredCount: number
+  graphBoundsLocked: boolean
+  cameraLocked: boolean
+  forceAtlasRunning: boolean
+  forceAtlasSuspended: boolean
+  lastInvalidation: {
+    action: 'render' | 'refresh' | 'container-refresh' | null
+    atMs: number | null
+  }
+}
+
+export type DebugDragTimelineStage =
+  | 'down'
+  | 'promote'
+  | 'flush'
+  | 'release'
+  | 'unlock-start'
+  | 'unlock-defer'
+  | 'unlock-done'
+  | 'manual-lock-clear'
+  | 'physics-resume'
+  | 'physics-bridge'
+
+export interface DebugDragTimelineEvent {
+  stage: DebugDragTimelineStage
+  timestampMs: number
+  pubkey: string | null
+  pointerViewport: DebugNodePosition | null
+  pointerGraph: DebugNodePosition | null
+  nodeRenderPosition: DebugNodePosition | null
+  nodePhysicsPosition: DebugNodePosition | null
+  nodeViewportPosition: DebugNodePosition | null
+  camera: DebugProjectionDiagnostics['camera']
+  bbox: DebugProjectionDiagnostics['bbox']
+  customBBox: DebugProjectionDiagnostics['customBBox']
+  graphBoundsLocked: boolean
+  pendingGraphBoundsUnlockFrame: boolean
+  graphBoundsUnlockDeferredCount: number
+  manualDragFixedNodeCount: number
+  renderFixed: boolean | null
+  physicsFixed: boolean | null
+  forceAtlasRunning: boolean
+  forceAtlasSuspended: boolean
+  details?: Record<string, unknown>
 }
 
 export interface DebugPhysicsDiagnostics {
@@ -104,6 +193,10 @@ export interface SigmaLabDebugApi {
   isNodeFixed: (pubkey: string) => boolean
   getSelectionState: () => DebugSelectionState
   getDragRuntimeState: () => DebugDragRuntimeState
+  getProjectionDiagnostics: () => DebugProjectionDiagnostics
+  getRenderPhysicsPosition: (pubkey: string) => DebugRenderPhysicsPosition
+  getRenderInvalidationState: () => DebugRenderInvalidationState
+  getDragTimeline: () => DebugDragTimelineEvent[]
   getPhysicsDiagnostics: () => DebugPhysicsDiagnostics | null
 }
 

@@ -15,6 +15,7 @@ import {
   buildRuntimeInspectorSnapshot,
   type RuntimeInspectorBuildInput,
   type RuntimeInspectorMetric,
+  type RuntimeInspectorProjectionDelta,
   type RuntimeInspectorSnapshot,
   type RuntimeInspectorTone,
 } from '@/features/graph-runtime/devtools/runtimeInspector'
@@ -31,6 +32,7 @@ type InspectorSectionId =
   | 'avatars'
   | 'zaps'
   | 'performance'
+  | 'renderer'
   | 'relays'
   | 'load'
 
@@ -62,6 +64,30 @@ interface Props {
 }
 
 const MAX_EVENTS = 18
+const RENDERER_SAMPLE_LIMIT = 12
+
+const rendererRolePriority: Record<
+  RuntimeInspectorSnapshot['renderer']['muestras'][number]['role'],
+  number
+> = {
+  dragged: 6,
+  released: 5,
+  selected: 4,
+  root: 3,
+  hovered: 2,
+  visible: 1,
+}
+
+type RendererDiagnostics = NonNullable<
+  RuntimeInspectorBuildInput['rendererDiagnostics']
+>
+type RendererPoint = { x: number; y: number }
+type RendererPreviousState = {
+  viewports: Map<string, RendererPoint>
+  renders: Map<string, RendererPoint>
+  physics: Map<string, RendererPoint>
+  projection: RendererDiagnostics['projection'] | null
+}
 
 const classForTone = (tone: RuntimeInspectorTone) => {
   switch (tone) {
@@ -123,6 +149,88 @@ const copySnapshotToClipboard = async (snapshot: RuntimeInspectorSnapshot) => {
   }
 }
 
+const formatRuntimeNumber = (value: number | null | undefined, digits = 1) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'sin dato'
+  }
+  return value.toFixed(digits)
+}
+
+const formatRuntimePoint = (
+  point: { x: number; y: number } | null | undefined,
+  digits = 1,
+) => {
+  if (!point) {
+    return 'sin dato'
+  }
+  return `${formatRuntimeNumber(point.x, digits)}, ${formatRuntimeNumber(point.y, digits)}`
+}
+
+const formatRuntimePx = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'sin dato'
+  }
+  return `${formatRuntimeNumber(value, 1)} px`
+}
+
+const distanceBetweenPoints = (
+  left: { x: number; y: number } | null,
+  right: { x: number; y: number } | null,
+) => {
+  if (!left || !right) {
+    return null
+  }
+  return Math.hypot(left.x - right.x, left.y - right.y)
+}
+
+const bboxMaxDelta = (
+  left: RendererDiagnostics['projection']['bbox'],
+  right: RendererDiagnostics['projection']['bbox'],
+) => {
+  if (!left || !right) {
+    return null
+  }
+
+  return Math.max(
+    Math.abs(left.x[0] - right.x[0]),
+    Math.abs(left.x[1] - right.x[1]),
+    Math.abs(left.y[0] - right.y[0]),
+    Math.abs(left.y[1] - right.y[1]),
+  )
+}
+
+const bboxKey = (
+  bbox: RendererDiagnostics['projection']['customBBox'],
+) =>
+  bbox
+    ? `${bbox.x[0]}:${bbox.x[1]}:${bbox.y[0]}:${bbox.y[1]}`
+    : 'null'
+
+const resolveProjectionDelta = (
+  current: RendererDiagnostics['projection'],
+  previous: RendererDiagnostics['projection'] | null,
+): RuntimeInspectorProjectionDelta | null => {
+  if (!previous) {
+    return null
+  }
+
+  return {
+    cameraCenterDelta: distanceBetweenPoints(
+      current.camera,
+      previous.camera,
+    ),
+    cameraRatioDelta:
+      current.camera && previous.camera
+        ? Math.abs(current.camera.ratio - previous.camera.ratio)
+        : null,
+    bboxDelta: bboxMaxDelta(current.bbox, previous.bbox),
+    customBBoxChanged:
+      current.customBBoxKnown && previous.customBBoxKnown
+        ? bboxKey(current.customBBox) !== bboxKey(previous.customBBox)
+        : null,
+  }
+}
+
 const renderMetricList = (metrics: RuntimeInspectorMetric[]) => (
   <div className="sg-runtime__metric-list">
     {metrics.map((metric) => (
@@ -159,6 +267,173 @@ const renderResourceTop = (snapshot: RuntimeInspectorSnapshot) => (
   </div>
 )
 
+const renderRendererSamples = (
+  samples: RuntimeInspectorSnapshot['renderer']['muestras'],
+) => {
+  if (samples.length === 0) {
+    return (
+      <div className="sg-runtime__empty">
+        Sin muestras de nodos para este poll.
+      </div>
+    )
+  }
+
+  return (
+    <div className="sg-runtime__rows">
+      {samples.map((sample) => (
+        <div className="sg-runtime__row" key={`${sample.role}:${sample.pubkey}`}>
+          <span className="sg-runtime__row-title">
+            {sample.pubkey.length > 18
+              ? `${sample.pubkey.slice(0, 10)}...${sample.pubkey.slice(-4)}`
+              : sample.pubkey}
+          </span>
+          <span className="sg-runtime__row-state">{sample.role}</span>
+          <span className="sg-runtime__row-detail">
+            viewport {formatRuntimePoint(sample.viewport)} | render{' '}
+            {formatRuntimePoint(sample.render, 2)} | fisica{' '}
+            {formatRuntimePoint(sample.physics, 2)} | d viewport{' '}
+            {formatRuntimePx(sample.viewportDeltaFromPreviousPx)} | d render{' '}
+            {formatRuntimeNumber(sample.renderDeltaFromPreviousGraph, 2)} | d fisica{' '}
+            {formatRuntimeNumber(sample.physicsDeltaFromPreviousGraph, 2)} | d render/fisica{' '}
+            {formatRuntimeNumber(sample.renderPhysicsDelta, 2)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const collectRendererDiagnostics = (
+  host: SigmaCanvasHostHandle,
+  scene: GraphSceneSnapshot,
+  visiblePubkeys: string[],
+  previous: RendererPreviousState,
+): {
+  diagnostics: RuntimeInspectorBuildInput['rendererDiagnostics']
+  nextState: RendererPreviousState
+} => {
+  const drag = host.getDragRuntimeState()
+  const projection = host.getProjectionDiagnostics()
+  const projectionDeltaFromPrevious = resolveProjectionDelta(
+    projection,
+    previous.projection,
+  )
+  const candidates = new Map<
+    string,
+    RuntimeInspectorSnapshot['renderer']['muestras'][number]['role']
+  >()
+
+  const addCandidate = (
+    pubkey: string | null | undefined,
+    role: RuntimeInspectorSnapshot['renderer']['muestras'][number]['role'],
+  ) => {
+    if (!pubkey) {
+      return
+    }
+    const currentRole = candidates.get(pubkey)
+    if (
+      !currentRole ||
+      rendererRolePriority[role] > rendererRolePriority[currentRole]
+    ) {
+      candidates.set(pubkey, role)
+    }
+  }
+
+  addCandidate(drag.draggedNodePubkey, 'dragged')
+  addCandidate(drag.pendingDragGesturePubkey, 'dragged')
+  addCandidate(drag.lastReleasedNodePubkey, 'released')
+  addCandidate(scene.render.selection.selectedNodePubkey, 'selected')
+  addCandidate(scene.render.cameraHint.rootPubkey, 'root')
+  addCandidate(scene.render.selection.hoveredNodePubkey, 'hovered')
+  for (const pubkey of visiblePubkeys) {
+    addCandidate(pubkey, 'visible')
+    if (candidates.size >= RENDERER_SAMPLE_LIMIT) {
+      break
+    }
+  }
+
+  const orderedCandidates = [...candidates.entries()]
+    .sort(
+      (left, right) =>
+        rendererRolePriority[right[1]] - rendererRolePriority[left[1]],
+    )
+    .slice(0, RENDERER_SAMPLE_LIMIT)
+  const nextViewports = new Map<string, RendererPoint>()
+  const nextRenders = new Map<string, RendererPoint>()
+  const nextPhysics = new Map<string, RendererPoint>()
+  const samples = orderedCandidates.map(([pubkey, role]) => {
+    const viewport = host.getViewportPosition(pubkey)
+    const renderPhysics = host.getRenderPhysicsPosition(pubkey)
+    const previousViewport = previous.viewports.get(pubkey) ?? null
+    const previousRender = previous.renders.get(pubkey) ?? null
+    const previousPhysics = previous.physics.get(pubkey) ?? null
+
+    if (viewport) {
+      nextViewports.set(pubkey, { x: viewport.x, y: viewport.y })
+    }
+    if (renderPhysics.render) {
+      nextRenders.set(pubkey, {
+        x: renderPhysics.render.x,
+        y: renderPhysics.render.y,
+      })
+    }
+    if (renderPhysics.physics) {
+      nextPhysics.set(pubkey, {
+        x: renderPhysics.physics.x,
+        y: renderPhysics.physics.y,
+      })
+    }
+
+    return {
+      pubkey,
+      role,
+      viewport,
+      render: renderPhysics.render,
+      physics: renderPhysics.physics,
+      renderFixed: renderPhysics.renderFixed,
+      physicsFixed: renderPhysics.physicsFixed,
+      renderPhysicsDelta: distanceBetweenPoints(
+        renderPhysics.render,
+        renderPhysics.physics,
+      ),
+      renderDeltaFromPreviousGraph: distanceBetweenPoints(
+        renderPhysics.render,
+        previousRender,
+      ),
+      physicsDeltaFromPreviousGraph: distanceBetweenPoints(
+        renderPhysics.physics,
+        previousPhysics,
+      ),
+      viewportDeltaFromPreviousPx: distanceBetweenPoints(
+        viewport,
+        previousViewport,
+      ),
+    }
+  })
+
+  return {
+    diagnostics: {
+      capturedAtMs: Date.now(),
+      rootPubkey: scene.render.cameraHint.rootPubkey,
+      selectedNodePubkey: scene.render.selection.selectedNodePubkey,
+      hoveredNodePubkey: scene.render.selection.hoveredNodePubkey,
+      drag,
+      projection,
+      previousProjection: previous.projection,
+      projectionDeltaFromPrevious,
+      invalidation: host.getRenderInvalidationState(),
+      timeline: host.getDragTimeline(),
+      samples,
+    },
+    nextState: {
+      viewports: nextViewports,
+      renders: nextRenders,
+      physics: nextPhysics,
+      projection,
+    },
+  }
+}
+
 export function RuntimeInspectorDrawer({
   open,
   onClose,
@@ -181,6 +456,8 @@ export function RuntimeInspectorDrawer({
     useState<RuntimeInspectorBuildInput['avatarRuntimeSnapshot']>(null)
   const [hostPhysicsDiagnostics, setHostPhysicsDiagnostics] =
     useState<RuntimeInspectorBuildInput['physicsDiagnostics']>(null)
+  const [rendererDiagnostics, setRendererDiagnostics] =
+    useState<RuntimeInspectorBuildInput['rendererDiagnostics']>(null)
   const [visibleNodePubkeys, setVisibleNodePubkeys] = useState<string[]>([])
   const [events, setEvents] = useState<RuntimeInspectorEvent[]>([])
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
@@ -193,10 +470,17 @@ export function RuntimeInspectorDrawer({
     avatars: null,
     zaps: null,
     performance: null,
+    renderer: null,
     relays: null,
     load: null,
   })
   const previousSnapshotRef = useRef<RuntimeInspectorSnapshot | null>(null)
+  const previousRendererStateRef = useRef<RendererPreviousState>({
+    viewports: new Map(),
+    renders: new Map(),
+    physics: new Map(),
+    projection: null,
+  })
 
   const uiSignal = useMemo(
     () =>
@@ -231,24 +515,40 @@ export function RuntimeInspectorDrawer({
     const syncSnapshots = () => {
       const host = sigmaHostRef.current
       if (!host) {
+        previousRendererStateRef.current = {
+          viewports: new Map(),
+          renders: new Map(),
+          physics: new Map(),
+          projection: null,
+        }
         startTransition(() => {
           setHostAvatarSnapshot(null)
           setHostPhysicsDiagnostics(null)
+          setRendererDiagnostics(null)
           setVisibleNodePubkeys([])
         })
         return
       }
+      const nextVisibleNodePubkeys = host.getVisibleNodePubkeys()
+      const rendererCapture = collectRendererDiagnostics(
+        host,
+        scene,
+        nextVisibleNodePubkeys,
+        previousRendererStateRef.current,
+      )
+      previousRendererStateRef.current = rendererCapture.nextState
       startTransition(() => {
         setHostAvatarSnapshot(host.getAvatarRuntimeDebugSnapshot())
         setHostPhysicsDiagnostics(host.getPhysicsDiagnostics())
-        setVisibleNodePubkeys(host.getVisibleNodePubkeys())
+        setRendererDiagnostics(rendererCapture.diagnostics)
+        setVisibleNodePubkeys(nextVisibleNodePubkeys)
       })
     }
 
     syncSnapshots()
     const intervalId = window.setInterval(syncSnapshots, 750)
     return () => window.clearInterval(intervalId)
-  }, [open, sigmaHostRef])
+  }, [open, scene, sigmaHostRef])
 
   const generatedAtMs = useMemo(() => {
     const relayCheckMs = uiState.relayState.urls.reduce<number | null>(
@@ -267,6 +567,7 @@ export function RuntimeInspectorDrawer({
       uiState.rootLoad.visibleLinkProgress?.updatedAt ?? null,
       zapSummary.lastUpdatedAt,
       relayCheckMs,
+      rendererDiagnostics?.capturedAtMs ?? null,
     ].filter((value): value is number => value !== null)
 
     return candidates.length > 0 ? Math.max(...candidates) : null
@@ -277,6 +578,7 @@ export function RuntimeInspectorDrawer({
     uiState.rootLoad.visibleLinkProgress?.updatedAt,
     visibleProfileWarmup,
     zapSummary.lastUpdatedAt,
+    rendererDiagnostics?.capturedAtMs,
   ])
 
   const snapshot = useMemo(
@@ -292,6 +594,7 @@ export function RuntimeInspectorDrawer({
         avatarPerfSnapshot,
         avatarRuntimeSnapshot: hostAvatarSnapshot,
         physicsDiagnostics: hostPhysicsDiagnostics,
+        rendererDiagnostics,
         visibleProfileWarmup,
         visibleNodePubkeys,
         liveZapFeedback,
@@ -311,6 +614,7 @@ export function RuntimeInspectorDrawer({
       imageQualityMode,
       liveZapFeedback,
       physicsEnabled,
+      rendererDiagnostics,
       scene,
       sceneState,
       sceneUpdatesPerMinute,
@@ -382,6 +686,14 @@ export function RuntimeInspectorDrawer({
         atLabel: snapshot.generadoA,
         area: 'Zaps',
         message: snapshot.zaps.resumen,
+      })
+    }
+    if (previous.renderer.resumen !== snapshot.renderer.resumen) {
+      nextEvents.push({
+        id: `renderer-${Date.now()}`,
+        atLabel: snapshot.generadoA,
+        area: 'Renderer',
+        message: snapshot.renderer.resumen,
       })
     }
 
@@ -640,6 +952,24 @@ export function RuntimeInspectorDrawer({
               <div className="sg-runtime__subsection">Sospechosos probables</div>
               <div className="sg-runtime__notes">
                 {snapshot.performance.sospechosos.map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
+            </InspectorSection>
+
+            <InspectorSection
+              focused={focusedSection === 'renderer'}
+              onMount={(node) => {
+                sectionRefs.current.renderer = node
+              }}
+              section={snapshot.renderer}
+            >
+              {renderMetricList(snapshot.renderer.metricas)}
+              <div className="sg-runtime__subsection">Muestras render/fisica</div>
+              {renderRendererSamples(snapshot.renderer.muestras)}
+              <div className="sg-runtime__subsection">Notas de captura</div>
+              <div className="sg-runtime__notes">
+                {snapshot.renderer.notas.map((note) => (
                   <p key={note}>{note}</p>
                 ))}
               </div>

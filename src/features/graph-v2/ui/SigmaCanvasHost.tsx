@@ -14,7 +14,14 @@ import { hasRenderableSigmaContainer } from '@/features/graph-v2/renderer/contai
 import type { DragNeighborhoodInfluenceTuning } from '@/features/graph-v2/renderer/dragInfluence'
 import type { ForceAtlasPhysicsTuning } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import type {
+  DebugDragRuntimeState,
+  DebugDragTimelineEvent,
+  DebugNodePosition,
   DebugPhysicsDiagnostics,
+  DebugProjectionDiagnostics,
+  DebugRenderInvalidationState,
+  DebugRenderPhysicsPosition,
+  DebugViewportPosition,
   SigmaLabDebugApi,
 } from '@/features/graph-v2/testing/browserDebug'
 import { ZapElectronOverlay } from '@/features/graph-v2/zaps/zapElectronOverlay'
@@ -60,11 +67,18 @@ export interface SigmaCanvasHostHandle {
   panCameraToGraph: (graphX: number, graphY: number, options?: { animate?: boolean }) => void
   subscribeToCameraTicks: (listener: () => void) => () => void
   subscribeToRenderTicks: (listener: () => void) => () => void
+  getNodePosition: (pubkey: string) => DebugNodePosition | null
+  getViewportPosition: (pubkey: string) => DebugViewportPosition | null
   getVisibleNodePubkeys: () => string[]
   setAvatarDebugDetailsEnabled: (enabled: boolean) => void
   getAvatarRuntimeDebugSnapshot: (options?: {
     includeOverlayNodes?: boolean
   }) => AvatarRuntimeStateDebugSnapshot | null
+  getDragRuntimeState: () => DebugDragRuntimeState
+  getDragTimeline: () => DebugDragTimelineEvent[]
+  getProjectionDiagnostics: () => DebugProjectionDiagnostics
+  getRenderPhysicsPosition: (pubkey: string) => DebugRenderPhysicsPosition
+  getRenderInvalidationState: () => DebugRenderInvalidationState
   getPhysicsDiagnostics: () => DebugPhysicsDiagnostics | null
 }
 
@@ -74,6 +88,59 @@ const BACKDROP_GRID_MAJOR_COLOR = 'oklch(24% 0.012 230 / 0.5)'
 const BACKDROP_GRID_MINOR_COLOR = 'oklch(22% 0.012 230 / 0.35)'
 const BACKDROP_GRID_MAJOR_WIDTH = 1
 const BACKDROP_GRID_MINOR_WIDTH = 0.5
+
+const createEmptyDragRuntimeState = (): DebugDragRuntimeState => ({
+  draggedNodePubkey: null,
+  pendingDragGesturePubkey: null,
+  lastReleasedNodePubkey: null,
+  lastReleasedGraphPosition: null,
+  lastReleasedAtMs: null,
+  manualDragFixedNodeCount: 0,
+  forceAtlasRunning: false,
+  forceAtlasSuspended: false,
+  moveBodyCount: 0,
+  flushCount: 0,
+  lastMoveBodyPointer: null,
+  lastScheduledGraphPosition: null,
+  lastFlushedGraphPosition: null,
+  influencedNodeCount: 0,
+  maxHopDistance: null,
+  influenceHopSample: [],
+})
+
+const createEmptyProjectionDiagnostics = (): DebugProjectionDiagnostics => ({
+  graphBoundsLocked: false,
+  cameraLocked: false,
+  dimensions: null,
+  camera: null,
+  bbox: null,
+  customBBox: null,
+  customBBoxKnown: false,
+})
+
+const createEmptyRenderPhysicsPosition = (): DebugRenderPhysicsPosition => ({
+  render: null,
+  physics: null,
+  renderFixed: null,
+  physicsFixed: null,
+})
+
+const createEmptyRenderInvalidationState =
+  (): DebugRenderInvalidationState => ({
+    pendingContainerRefresh: false,
+    pendingContainerRefreshFrame: false,
+    pendingDragFrame: false,
+    pendingPhysicsBridgeFrame: false,
+    pendingFitCameraAfterPhysicsFrame: false,
+    pendingGraphBoundsUnlockFrame: false,
+    graphBoundsUnlockStartedAtMs: null,
+    graphBoundsUnlockDeferredCount: 0,
+    graphBoundsLocked: false,
+    cameraLocked: false,
+    forceAtlasRunning: false,
+    forceAtlasSuspended: false,
+    lastInvalidation: { action: null, atMs: null },
+  })
 
 export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHostProps>(
   function SigmaCanvasHost(
@@ -219,6 +286,43 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     }
   }, [callbacks])
 
+  const getDebugNodePosition = (pubkey: string) =>
+    adapterRef.current?.getNodePosition(pubkey) ?? null
+
+  const getDebugViewportPosition = (pubkey: string) => {
+    const viewportPosition = adapterRef.current?.getViewportPosition(pubkey)
+    const rect = containerRef.current?.getBoundingClientRect()
+
+    if (!viewportPosition || !rect) {
+      return null
+    }
+
+    return {
+      x: viewportPosition.x,
+      y: viewportPosition.y,
+      clientX: rect.left + viewportPosition.x,
+      clientY: rect.top + viewportPosition.y,
+    }
+  }
+
+  const getDebugDragRuntimeState = () =>
+    adapterRef.current?.getDragRuntimeState() ?? createEmptyDragRuntimeState()
+
+  const getDebugDragTimeline = () =>
+    adapterRef.current?.getDragTimeline() ?? []
+
+  const getDebugProjectionDiagnostics = () =>
+    adapterRef.current?.getProjectionDiagnostics() ??
+    createEmptyProjectionDiagnostics()
+
+  const getDebugRenderPhysicsPosition = (pubkey: string) =>
+    adapterRef.current?.getRenderPhysicsPosition(pubkey) ??
+    createEmptyRenderPhysicsPosition()
+
+  const getDebugRenderInvalidationState = () =>
+    adapterRef.current?.getRenderInvalidationState() ??
+    createEmptyRenderInvalidationState()
+
   useImperativeHandle(
     ref,
     () => ({
@@ -241,12 +345,19 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
         adapterRef.current?.subscribeToCameraTicks(listener) ?? (() => {}),
       subscribeToRenderTicks: (listener) =>
         adapterRef.current?.subscribeToRenderTicks(listener) ?? (() => {}),
+      getNodePosition: getDebugNodePosition,
+      getViewportPosition: getDebugViewportPosition,
       getVisibleNodePubkeys: () =>
         adapterRef.current?.getVisibleNodePubkeys() ?? [],
       setAvatarDebugDetailsEnabled: (enabled) =>
         adapterRef.current?.setAvatarDebugDetailsEnabled(enabled),
       getAvatarRuntimeDebugSnapshot: (options) =>
         adapterRef.current?.getAvatarRuntimeDebugSnapshot(options) ?? null,
+      getDragRuntimeState: getDebugDragRuntimeState,
+      getDragTimeline: getDebugDragTimeline,
+      getProjectionDiagnostics: getDebugProjectionDiagnostics,
+      getRenderPhysicsPosition: getDebugRenderPhysicsPosition,
+      getRenderInvalidationState: getDebugRenderInvalidationState,
       getPhysicsDiagnostics: () =>
         adapterRef.current?.getPhysicsDiagnostics() ?? null,
     }),
@@ -316,22 +427,8 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     }
 
     const debugApi: SigmaLabDebugApi = {
-      getNodePosition: (pubkey) => adapterRef.current?.getNodePosition(pubkey) ?? null,
-      getViewportPosition: (pubkey) => {
-        const viewportPosition = adapterRef.current?.getViewportPosition(pubkey)
-        const rect = containerRef.current?.getBoundingClientRect()
-
-        if (!viewportPosition || !rect) {
-          return null
-        }
-
-        return {
-          x: viewportPosition.x,
-          y: viewportPosition.y,
-          clientX: rect.left + viewportPosition.x,
-          clientY: rect.top + viewportPosition.y,
-        }
-      },
+      getNodePosition: getDebugNodePosition,
+      getViewportPosition: getDebugViewportPosition,
       getNeighborGroups: (pubkey) => adapterRef.current?.getNeighborGroups(pubkey) ?? null,
       findDragCandidate: (query) => adapterRef.current?.findDragCandidate(query) ?? null,
       isNodeFixed: (pubkey) => adapterRef.current?.isNodeFixed(pubkey) ?? false,
@@ -339,20 +436,11 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
         selectedNodePubkey: sceneRef.current.render.selection.selectedNodePubkey,
         pinnedNodePubkeys: [...sceneRef.current.render.pins.pubkeys],
       }),
-      getDragRuntimeState: () => adapterRef.current?.getDragRuntimeState() ?? {
-        draggedNodePubkey: null,
-        pendingDragGesturePubkey: null,
-        forceAtlasRunning: false,
-        forceAtlasSuspended: false,
-        moveBodyCount: 0,
-        flushCount: 0,
-        lastMoveBodyPointer: null,
-        lastScheduledGraphPosition: null,
-        lastFlushedGraphPosition: null,
-        influencedNodeCount: 0,
-        maxHopDistance: null,
-        influenceHopSample: [],
-      },
+      getDragRuntimeState: getDebugDragRuntimeState,
+      getDragTimeline: getDebugDragTimeline,
+      getProjectionDiagnostics: getDebugProjectionDiagnostics,
+      getRenderPhysicsPosition: getDebugRenderPhysicsPosition,
+      getRenderInvalidationState: getDebugRenderInvalidationState,
       getPhysicsDiagnostics: () =>
         adapterRef.current?.getPhysicsDiagnostics() ?? null,
     }

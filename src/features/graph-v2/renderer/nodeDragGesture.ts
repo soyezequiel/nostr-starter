@@ -10,6 +10,10 @@ export interface PendingNodeDragGesture {
   pubkey: string
   origin: PointerCoordinates
   anchorOffset: { dx: number; dy: number }
+  graphBoundsBBox?: {
+    x: [number, number]
+    y: [number, number]
+  } | null
 }
 
 export interface SuppressedNodeClick {
@@ -21,10 +25,12 @@ export const createPendingNodeDragGesture = (
   pubkey: string,
   origin: PointerCoordinates,
   anchorOffset: { dx: number; dy: number } = { dx: 0, dy: 0 },
+  graphBoundsBBox?: PendingNodeDragGesture['graphBoundsBBox'],
 ): PendingNodeDragGesture => ({
   pubkey,
   origin,
   anchorOffset,
+  graphBoundsBBox,
 })
 
 export const shouldStartNodeDrag = (
