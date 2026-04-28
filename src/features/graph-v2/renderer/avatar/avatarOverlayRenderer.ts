@@ -820,7 +820,7 @@ export class AvatarOverlayRenderer {
         visiblePhotoCount += 1
       }
     }
-    const isDegraded = this.budget.snapshot().isDegraded
+
     const effectiveLoadConcurrency = resolveAvatarLoadConcurrency({
       baseConcurrency: budget.concurrency,
       visiblePhotoCount,
