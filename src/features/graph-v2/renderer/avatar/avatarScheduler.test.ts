@@ -353,6 +353,113 @@ test('urgent avatars preempt lower-priority inflight loads', () => {
   }
 })
 
+test('scheduler upgrades a ready avatar when a larger bucket becomes necessary', () => {
+  const restoreDocument = installDocumentStub()
+  const url = 'https://example.com/root.png'
+  const urlKey = `root::${url}`
+  const loadCalls: Array<{ url: string; bucket: number; signal: AbortSignal }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (nextUrl: string, bucket: number, signal: AbortSignal) => {
+      loadCalls.push({ url: nextUrl, bucket, signal })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const cache = new AvatarBitmapCache(16)
+    const readyBitmap = document.createElement('canvas') as unknown as HTMLCanvasElement
+    const readyMonogram = document.createElement('canvas') as unknown as HTMLCanvasElement
+    cache.markReady(urlKey, 64, readyBitmap, readyMonogram, 64 * 64 * 4)
+
+    const scheduler = new AvatarScheduler({
+      cache,
+      loader: loader as never,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'root',
+          urlKey,
+          url,
+          bucket: 128,
+          priority: 0,
+          urgent: true,
+          monogram: { label: 'Root', color: '#7dd3a7' },
+        },
+      ],
+      { ...budget, maxBucket: 128 },
+    )
+
+    assert.equal(loadCalls.length, 1)
+    assert.equal(loadCalls[0]?.bucket, 128)
+    assert.equal(cache.get(urlKey)?.state, 'ready')
+    assert.equal(cache.get(urlKey)?.bucket, 64)
+    assert.equal(scheduler.inflightSize(), 1)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
+test('scheduler keeps the previous ready avatar if a higher-resolution upgrade fails', async () => {
+  const restoreDocument = installDocumentStub()
+  const url = 'https://example.com/root.png'
+  const urlKey = `root::${url}`
+  const blocked: Array<{ urlKey: string; ttlMs: number; reason: string | null }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: (blockedUrlKey: string, ttlMs: number, reason: string | null) => {
+      blocked.push({ urlKey: blockedUrlKey, ttlMs, reason })
+    },
+    load: async () => {
+      throw new Error('upgrade_failed')
+    },
+  }
+
+  try {
+    const cache = new AvatarBitmapCache(16)
+    const readyBitmap = document.createElement('canvas') as unknown as HTMLCanvasElement
+    const readyMonogram = document.createElement('canvas') as unknown as HTMLCanvasElement
+    cache.markReady(urlKey, 64, readyBitmap, readyMonogram, 64 * 64 * 4)
+
+    const scheduler = new AvatarScheduler({
+      cache,
+      loader: loader as never,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'root',
+          urlKey,
+          url,
+          bucket: 128,
+          priority: 0,
+          urgent: true,
+          monogram: { label: 'Root', color: '#7dd3a7' },
+        },
+      ],
+      { ...budget, maxBucket: 128 },
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const entry = cache.get(urlKey)
+    assert.equal(entry?.state, 'ready')
+    assert.equal(entry?.bucket, 64)
+    assert.equal(blocked.length, 1)
+    assert.equal(blocked[0]?.urlKey, urlKey)
+    assert.equal(blocked[0]?.reason, 'upgrade_failed')
+    assert.equal(scheduler.inflightSize(), 0)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
 test('urgent avatars retry failed blocked loads instead of staying on monogram', () => {
   const restoreDocument = installDocumentStub()
   const urlKey = 'selected::https://example.com/selected.png'

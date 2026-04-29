@@ -394,6 +394,79 @@ test('maps loading node expansion state into determinate ring progress', () => {
   assert.equal(bob?.expansionProgress, null)
 })
 
+test('renders the root with the loading ring while root discovery remains active', () => {
+  const state = createState({
+    rootLoad: {
+      status: 'partial',
+      message: 'Descubriendo links visibles...',
+      loadedFrom: 'live',
+      visibleLinkProgress: null,
+    },
+  })
+  state.discoveryState.rootLoad = state.rootLoad
+
+  const scene = buildGraphSceneSnapshot(state, {
+    rootLoadingRing: {
+      pubkey: 'root',
+      progress: 0.62,
+    },
+  })
+  const root = scene.render.nodes.find((node) => node.pubkey === 'root')
+
+  assert.equal(root?.isExpanding, true)
+  assert.equal(root?.expansionProgress, 0.62)
+})
+
+test('prefers the root node expansion progress over the root loading ring fallback', () => {
+  const state = createState()
+  state.nodesByPubkey.root = {
+    ...state.nodesByPubkey.root,
+    nodeExpansionState: {
+      status: 'loading',
+      message: 'Expandiendo root',
+      phase: 'correlating-followers',
+      step: 1,
+      totalSteps: 4,
+      startedAt: 100,
+      updatedAt: 200,
+    },
+  }
+
+  const scene = buildGraphSceneSnapshot(state, {
+    rootLoadingRing: {
+      pubkey: 'root',
+      progress: 0.9,
+    },
+  })
+  const root = scene.render.nodes.find((node) => node.pubkey === 'root')
+
+  assert.equal(root?.isExpanding, true)
+  assert.equal(root?.expansionProgress, 0.25)
+})
+
+test('includes the root loading ring signature in snapshot caching', () => {
+  const state = createState()
+
+  const firstScene = buildGraphSceneSnapshot(state, {
+    rootLoadingRing: {
+      pubkey: 'root',
+      progress: 0.25,
+    },
+  })
+  const secondScene = buildGraphSceneSnapshot(state, {
+    rootLoadingRing: {
+      pubkey: 'root',
+      progress: 0.75,
+    },
+  })
+  const firstRoot = firstScene.render.nodes.find((node) => node.pubkey === 'root')
+  const secondRoot = secondScene.render.nodes.find((node) => node.pubkey === 'root')
+
+  assert.notEqual(secondScene, firstScene)
+  assert.equal(firstRoot?.expansionProgress, 0.25)
+  assert.equal(secondRoot?.expansionProgress, 0.75)
+})
+
 test('colors reciprocal follows as mutual connections while keeping idle nodes neutral', () => {
   const state = createState({
     activeLayer: 'graph',

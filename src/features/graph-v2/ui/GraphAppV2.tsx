@@ -100,6 +100,11 @@ import {
   type ForceAtlasPhysicsTuning,
 } from '@/features/graph-v2/renderer/forceAtlasRuntime'
 import { createDragLocalFixture } from '@/features/graph-v2/testing/fixtures/dragLocalFixture'
+import {
+  resolveStoredHudStatsEnabled,
+  serializeHudStatsEnabled,
+  type RuntimeEnvironment,
+} from '@/features/graph-v2/ui/hudStatsPreference'
 import { SigmaCanvasHost, type SigmaCanvasHostHandle } from '@/features/graph-v2/ui/SigmaCanvasHost'
 import {
   AtomIcon,
@@ -298,6 +303,23 @@ const readStoredRuntimeInspectorButtonEnabled = () => {
   }
 }
 
+const readStoredHudStatsEnabled = (environment: string | undefined) => {
+  const runtimeEnvironment = environment as RuntimeEnvironment
+
+  if (typeof window === 'undefined') {
+    return resolveStoredHudStatsEnabled(null, runtimeEnvironment)
+  }
+
+  try {
+    return resolveStoredHudStatsEnabled(
+      window.localStorage.getItem(HUD_STATS_STORAGE_KEY),
+      runtimeEnvironment,
+    )
+  } catch {
+    return resolveStoredHudStatsEnabled(null, runtimeEnvironment)
+  }
+}
+
 const readStoredVisibleEdgeCountLabelsEnabled = () => {
   if (typeof window === 'undefined') {
     return false
@@ -322,6 +344,7 @@ interface LoadRootInput
 const IDENTITY_FIRST_RUN_HELP_KEY = 'sigma.identityFirstRunHelpDismissed'
 const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const RUNTIME_INSPECTOR_BUTTON_STORAGE_KEY = 'sigma.runtimeInspectorButtonEnabled'
+const HUD_STATS_STORAGE_KEY = 'sigma.hudStatsEnabled'
 const VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY = 'sigma.visibleEdgeCountLabels'
 const INITIAL_CAMERA_ZOOM_STORAGE_KEY = 'sigma.initialCameraZoom'
 const NODE_SIZE_CONFIG_STORAGE_KEY = 'sigma.nodeSizeConfig'
@@ -1368,11 +1391,13 @@ function PerformanceOptionsPanel({
   isMobileViewport,
   maxNodes,
   nodeCount,
+  hudStatsEnabled,
   runtimeInspectorButtonVisible,
   recommendedMaxNodes,
   rootPubkey,
   rootLoadStatus,
   onClearSiteCache,
+  onToggleHudStats,
   onToggleRuntimeInspectorButton,
   onToggleMobileDegradedMode,
   onGraphMaxNodesChange,
@@ -1394,11 +1419,13 @@ function PerformanceOptionsPanel({
   isMobileViewport: boolean
   maxNodes: number
   nodeCount: number
+  hudStatsEnabled: boolean
   runtimeInspectorButtonVisible: boolean
   recommendedMaxNodes: number
   rootPubkey: string | null
   rootLoadStatus: string
   onClearSiteCache: () => void
+  onToggleHudStats: () => void
   onToggleRuntimeInspectorButton: () => void
   onToggleMobileDegradedMode: () => void
   onGraphMaxNodesChange: (maxNodes: number) => void
@@ -1481,6 +1508,19 @@ function PerformanceOptionsPanel({
       </div>
       <div className="sg-settings-section">
         <h4>{t('diagnostics')}</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">{t('hudStats')}</div>
+            <div className="sg-setting-row__desc">{t('hudStatsDesc')}</div>
+          </div>
+          <button
+            aria-pressed={hudStatsEnabled}
+            className={`sg-toggle${hudStatsEnabled ? ' sg-toggle--on' : ''}`}
+            onClick={onToggleHudStats}
+            title={hudStatsEnabled ? t('hideHudStats') : t('showHudStats')}
+            type="button"
+          />
+        </div>
         <div className="sg-setting-row">
           <div>
             <div className="sg-setting-row__lbl">{t('runtimeInspector')}</div>
@@ -1961,6 +2001,7 @@ const RuntimeInspectorUiStateBridge = memo(function RuntimeInspectorUiStateBridg
 
 export default function GraphAppV2() {
   const tSigma = useTranslations('sigma')
+  const loadingT = useTranslations('sigma.loading')
   const locale = useLocale()
   const searchParams = useSearchParams()
   const fixtureName = searchParams.get('fixture')
@@ -2002,10 +2043,10 @@ export default function GraphAppV2() {
     () => bridge.getUiState().relayState,
     () => bridge.getUiState().relayState,
   )
-  const liveRootLoadStatus = useSyncExternalStore(
+  const liveRootLoad = useSyncExternalStore(
     bridge.subscribeUi,
-    () => bridge.getUiState().rootLoad.status,
-    () => bridge.getUiState().rootLoad.status,
+    () => bridge.getUiState().rootLoad,
+    () => bridge.getUiState().rootLoad,
   )
   const [fixtureState, setFixtureState] = useState<CanonicalGraphState | null>(
     () => (isFixtureMode ? createDragLocalFixture().state : null),
@@ -2052,6 +2093,9 @@ export default function GraphAppV2() {
   const [physicsEnabled, setPhysicsEnabled] = useState(true)
   const [avatarPhotosEnabled, setAvatarPhotosEnabled] = useState(
     readStoredAvatarPhotosEnabled,
+  )
+  const [hudStatsEnabled, setHudStatsEnabled] = useState(() =>
+    readStoredHudStatsEnabled(process.env.NODE_ENV),
   )
   const [runtimeInspectorButtonEnabled, setRuntimeInspectorButtonEnabled] =
     useState(() => isDev || readStoredRuntimeInspectorButtonEnabled())
@@ -2211,6 +2255,17 @@ export default function GraphAppV2() {
   }, [avatarPhotosEnabled])
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        HUD_STATS_STORAGE_KEY,
+        serializeHudStatsEnabled(hudStatsEnabled),
+      )
+    } catch {
+      // Persistence is best-effort; the HUD toggle still works.
+    }
+  }, [hudStatsEnabled])
+
+  useEffect(() => {
     if (isDev) {
       return
     }
@@ -2307,8 +2362,13 @@ export default function GraphAppV2() {
     [fixtureState],
   )
   const relayState = fixtureUiState?.relayState ?? liveRelayState
-  const rootLoadStatus = fixtureUiState?.rootLoad.status ?? liveRootLoadStatus
+  const rootLoad = fixtureUiState?.rootLoad ?? liveRootLoad
+  const rootLoadStatus = rootLoad.status
   const controller = useMemo(() => new GraphInteractionController(bridge), [bridge])
+  const rootLoadProgressCopy = useMemo(
+    () => buildRootLoadProgressCopy({ locale, t: loadingT }),
+    [loadingT, locale],
+  )
 
   useEffect(() => {
     if (sceneState.rootPubkey && !isFixtureMode) {
@@ -2582,6 +2642,33 @@ export default function GraphAppV2() {
   const deferredSceneState = useDeferredValue(sceneState)
   const isSceneTransitionPending =
     sceneState.sceneSignature !== deferredSceneState.sceneSignature
+  const deferredRootLoadingRing = useMemo(() => {
+    const rootPubkey = deferredSceneState.rootPubkey
+    if (!rootPubkey || !isRootLoadProgressActive(rootLoad)) {
+      return null
+    }
+
+    const rootNode = deferredSceneState.nodesByPubkey[rootPubkey]
+    if (!rootNode || rootNode.nodeExpansionState?.status === 'loading') {
+      return null
+    }
+
+    const progress = buildRootLoadProgressViewModel({
+      copy: rootLoadProgressCopy,
+      rootLoad,
+      identityLabel: rootNode.label?.trim() || rootPubkey.slice(0, 10),
+      nodeCount: Object.keys(deferredSceneState.nodesByPubkey).length,
+      fallbackMessage: loadFeedback,
+    })
+
+    return {
+      pubkey: rootPubkey,
+      progress: progress.percent / 100,
+    }
+  }, [deferredSceneState, loadFeedback, rootLoad, rootLoadProgressCopy])
+  const deferredRootLoadingRingSignature = deferredRootLoadingRing
+    ? `${deferredRootLoadingRing.pubkey}|${deferredRootLoadingRing.progress.toFixed(4)}`
+    : 'none'
   const nodeSizeConfigSignature = useMemo(
     () => getGraphSceneNodeSizeConfigSignature(nodeSizeConfig),
     [nodeSizeConfig],
@@ -2590,9 +2677,14 @@ export default function GraphAppV2() {
     () =>
       buildGraphSceneSnapshot(deferredSceneState, {
         nodeSizeConfig,
+        rootLoadingRing: deferredRootLoadingRing,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deferredSceneState.sceneSignature, nodeSizeConfigSignature],
+    [
+      deferredSceneState.sceneSignature,
+      deferredRootLoadingRingSignature,
+      nodeSizeConfigSignature,
+    ],
   )
   const visiblePubkeys = useMemo(
     () => deferredScene.render.nodes.map((node) => node.pubkey),
@@ -2790,6 +2882,7 @@ export default function GraphAppV2() {
       // Ejecutar la proyeccion almacena la salida en snapshotCache.
       const snapshot = buildGraphSceneSnapshot(warmupState, {
         nodeSizeConfig,
+        rootLoadingRing: deferredRootLoadingRing,
       })
       if (startedAtMs > 0) {
         traceGraphPerfDuration(
@@ -2816,7 +2909,13 @@ export default function GraphAppV2() {
     return () => {
       clearTimeout(timeoutId)
     }
-  }, [deferredSceneState, isFixtureMode, isSceneTransitionPending, nodeSizeConfig])
+  }, [
+    deferredRootLoadingRing,
+    deferredSceneState,
+    isFixtureMode,
+    isSceneTransitionPending,
+    nodeSizeConfig,
+  ])
 
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
@@ -4290,6 +4389,7 @@ export default function GraphAppV2() {
             devicePerformanceProfile={
               runtimeInspectorStoreSnapshot.devicePerformanceProfile
             }
+            hudStatsEnabled={hudStatsEnabled}
             hideConnectionsOnLowPerformance={hideConnectionsOnLowPerformance}
             isClearingSiteCache={cacheClearStatus === 'running'}
             isRuntimeInspectorButtonLocked={isDev}
@@ -4301,6 +4401,9 @@ export default function GraphAppV2() {
             onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
             onClearSiteCache={handleClearSiteCache}
             onGraphMaxNodesChange={setGraphMaxNodes}
+            onToggleHudStats={() => {
+              setHudStatsEnabled((current) => !current)
+            }}
             onToggleMobileDegradedMode={() => setRenderConfig({ mobileDegradedMode: !renderConfig.mobileDegradedMode })}
             onToggleRuntimeInspectorButton={() => {
               setRuntimeInspectorButtonEnabled((current) => !current)
@@ -5293,7 +5396,7 @@ export default function GraphAppV2() {
           />
           <SigmaSideRail buttons={railButtons} />
           <SigmaMobileBottomNav buttons={mobileNavButtons} />
-          <SigmaHud stats={hudStats} />
+          {hudStatsEnabled ? <SigmaHud stats={hudStats} /> : null}
           {!isIdentityPanelOpen &&
             !isNotificationsOpen &&
             !isMobileUtilityPanelOpen && (

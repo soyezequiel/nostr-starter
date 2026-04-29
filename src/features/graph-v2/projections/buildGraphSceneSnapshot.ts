@@ -314,6 +314,10 @@ interface GraphSceneStructureSnapshot {
 
 interface BuildGraphSceneSnapshotOptions {
   nodeSizeConfig?: Partial<GraphSceneNodeSizeConfig>
+  rootLoadingRing?: {
+    pubkey: string
+    progress: number
+  } | null
 }
 
 const snapshotCache = new WeakMap<
@@ -372,7 +376,19 @@ const createStructureSignature = (state: CanonicalGraphSceneState) => {
 const createSnapshotSignature = (
   sceneSignature: string,
   nodeSizeSignature: string,
-) => `${sceneSignature}|sizes:${nodeSizeSignature}`
+  rootLoadingRingSignature: string,
+) =>
+  `${sceneSignature}|sizes:${nodeSizeSignature}|root-ring:${rootLoadingRingSignature}`
+
+const getRootLoadingRingSignature = (
+  rootLoadingRing: BuildGraphSceneSnapshotOptions['rootLoadingRing'],
+) => {
+  if (!rootLoadingRing) {
+    return 'none'
+  }
+
+  return `${rootLoadingRing.pubkey}|${rootLoadingRing.progress.toFixed(4)}`
+}
 
 export const buildGraphSceneSnapshot = (
   state: CanonicalGraphSceneState,
@@ -385,6 +401,7 @@ export const buildGraphSceneSnapshot = (
   const snapshotSignature = createSnapshotSignature(
     state.sceneSignature,
     getGraphSceneNodeSizeConfigSignature(normalizedNodeSizeConfig),
+    getRootLoadingRingSignature(options.rootLoadingRing ?? null),
   )
 
   if (isPerfEnabled) {
@@ -412,7 +429,11 @@ export const buildGraphSceneSnapshot = (
   }
 
   const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
-  const snapshot = computeGraphSceneSnapshot(state, normalizedNodeSizeConfig)
+  const snapshot = computeGraphSceneSnapshot(
+    state,
+    normalizedNodeSizeConfig,
+    options.rootLoadingRing ?? null,
+  )
   if (startedAtMs > 0) {
     traceGraphPerfDuration(
       'buildGraphSceneSnapshot.compute',
@@ -449,6 +470,7 @@ export const getSnapshotCacheStats = () => ({
 const computeGraphSceneSnapshot = (
   state: CanonicalGraphSceneState,
   nodeSizeConfig: GraphSceneNodeSizeConfig = DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG,
+  rootLoadingRing: BuildGraphSceneSnapshotOptions['rootLoadingRing'] = null,
 ): GraphSceneSnapshot => {
   const structureSignature = createStructureSignature(state)
   let cachedStructuresByKey = structureCache.get(state.edgesById)
@@ -492,7 +514,12 @@ const computeGraphSceneSnapshot = (
           : isPinned
             ? SIZE_PINNED
             : SIZE_DEFAULT
-      const expansionProgress = resolveNodeExpansionProgress(node)
+      const nodeExpansionProgress = resolveNodeExpansionProgress(node)
+      const expansionProgress =
+        nodeExpansionProgress ??
+        (isRoot && rootLoadingRing?.pubkey === node.pubkey
+          ? rootLoadingRing.progress
+          : null)
 
       return {
         pubkey: node.pubkey,

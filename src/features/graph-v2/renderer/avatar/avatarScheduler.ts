@@ -22,7 +22,11 @@ import type {
 } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import { readAvatarDebugHost } from '@/features/graph-v2/renderer/avatar/avatarDebug'
 import { AvatarLoader } from '@/features/graph-v2/renderer/avatar/avatarLoader'
-import type { AvatarBudget, AvatarUrlKey } from '@/features/graph-v2/renderer/avatar/types'
+import type {
+  AvatarBudget,
+  AvatarReadyEntry,
+  AvatarUrlKey,
+} from '@/features/graph-v2/renderer/avatar/types'
 
 const BLOCKLIST_TTL_MS = 10 * 60 * 1000
 const TRANSIENT_FAILURE_TTL_MS = 15 * 60 * 1000
@@ -35,6 +39,11 @@ const DISK_CACHE_CONCURRENCY_HEADROOM = 12
 const DISK_CACHE_CONCURRENCY_MULTIPLIER = 4
 const DISK_CACHE_PROBE_BATCH_SIZE = 16
 const DISK_CACHE_MISS_PROBE_COOLDOWN_MS = 5000
+
+const resolveTargetBucket = (
+  candidate: AvatarCandidate,
+  budget: AvatarBudget,
+) => Math.min(candidate.bucket, budget.maxBucket) as ImageLodBucket
 
 export interface AvatarCandidate {
   pubkey: string
@@ -176,6 +185,7 @@ export class AvatarScheduler {
         return
       }
 
+      const targetBucket = resolveTargetBucket(candidate, budget)
       const inflightEntry = this.inflight.get(candidate.urlKey)
       if (inflightEntry) {
         inflightEntry.lastWantedAt = now
@@ -185,7 +195,17 @@ export class AvatarScheduler {
       }
 
       const existing = this.cache.get(candidate.urlKey)
-      if (existing && (existing.state === 'ready' || existing.state === 'loading')) {
+      const preserveReadyEntry =
+        existing &&
+        existing.state === 'ready' &&
+        existing.bucket < targetBucket
+          ? existing
+          : null
+      if (
+        existing &&
+        (existing.state === 'ready' || existing.state === 'loading') &&
+        preserveReadyEntry === null
+      ) {
         continue
       }
       if (existing && existing.state === 'failed') {
@@ -211,7 +231,7 @@ export class AvatarScheduler {
         break
       }
 
-      this.kickoff(candidate, budget, now)
+      this.kickoff(candidate, budget, now, { preserveReadyEntry })
     }
   }
 
@@ -411,10 +431,14 @@ export class AvatarScheduler {
     candidate: AvatarCandidate,
     budget: AvatarBudget,
     now: number,
-    options: { diskCacheOnly?: boolean } = {},
+    options: {
+      diskCacheOnly?: boolean
+      preserveReadyEntry?: AvatarReadyEntry | null
+    } = {},
   ) {
-    const targetBucket = Math.min(candidate.bucket, budget.maxBucket) as ImageLodBucket
+    const targetBucket = resolveTargetBucket(candidate, budget)
     const controller = new AbortController()
+    const preserveReadyEntry = options.preserveReadyEntry ?? null
     this.inflight.set(candidate.urlKey, {
       urlKey: candidate.urlKey,
       controller,
@@ -441,7 +465,9 @@ export class AvatarScheduler {
     })
 
     const monogram = this.cache.getMonogram(candidate.pubkey, candidate.monogram)
-    this.cache.markLoading(candidate.urlKey, targetBucket, monogram)
+    if (!preserveReadyEntry) {
+      this.cache.markLoading(candidate.urlKey, targetBucket, monogram)
+    }
 
     const loadPromise = options.diskCacheOnly
       ? this.loader.loadDiskCached(candidate.url, targetBucket, controller.signal)
@@ -498,43 +524,54 @@ export class AvatarScheduler {
         // AbortSignal.reason can be a plain string in current browsers; after
         // this controller aborts it is still cancellation, not an image failure.
         if (controller.signal.aborted || isAbortError(err)) {
-          this.cache.delete(candidate.urlKey, 'load_abort_error')
+          if (!preserveReadyEntry) {
+            this.cache.delete(candidate.urlKey, 'load_abort_error')
+          }
           return
         }
 
         const reason = extractAvatarLoadFailureReason(err)
         const failurePolicy = resolveAvatarFailurePolicy(reason)
-        this.cache.markFailed(
-          candidate.urlKey,
-          monogram,
-          reason,
-          failurePolicy.ttlMs,
-        )
-        if (failurePolicy.terminal) {
-          rememberTerminalAvatarFailure({
-            urlKey: candidate.urlKey,
-            pubkey: candidate.pubkey,
-            url: candidate.url,
-            reason,
-            at: this.now(),
-          })
-          traceAvatarFlow('renderer.avatarScheduler.terminalQuarantined', () => ({
-            pubkey: candidate.pubkey,
-            pubkeyShort: truncateAvatarPubkey(candidate.pubkey),
-            url: summarizeAvatarUrl(candidate.url),
-            urlKey: summarizeAvatarUrlKey(candidate.urlKey),
-            bucket: targetBucket,
-            priority: candidate.priority,
-            urgent: candidate.urgent ?? false,
-            reason,
-          }))
-        } else {
+        if (preserveReadyEntry) {
           clearTerminalAvatarFailure(candidate.urlKey)
           this.loader.block(
             candidate.urlKey,
             failurePolicy.ttlMs ?? BLOCKLIST_TTL_MS,
             reason,
           )
+        } else {
+          this.cache.markFailed(
+            candidate.urlKey,
+            monogram,
+            reason,
+            failurePolicy.ttlMs,
+          )
+          if (failurePolicy.terminal) {
+            rememberTerminalAvatarFailure({
+              urlKey: candidate.urlKey,
+              pubkey: candidate.pubkey,
+              url: candidate.url,
+              reason,
+              at: this.now(),
+            })
+            traceAvatarFlow('renderer.avatarScheduler.terminalQuarantined', () => ({
+              pubkey: candidate.pubkey,
+              pubkeyShort: truncateAvatarPubkey(candidate.pubkey),
+              url: summarizeAvatarUrl(candidate.url),
+              urlKey: summarizeAvatarUrlKey(candidate.urlKey),
+              bucket: targetBucket,
+              priority: candidate.priority,
+              urgent: candidate.urgent ?? false,
+              reason,
+            }))
+          } else {
+            clearTerminalAvatarFailure(candidate.urlKey)
+            this.loader.block(
+              candidate.urlKey,
+              failurePolicy.ttlMs ?? BLOCKLIST_TTL_MS,
+              reason,
+            )
+          }
         }
         this.recordEvent({
           at: this.now(),
