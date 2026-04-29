@@ -149,6 +149,11 @@ import {
   useLiveZapFeed,
 } from '@/features/graph-v2/zaps/useLiveZapFeed'
 import {
+  RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS,
+  RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS,
+  RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS,
+  clampRecentZapReplayLookbackHours,
+  formatRecentZapReplayWindowLabel,
   useRecentZapReplay,
   type RecentZapReplaySnapshot,
 } from '@/features/graph-v2/zaps/useRecentZapReplay'
@@ -174,9 +179,9 @@ import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
 
 type SigmaSettingsTab = 'performance' | 'visuals' | 'zaps' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
-type ZapFeedMode = 'live' | 'recent-hour'
+type ZapFeedMode = 'live' | 'recent'
 type MobileUtilityPanel = 'filters' | null
-type ZapActivitySource = 'live' | 'recent-hour' | 'simulated'
+type ZapActivitySource = 'live' | 'recent' | 'simulated'
 type SceneConnection = Pick<
   CanonicalGraphSceneState['edgesById'][string],
   'source' | 'target' | 'relation' | 'origin'
@@ -209,7 +214,7 @@ const MOBILE_PHYSICS_QUERY = '(max-width: 720px)'
 const MOBILE_FORCE_ATLAS_REPULSION_FORCE = 2.4
 const ZAP_ACTIVITY_SOURCE_LABELS: Record<ZapActivitySource, string> = {
   live: 'Live',
-  'recent-hour': 'Ultima hora',
+  recent: 'Replay',
   simulated: 'Simulado',
 }
 const NOTIFICATION_TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
@@ -323,6 +328,8 @@ const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const RUNTIME_INSPECTOR_BUTTON_STORAGE_KEY = 'sigma.runtimeInspectorButtonEnabled'
 const VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY = 'sigma.visibleEdgeCountLabels'
 const INITIAL_CAMERA_ZOOM_STORAGE_KEY = 'sigma.initialCameraZoom'
+const RECENT_ZAP_REPLAY_LOOKBACK_STORAGE_KEY = 'sigma.recentZapReplayLookbackHours'
+const RECENT_ZAP_REPLAY_LOOKBACK_DEBOUNCE_MS = 350
 const VISIBLE_PROFILE_WARMUP_BATCH_SIZE = 48
 const VISIBLE_PROFILE_WARMUP_COOLDOWN_MS = 2 * 60 * 1000
 const ZAP_ACTOR_PROFILE_BATCH_SIZE = 6
@@ -348,6 +355,21 @@ const readStoredInitialCameraZoom = () => {
       : clampInitialCameraZoom(Number.parseFloat(stored))
   } catch {
     return DEFAULT_INITIAL_CAMERA_ZOOM
+  }
+}
+
+const readStoredRecentZapReplayLookbackHours = () => {
+  if (typeof window === 'undefined') {
+    return RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS
+  }
+
+  try {
+    const stored = window.localStorage.getItem(RECENT_ZAP_REPLAY_LOOKBACK_STORAGE_KEY)
+    return stored === null
+      ? RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS
+      : clampRecentZapReplayLookbackHours(Number.parseFloat(stored))
+  } catch {
+    return RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS
   }
 }
 
@@ -1929,6 +1951,12 @@ export default function GraphAppV2() {
   )
   const [showZaps, setShowZaps] = useState(true)
   const [zapFeedMode, setZapFeedMode] = useState<ZapFeedMode>('live')
+  const [recentZapReplayLookbackHours, setRecentZapReplayLookbackHours] =
+    useState(readStoredRecentZapReplayLookbackHours)
+  const [
+    appliedRecentZapReplayLookbackHours,
+    setAppliedRecentZapReplayLookbackHours,
+  ] = useState(readStoredRecentZapReplayLookbackHours)
   const [recentZapReplayRequest, setRecentZapReplayRequest] = useState(0)
   const [recentZapReplayRefreshRequest, setRecentZapReplayRefreshRequest] = useState(0)
   const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
@@ -2103,6 +2131,27 @@ export default function GraphAppV2() {
       // Non-critical preference persistence.
     }
   }, [initialCameraZoom])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        RECENT_ZAP_REPLAY_LOOKBACK_STORAGE_KEY,
+        recentZapReplayLookbackHours.toString(),
+      )
+    } catch {
+      // Non-critical preference persistence.
+    }
+  }, [recentZapReplayLookbackHours])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setAppliedRecentZapReplayLookbackHours(recentZapReplayLookbackHours)
+    }, RECENT_ZAP_REPLAY_LOOKBACK_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [recentZapReplayLookbackHours])
 
   useEffect(() => {
     setIsLowPerformanceForConnections((current) =>
@@ -2868,7 +2917,17 @@ export default function GraphAppV2() {
   })
   const shouldEnableLiveZapFeed = canRunZapFeed && zapFeedMode === 'live'
   const shouldEnableRecentZapReplay =
-    canRunZapFeed && zapFeedMode === 'recent-hour'
+    canRunZapFeed && zapFeedMode === 'recent'
+  const selectedZapReplayWindowLabel = formatRecentZapReplayWindowLabel(
+    recentZapReplayLookbackHours,
+  )
+  const appliedZapReplayWindowLabel = formatRecentZapReplayWindowLabel(
+    appliedRecentZapReplayLookbackHours,
+  )
+  const appliedZapReplayWindowText =
+    appliedRecentZapReplayLookbackHours === 1
+      ? `la ${appliedZapReplayWindowLabel}`
+      : `las ${appliedZapReplayWindowLabel}`
   const handleLiveZap = useCallback((zap: ParsedZap) => {
     const played = handleZap(zap)
     appendZapActivity(zap, 'live', played)
@@ -2876,7 +2935,7 @@ export default function GraphAppV2() {
   }, [appendZapActivity, handleZap])
   const handleRecentZapReplay = useCallback((zap: ParsedZap) => {
     const played = handleZap(zap)
-    appendZapActivity(zap, 'recent-hour', played)
+    appendZapActivity(zap, 'recent', played)
     return played
   }, [appendZapActivity, handleZap])
   useLiveZapFeed({
@@ -2892,6 +2951,7 @@ export default function GraphAppV2() {
   const recentZapReplay = useRecentZapReplay({
     visiblePubkeys,
     enabled: shouldEnableRecentZapReplay,
+    lookbackHours: appliedRecentZapReplayLookbackHours,
     replayKey: recentZapReplayRequest,
     refreshKey: recentZapReplayRefreshRequest,
     onZap: handleRecentZapReplay,
@@ -4049,7 +4109,7 @@ export default function GraphAppV2() {
           <div>
             <div className="sg-setting-row__lbl">Modo</div>
             <div className="sg-setting-row__desc">
-              Live escucha eventos nuevos; ultima hora consulta y reproduce recibos recientes.
+              Live escucha eventos nuevos; replay consulta y reproduce recibos recientes.
             </div>
           </div>
           <div className="sg-segmented-control" role="group" aria-label="Modo de zaps">
@@ -4062,25 +4122,47 @@ export default function GraphAppV2() {
               Live
             </button>
             <button
-              aria-pressed={zapFeedMode === 'recent-hour'}
-              className={`sg-segmented-control__btn${zapFeedMode === 'recent-hour' ? ' sg-segmented-control__btn--active' : ''}`}
-              onClick={() => setZapFeedMode('recent-hour')}
+              aria-pressed={zapFeedMode === 'recent'}
+              className={`sg-segmented-control__btn${zapFeedMode === 'recent' ? ' sg-segmented-control__btn--active' : ''}`}
+              onClick={() => setZapFeedMode('recent')}
               type="button"
             >
-              Ultima hora
+              Replay
             </button>
           </div>
         </div>
-        {zapFeedMode === 'recent-hour' ? (
+        {zapFeedMode === 'recent' ? (
           <div className="sg-setting-block">
+            <div className="sg-slider-row">
+              <div className="sg-slider-row__head">
+                <span className="sg-slider-row__lbl">Ventana historica</span>
+                <span className="sg-slider-row__val">{selectedZapReplayWindowLabel}</span>
+              </div>
+              <input
+                aria-label="Horas de zaps recientes"
+                className="sg-slider"
+                max={RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS}
+                min={RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS}
+                onChange={(event) => {
+                  setRecentZapReplayLookbackHours(
+                    clampRecentZapReplayLookbackHours(
+                      Number.parseInt(event.target.value, 10),
+                    ),
+                  )
+                }}
+                step={1}
+                type="range"
+                value={recentZapReplayLookbackHours}
+              />
+            </div>
             <div className="sg-setting-row__desc">
               {recentZapReplay.message ??
-                'Reproduce los zaps de la ultima hora para los nodos visibles.'}
+                `Reproduce los zaps de ${appliedZapReplayWindowText} para los nodos visibles.`}
               {recentZapReplay.truncatedTargetCount > 0
                 ? ` Se omitieron ${formatInteger(recentZapReplay.truncatedTargetCount)} nodos por limite operativo.`
                 : ''}
             </div>
-            <div className="sg-zap-replay-progress" aria-label="Progreso de zaps de la ultima hora">
+            <div className="sg-zap-replay-progress" aria-label={`Progreso de zaps de ${appliedZapReplayWindowText}`}>
               {recentZapReplayStages.map((stage) => {
                 const progressValue = formatProgressValue(stage.value)
                 return (
@@ -4118,7 +4200,7 @@ export default function GraphAppV2() {
                 <span>{formatZapReplayTime(recentZapReplay.currentZapCreatedAt)}</span>
               </div>
               <div
-                aria-label="Avance dentro de la ultima hora"
+                aria-label={`Avance dentro de ${appliedZapReplayWindowText}`}
                 aria-valuemax={100}
                 aria-valuemin={0}
                 aria-valuenow={formatProgressValue(recentZapReplay.timelineProgress)}
@@ -4211,8 +4293,8 @@ export default function GraphAppV2() {
 
   const zapFeedStatus = shouldEnableLiveZapFeed
     ? 'Live'
-    : zapFeedMode === 'recent-hour'
-      ? 'Ultima hora'
+    : zapFeedMode === 'recent'
+      ? selectedZapReplayWindowLabel
       : 'Pausado'
 
   const renderZapsContent = () => (

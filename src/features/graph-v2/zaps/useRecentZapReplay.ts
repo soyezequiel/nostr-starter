@@ -15,7 +15,11 @@ import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { parseZapReceiptEvent } from '@/features/graph-v2/zaps/zapParser'
 import { traceZapFlow } from '@/features/graph-runtime/debug/zapTrace'
 
-export const RECENT_ZAP_REPLAY_LOOKBACK_SEC = 60 * 60
+const SECONDS_PER_HOUR = 60 * 60
+
+export const RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS = 1
+export const RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS = 24
+export const RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS = 1
 
 const RECENT_ZAP_REPLAY_TARGET_LIMIT = 1024
 const RECENT_ZAP_REPLAY_BATCH_SIZE = 128
@@ -91,6 +95,22 @@ function getZapReplayRepositories(): Promise<NostrGraphRepositories> {
 function clampProgress(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.min(1, value))
+}
+
+export function clampRecentZapReplayLookbackHours(value: number): number {
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    return RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS
+  }
+
+  return Math.max(
+    RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS,
+    Math.min(RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS, value),
+  )
+}
+
+export function formatRecentZapReplayWindowLabel(hours: number): string {
+  const clampedHours = clampRecentZapReplayLookbackHours(hours)
+  return clampedHours === 1 ? 'ultima hora' : `ultimas ${clampedHours} horas`
 }
 
 function calculateTimelineProgress({
@@ -388,12 +408,14 @@ async function persistParsedZapReceipts({
 export function useRecentZapReplay({
   enabled,
   visiblePubkeys,
+  lookbackHours,
   replayKey,
   refreshKey,
   onZap,
 }: {
   enabled: boolean
   visiblePubkeys: readonly string[]
+  lookbackHours: number
   replayKey: number
   refreshKey: number
   onZap: (zap: ParsedZap) => boolean
@@ -414,6 +436,10 @@ export function useRecentZapReplay({
     () => targetInfo.targets.join(','),
     [targetInfo.targets],
   )
+  const appliedLookbackHours = clampRecentZapReplayLookbackHours(lookbackHours)
+  const replayWindowLabel = formatRecentZapReplayWindowLabel(appliedLookbackHours)
+  const replayWindowText =
+    appliedLookbackHours === 1 ? `la ${replayWindowLabel}` : `las ${replayWindowLabel}`
   const [snapshot, setSnapshot] =
     useState<RecentZapReplaySnapshot>(INITIAL_SNAPSHOT)
 
@@ -444,7 +470,7 @@ export function useRecentZapReplay({
           ...current,
           phase: 'done',
           stage: 'done',
-          message: 'No hubo zaps reproducibles en la ultima hora para estos nodos.',
+          message: `No hubo zaps reproducibles en ${replayWindowText} para estos nodos.`,
           currentZapCreatedAt: current.windowEndAt,
           timelineProgress: 1,
         }))
@@ -459,7 +485,7 @@ export function useRecentZapReplay({
         ...current,
         phase: 'playing',
         stage: 'playing',
-        message: `Reproduciendo ${zaps.length} zaps de la ultima hora...`,
+        message: `Reproduciendo ${zaps.length} zaps de ${replayWindowText}...`,
         playableCount: zaps.length,
         playedCount: 0,
         droppedCount: 0,
@@ -511,7 +537,8 @@ export function useRecentZapReplay({
 
     void (async () => {
       const requestedUntil = Math.floor(Date.now() / 1_000)
-      const requestedSince = requestedUntil - RECENT_ZAP_REPLAY_LOOKBACK_SEC
+      const lookbackSeconds = appliedLookbackHours * SECONDS_PER_HOUR
+      const requestedSince = requestedUntil - lookbackSeconds
       const cacheOnlyReplay = handledReplayKeyRef.current !== replayKey
       const forceRefresh = handledRefreshKeyRef.current !== refreshKey
 
@@ -535,7 +562,7 @@ export function useRecentZapReplay({
           reusableCoverage && !forceRefresh
             ? Math.max(
                 reusableCoverage.coveredFrom,
-                replayUntil - RECENT_ZAP_REPLAY_LOOKBACK_SEC,
+                replayUntil - lookbackSeconds,
               )
             : requestedSince
 
@@ -563,7 +590,7 @@ export function useRecentZapReplay({
             message:
               replayZaps.length > 0
                 ? `Replay desde cache: ${replayZaps.length} zaps guardados.`
-                : 'No hay zaps guardados en cache para reproducir en esta ultima hora. Usa Actualizar para consultar relays.',
+                : `No hay zaps guardados en cache para reproducir en ${replayWindowText}. Usa Actualizar para consultar relays.`,
             targetCount: targets.length,
             truncatedTargetCount: targetInfo.truncatedTargetCount,
             batchCount: 0,
@@ -603,7 +630,7 @@ export function useRecentZapReplay({
           message: shouldFetch
             ? forceRefresh && reusableCoverage
               ? `Actualizando zaps desde cache: descargando lo faltante desde el ultimo corte.`
-              : `Buscando zaps de la ultima hora para ${targets.length} nodos visibles...`
+              : `Buscando zaps de ${replayWindowText} para ${targets.length} nodos visibles...`
             : `Cache al dia: reproduciendo ${cachedBeforeFetch.length} zaps guardados.`,
           targetCount: targets.length,
           truncatedTargetCount: targetInfo.truncatedTargetCount,
@@ -750,8 +777,8 @@ export function useRecentZapReplay({
         if (disposed) return
         const message =
           error instanceof Error
-            ? `No se pudo consultar zaps de la ultima hora: ${error.message}`
-            : 'No se pudo consultar zaps de la ultima hora.'
+            ? `No se pudo consultar zaps de ${replayWindowText}: ${error.message}`
+            : `No se pudo consultar zaps de ${replayWindowText}.`
         traceZapFlow('recentZapReplay.fetchFailed', { message })
         setSnapshot((current) => ({
           ...current,
@@ -768,8 +795,11 @@ export function useRecentZapReplay({
     }
   }, [
     enabled,
+    appliedLookbackHours,
     refreshKey,
     replayKey,
+    replayWindowText,
+    replayWindowLabel,
     targetInfo.truncatedTargetCount,
     targetSignature,
   ])
@@ -781,7 +811,7 @@ export function useRecentZapReplay({
   if (targetInfo.targets.length === 0) {
     return {
       ...INITIAL_SNAPSHOT,
-      message: 'Esperando nodos visibles para reproducir zaps de la ultima hora.',
+      message: `Esperando nodos visibles para reproducir zaps de ${replayWindowText}.`,
     }
   }
 
