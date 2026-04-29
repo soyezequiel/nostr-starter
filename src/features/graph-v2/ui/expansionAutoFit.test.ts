@@ -75,6 +75,22 @@ test('expansion auto-fit waits until the requested node is expanded and the scen
   )
 })
 
+test('expansion auto-fit ignores scene-only churn when topology did not change', () => {
+  const before = createSceneState()
+  const request = createExpansionAutoFitRequest('alice', before)
+
+  const sceneOnlyChange = createSceneState({
+    sceneSignature: 'root|graph|selection-cleared',
+    selectedNodePubkey: null,
+    nodeVisualRevision: 1,
+  })
+
+  assert.equal(
+    shouldRunExpansionAutoFit(request, sceneOnlyChange, false),
+    false,
+  )
+})
+
 test('expansion auto-fit ignores unrelated expansions and clears failed requests', () => {
   const before = createSceneState()
   const request = createExpansionAutoFitRequest('alice', before)

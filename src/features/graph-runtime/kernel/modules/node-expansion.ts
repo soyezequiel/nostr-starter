@@ -620,6 +620,9 @@ export function createNodeExpansionModule(
     ) => {
       const promises = enrichmentPromises.filter((p): p is Promise<void> => Boolean(p))
       if (promises.length > 0) {
+        // La expansion no termina de forma visible hasta integrar tambien la
+        // evidencia inbound/reciproca tardia. Eso evita que el grafo se abra
+        // en oleadas para una sola accion del usuario.
         setLoadingState(
           pubkey,
           'enriching',

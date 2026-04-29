@@ -2,7 +2,7 @@ import type { CanonicalGraphSceneState } from '@/features/graph-v2/domain/types'
 
 export interface ExpansionAutoFitRequest {
   pubkey: string
-  sceneSignature: string
+  topologySignature: string
   nodeCount: number
   edgeCount: number
   graphRevision: number
@@ -28,7 +28,7 @@ export const createExpansionAutoFitRequest = (
   sceneState: CanonicalGraphSceneState,
 ): ExpansionAutoFitRequest => ({
   pubkey,
-  sceneSignature: sceneState.sceneSignature,
+  topologySignature: sceneState.topologySignature,
   nodeCount: Object.keys(sceneState.nodesByPubkey).length,
   edgeCount: Object.keys(sceneState.edgesById).length,
   graphRevision: sceneState.discoveryState.graphRevision,
@@ -50,7 +50,7 @@ export const shouldRunExpansionAutoFit = (
   }
 
   return (
-    sceneState.sceneSignature !== request.sceneSignature ||
+    sceneState.topologySignature !== request.topologySignature ||
     Object.keys(sceneState.nodesByPubkey).length !== request.nodeCount ||
     Object.keys(sceneState.edgesById).length !== request.edgeCount ||
     sceneState.discoveryState.graphRevision !== request.graphRevision ||

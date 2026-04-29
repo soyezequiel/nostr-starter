@@ -2671,6 +2671,9 @@ export default function GraphAppV2() {
     setMobileUtilityPanel(null)
   }, [])
 
+  const latestNodesByPubkeyRef = useRef(sceneState.nodesByPubkey)
+  latestNodesByPubkeyRef.current = sceneState.nodesByPubkey
+
   const dismissIdentityHelp = useCallback(() => {
     setIsIdentityHelpDismissed(true)
     if (typeof window === 'undefined') return
@@ -2723,9 +2726,6 @@ export default function GraphAppV2() {
         })
     })
   }, [bridge, dismissIdentityHelp, isFixtureMode])
-
-  const latestNodesByPubkeyRef = useRef(sceneState.nodesByPubkey)
-  latestNodesByPubkeyRef.current = sceneState.nodesByPubkey
 
   const callbacks = useMemo<GraphInteractionCallbacks>(
     () =>

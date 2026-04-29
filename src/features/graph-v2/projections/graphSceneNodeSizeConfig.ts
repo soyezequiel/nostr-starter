@@ -4,7 +4,7 @@ export interface GraphSceneNodeSizeConfig {
 }
 
 export const DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG: GraphSceneNodeSizeConfig = {
-  rootSize: 72,
+  rootSize: 40,
   expandedSize: 40,
 }
 

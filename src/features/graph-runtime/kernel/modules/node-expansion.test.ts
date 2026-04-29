@@ -98,7 +98,7 @@ const createRelayListsRepositoryStub = () => ({
   upsert: async (record: unknown) => record,
 })
 
-test('expandNode resolves before reciprocal enrichment finishes and merges late inbound followers afterwards', async () => {
+test('expandNode waits for reciprocal enrichment before resolving and avoids late inbound merges after completion', async () => {
   const store = createStore<Record<string, unknown>>()((...args) => ({
     ...createGraphSlice(...args),
     ...createRelaySlice(...args),
@@ -242,14 +242,15 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
     },
   })
 
+  const expansionPromise = expansion.expandNode('target')
   const expansionOutcome = await Promise.race([
-    expansion.expandNode('target').then((result: unknown) => result),
+    expansionPromise.then((result: unknown) => result),
     new Promise<'timeout'>((resolve) => {
       setTimeout(() => resolve('timeout'), 50)
     }),
   ])
 
-  assert.notEqual(expansionOutcome, 'timeout')
+  assert.equal(expansionOutcome, 'timeout')
   assert.equal(targetedReciprocalCallCount, 1)
   assert.deepEqual(
     store.getState().adjacency.target,
@@ -259,11 +260,14 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
   assert.equal(store.getState().expandedNodePubkeys.has('target'), true)
   assert.equal(store.getState().selectedNodePubkey, null)
   assert.equal(store.getState().openPanel, 'overview')
+  assert.equal(store.getState().nodeExpansionStates.target.status, 'loading')
+  assert.equal(store.getState().nodeExpansionStates.target.phase, 'enriching')
 
   reciprocalDeferred.resolve({
     followerPubkeys: ['late-follower'],
     partial: false,
   })
+  const result = await expansionPromise
   await flushMicrotasks()
 
   assert.deepEqual(
@@ -271,6 +275,8 @@ test('expandNode resolves before reciprocal enrichment finishes and merges late 
     ['late-follower'],
   )
   assert.equal(store.getState().nodes['late-follower']?.source, 'inbound')
+  assert.equal(result.status, 'ready')
+  assert.equal(store.getState().nodeExpansionStates.target.status, 'ready')
 })
 
 test('expandNode reports partial when relays fail without cached contact list', async () => {

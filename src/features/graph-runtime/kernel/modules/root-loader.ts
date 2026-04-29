@@ -324,6 +324,22 @@ export function createRootLoaderModule(
     const discoveredRelayCount = relayUrlAnalysis.discoveredRelayUrls.length
     const droppedByCapCount = relayUrlAnalysis.droppedRelayUrls.length
     const contributingRelayUrls = new Set<string>()
+    const logRootPhase = (
+      phase: string,
+      fields: Record<string, string | number | boolean | null | undefined> = {},
+    ) => {
+      const now = ctx.now()
+      logTerminalOk('Carga raiz', phase, {
+        raiz: rootPubkey.slice(0, 12),
+        load_id: loadId,
+        duracion_ms: now - loadStartedAt,
+        visible_ms:
+          firstFastContactListAppliedAt === null
+            ? null
+            : firstFastContactListAppliedAt - loadStartedAt,
+        ...fields,
+      })
+    }
     const recordContributingEnvelopes = (
       envelopes: readonly RelayEventEnvelope[],
     ) => {
@@ -509,6 +525,7 @@ export function createRootLoaderModule(
     }
     let handoffToBackground = false
     let inboundCountProbeResults: RelayCountResult[] = []
+    let firstFastContactListAppliedAt: number | null = null
     const refreshRootRelayListPromise = followerDiscovery.refreshRelayList(
       adapter,
       rootPubkey,
@@ -577,7 +594,6 @@ export function createRootLoaderModule(
       let lastProgressMessageAt = 0
       let latestProgressContactListEventId: string | null = null
       let fastContactListGraphEventId: string | null = null
-      let firstFastContactListAppliedAt: number | null = null
       let contactListProgressParseSequence = 0
       let inboundProgressParseSequence = 0
       let lastInboundProgressParseAt = 0
@@ -1237,6 +1253,13 @@ export function createRootLoaderModule(
             relay: envelope.relayUrl,
             raiz: rootPubkey.slice(0, 12),
           })
+          logRootPhase('Grafo visible', {
+            relay: formatRelayProgressUrl(envelope.relayUrl),
+            follows: replacementResult.discoveredFollowCount,
+            followers: currentInboundFollowerPubkeys.length,
+            contact_list_eventos: contactListEventCount,
+            inbound_eventos: inboundCandidateEventCount,
+          })
         }
 
         followingLoadedCount = replacementResult.discoveredFollowCount
@@ -1352,6 +1375,13 @@ export function createRootLoaderModule(
             ),
           })
         }
+        logRootPhase('Ola discovery completada', {
+          relays: waveRelayUrls.length,
+          progreso: enableProgress ? 'foreground' : 'background',
+          contact_list_eventos: offsets.contactListEventCount + contactListResult.events.length,
+          inbound_eventos:
+            offsets.inboundCandidateEventCount + inboundFollowerResult.events.length,
+        })
 
         return [contactListResult, inboundFollowerResult] as const
       }
@@ -1578,6 +1608,11 @@ export function createRootLoaderModule(
             ),
           })
         }
+        logRootPhase('Paginacion inbound completada', {
+          paginas: paginatedInboundFollowerResult.pageCount,
+          eventos_nuevos: paginatedInboundFollowerResult.events.length,
+          candidatos_totales: inboundFollowerResult.events.length,
+        })
 
         if (collectRemainingRelays) {
           startRemainingRelayEnrichment({
@@ -1728,6 +1763,10 @@ export function createRootLoaderModule(
             ),
           })
         }
+        logRootPhase('Parse worker completo', {
+          follows: parsedContactList.followPubkeys.length,
+          inbound_followers: inboundFollowerEvidence.followerPubkeys.length,
+        })
         if (isStaleLoad(loadId)) {
           return finishLoad(createCancelledResult(relayUrls))
         }
@@ -1922,6 +1961,12 @@ export function createRootLoaderModule(
             ),
           },
         )
+        logRootPhase('Cobertura inicial completada', {
+          estado: status,
+          follows: replacementResult.discoveredFollowCount,
+          followers: followersLoadedCount,
+          cobertura_inicial_ms: ctx.now() - loadStartedAt,
+        })
         return finishLoad({
           status,
           loadedFrom: 'live',
@@ -1959,6 +2004,13 @@ export function createRootLoaderModule(
               lastRelayUrl,
             },
           ),
+        })
+        logRootPhase('Cobertura inicial delegada a background', {
+          estado: 'partial',
+          follows: followingLoadedCount,
+          followers: getCurrentInboundFollowerPubkeys(rootPubkey).length,
+          contact_list_eventos: initialContactListResult.events.length,
+          inbound_eventos: initialInboundFollowerResult.events.length,
         })
         handoffToBackground = true
         void completeRootDiscovery(

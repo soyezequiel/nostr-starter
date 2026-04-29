@@ -1473,6 +1473,18 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  public subscribeToVisibleNodeTicks(
+    listener: (visibleNodePubkeys: readonly string[]) => void,
+  ): () => void {
+    const sigma = this.sigma
+    if (!sigma) return () => {}
+    const onRender = () => listener(this.getVisibleNodePubkeys())
+    sigma.on('afterRender', onRender)
+    return () => {
+      sigma.off('afterRender', onRender)
+    }
+  }
+
   public subscribeToCameraTicks(listener: () => void): () => void {
     const sigma = this.sigma
     if (!sigma) return () => {}
