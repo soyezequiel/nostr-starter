@@ -4,9 +4,11 @@ Este documento resume el codigo que existe hoy y donde conviene tocarlo. No reem
 
 ## Producto actual
 
-- `/` es la home sin runtime de grafo. Entra por `src/app/page.tsx` y renderiza `src/components/landing/LandingPage.tsx`.
-- `/labs/sigma` es el explorador principal de identidad. Es el unico grafo vivo del producto.
-- `src/components/Navbar.tsx` conecta las rutas publicas y la autenticacion compartida.
+- Las superficies publicas usan prefijo obligatorio de locale: `/{locale}`.
+- `src/app/[locale]/page.tsx` renderiza la landing publica via `src/components/landing/LandingPage.tsx`.
+- `src/app/[locale]/labs/sigma/page.tsx` es el explorador principal de identidad. Es el unico grafo vivo del producto.
+- `src/components/Navbar.tsx` conecta las rutas publicas localizadas y la autenticacion compartida.
+- `proxy.ts` resuelve locale para rutas publicas con esta precedencia: URL explicita, cookie `NEXT_LOCALE`, `Accept-Language`, fallback `es`.
 
 No asumir que existe un grafo v1 en `/`, un switcher de secciones global o `store/nav.ts`.
 
@@ -14,8 +16,9 @@ No asumir que existe un grafo v1 en `/`, un switcher de secciones global o `stor
 
 | Area | Ruta principal | Responsabilidad |
 | --- | --- | --- |
-| Rutas Next | `src/app/` | Entrypoints de paginas, layout global y CSS base |
+| Rutas Next | `src/app/` | Entrypoints de paginas, layout raiz y arbol localizado `src/app/[locale]/` |
 | Componentes compartidos | `src/components/` | Navbar, login, perfil, badges, imagenes y home |
+| I18n publica | `src/i18n/`, `messages/`, `proxy.ts` | Locales soportados, carga de mensajes, helpers de rutas/formatos y resolucion de idioma |
 | Auth compartida | `src/store/auth.ts` | Estado de sesion usado por navbar, profile y badges |
 | Nostr clasico | `src/lib/nostr.ts` | NDK, login, NIP-65, perfiles, followers, following, notas y badges |
 | Media compartida | `src/lib/media.ts` | Normalizacion de imagenes/medios |
@@ -26,7 +29,7 @@ No asumir que existe un grafo v1 en `/`, un switcher de secciones global o `stor
 
 Entrypoints:
 
-- `src/app/labs/sigma/page.tsx`
+- `src/app/[locale]/labs/sigma/page.tsx`
 - `src/features/graph-v2/GraphClientV2.tsx`
 - `src/features/graph-v2/ui/GraphAppV2.tsx`
 
@@ -77,14 +80,25 @@ No existe `physics.worker`: la fisica actual corre desde el renderer de Sigma/Gr
 
 ## Donde tocar
 
-- Nueva ruta: `src/app/<route>/page.tsx` y `src/components/Navbar.tsx`.
-- Cambio de home: `src/components/landing/` y, si cambia la navegacion, `Navbar`.
+- Nueva ruta publica: `src/app/[locale]/<route>/page.tsx`; si tambien debe existir sin prefijo por compatibilidad, agregar un stub en `src/app/<route>/page.tsx` que redirija.
+- Cambio de home: `src/components/landing/`; si cambia la navegacion publica o el selector de idioma, revisar tambien `src/components/Navbar.tsx`, `src/components/LanguageSwitcher.tsx` y `src/i18n/routing.ts`.
 - Perfil, badges o login clasico: `src/lib/nostr.ts`, `src/store/auth.ts` y componentes compartidos.
 - Panel/control de Sigma: `src/features/graph-v2/ui/GraphAppV2.tsx` y componentes `Sigma*`.
 - Semantica del grafo: bridge, proyecciones o dominio en `src/features/graph-v2/`.
 - Discovery, relays, expansion, persistencia o protocolo: `src/features/graph-runtime/kernel/` y `nostr/`.
 - Analisis pesado o parsing masivo: `src/features/graph-runtime/workers/` o `analysis/`.
 - Export/evidencia: `src/features/graph-runtime/export/` y `kernel/modules/export-orch.ts`.
+
+## Internacionalizacion publica
+
+- `src/i18n/routing.ts` es la fuente unica de verdad para `locales`, `defaultLocale`, labels visibles y helper de prefijo.
+- `src/i18n/request.ts` conecta `next-intl` con la carga de mensajes por request.
+- `src/i18n/messages.ts` registra los namespaces que se cargan por locale. Agregar un idioma nuevo requiere:
+  1. sumarlo en `src/i18n/routing.ts`
+  2. copiar `messages/es/` a `messages/<locale>/`
+  3. registrar el locale en `src/i18n/messages.ts`
+- `messages/<locale>/` guarda los namespaces publicos actuales: `common`, `landing`, `profile`, `badges`, `auth`.
+- Sigma ya vive bajo rutas localizadas, pero en esta etapa no traduce su UI interna; solo metadata y navegacion externa.
 
 ## Reglas tecnicas que no conviene romper
 

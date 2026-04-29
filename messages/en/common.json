@@ -1,0 +1,35 @@
+{
+  "languageSwitcher": {
+    "label": "Language",
+    "es": "Español",
+    "en": "English"
+  },
+  "nav": {
+    "home": "Home",
+    "sigma": "Sigma",
+    "profile": "Profile",
+    "badges": "Badges",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "anonymous": "Anonymous",
+    "profilePictureAlt": "Profile picture"
+  },
+  "metadata": {
+    "landing": {
+      "title": "Nostr Espacial | Relay-aware Nostr identity explorer",
+      "description": "Visual explorer to understand relationships, relays, and public identity signals in Nostr."
+    },
+    "profile": {
+      "title": "Profile | Nostr Espacial",
+      "description": "Classic connected profile view with metadata, relationships, and public Nostr activity."
+    },
+    "badges": {
+      "title": "Badges | Nostr Espacial",
+      "description": "Inspect the NIP-58 badges associated with the connected Nostr profile."
+    },
+    "sigma": {
+      "title": "Sigma | Nostr Espacial",
+      "description": "Primary identity graph explorer for Nostr with live relationships, relays, and signals."
+    }
+  }
+}

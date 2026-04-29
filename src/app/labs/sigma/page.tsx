@@ -1,6 +1,6 @@
-import GraphClientV2 from '@/features/graph-v2/GraphClientV2'
+import {redirect} from 'next/navigation';
+import {defaultLocale, localizePathname} from '@/i18n/routing';
 
-export default function SigmaLabPage() {
-  return <GraphClientV2 />
+export default function LegacySigmaPage() {
+  redirect(localizePathname('/labs/sigma', defaultLocale));
 }
-

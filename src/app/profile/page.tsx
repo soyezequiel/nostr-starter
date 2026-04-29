@@ -1,11 +1,6 @@
-import Navbar from '@/components/Navbar';
-import Profile from '@/components/Profile';
+import {redirect} from 'next/navigation';
+import {defaultLocale, localizePathname} from '@/i18n/routing';
 
-export default function ProfilePage() {
-  return (
-    <main className="min-h-[100dvh] bg-lc-black lc-grid-bg">
-      <Navbar />
-      <Profile />
-    </main>
-  );
+export default function LegacyProfilePage() {
+  redirect(localizePathname('/profile', defaultLocale));
 }

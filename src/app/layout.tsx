@@ -1,5 +1,5 @@
-import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import {Inter} from 'next/font/google';
+import {getLocale} from 'next-intl/server';
 import DevCacheButton from '@/components/DevCacheButton';
 import './globals.css';
 
@@ -8,26 +8,15 @@ const inter = Inter({
   weight: ['400', '500', '600', '700', '800'],
 });
 
-export const metadata: Metadata = {
-  title: 'Nostr Espacial',
-  description:
-    'Explorador visual para entender relaciones, relays y señales públicas de identidad en Nostr.',
-};
-
-export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  viewportFit: 'cover',
-  themeColor: '#0a0a0a',
-};
-
-export default function RootLayout({
+export default async function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
+  const locale = await getLocale();
+
   return (
-    <html lang="es" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <body className={`${inter.className} bg-lc-black text-lc-white antialiased`}>
         <DevCacheButton />
         {children}

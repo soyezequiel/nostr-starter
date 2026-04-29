@@ -2,38 +2,14 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { useLocale, useTranslations } from 'next-intl'
 import BrandLogo from '@/components/BrandLogo'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
 import DeveloperZapButton from '@/components/landing/DeveloperZapButton'
 import IdentityPulse from '@/components/landing/IdentityPulse'
 import LandingMotionProvider from '@/components/landing/LandingMotionProvider'
 import Reveal from '@/components/landing/Reveal'
-
-const signalMarks = [
-  { title: 'Relaciones', detail: 'sigo y me siguen' },
-  { title: 'Ordenación', detail: 'simulación física' },
-  { title: 'Zaps', detail: 'en vivo' },
-]
-
-const explorerFlow = [
-  {
-    eyebrow: 'Identidad',
-    title: 'identidad',
-    detail: 'Pega un npub o nprofile y abre el punto de partida.',
-    status: 'root',
-  },
-  {
-    eyebrow: 'Mapa',
-    title: 'mapa vivo',
-    detail: 'Mirá conexiones y relays con simulación física de alto nivel.',
-    status: 'live',
-  },
-  {
-    eyebrow: 'Señal',
-    title: 'zaps',
-    detail: 'Leé zaps en vivo y perfiles como pistas para entender qué está pasando en la red.',
-    status: 'live',
-  },
-]
+import { localizePathname, type Locale } from '@/i18n/routing'
 
 const ecosystem = [
   { name: 'La Crypta', href: 'https://lacrypta.ar/' },
@@ -41,61 +17,94 @@ const ecosystem = [
   { name: 'Nostr', href: 'https://github.com/nostr-protocol/nips' },
 ]
 
-const protocolKinds = [
-  {
-    kind: '0',
-    name: 'Metadata de perfil',
-    purpose:
-      'Hidrata nombre, bio, avatar, nip05 y datos base para Sigma y la vista clasica del perfil.',
-    surfaces: 'Sigma y datos base de identidad',
-    spec: 'NIP-01',
-  },
-  {
-    kind: '1',
-    name: 'Notas publicas',
-    purpose:
-      'Arma la timeline conectada y tambien alimenta la extraccion de texto para keywords y contexto social.',
-    surfaces: 'Timeline conectada y analisis de Sigma',
-    spec: 'NIP-01',
-  },
-  {
-    kind: '3',
-    name: 'Contact list',
-    purpose:
-      'Resuelve follows del root, followers inbound, mutuals, expansion de nodos y paneles de estructura.',
-    surfaces: 'Sigma y estructura de identidad',
-    spec: 'NIP-02',
-  },
-  {
-    kind: '10002',
-    name: 'Relay list',
-    purpose:
-      'Lee los relays preferidos del usuario para discovery relay-aware, mejor cobertura y export mas fiel.',
-    surfaces: 'Sigma, identidad conectada y export',
-    spec: 'NIP-65',
-  },
-  {
-    kind: '9735',
-    name: 'Zap receipts',
-    purpose:
-      'Escucha y parsea recibos de zap para la capa live y el contexto economico sobre nodos visibles.',
-    surfaces: '/labs/sigma',
-    spec: 'NIP-57',
-  },
-  {
-    kind: '10000119',
-    name: 'Primal user info cache',
-    purpose:
-      'Lee media fallbacks y variantes de imagen desde cache2.primal.net para mejorar fotos de perfil.',
-    surfaces: 'Fallback de avatares en Sigma',
-    spec: 'No estandar',
-  },
-] as const
-
 const developerZapLightningAddress =
   process.env.NEXT_PUBLIC_DEV_ZAP_LIGHTNING_ADDRESS
 
 export default function LandingPage() {
+  const t = useTranslations('landing')
+  const locale = useLocale() as Locale
+
+  const signalMarks = [
+    {
+      title: t('signalMarks.relationships.title'),
+      detail: t('signalMarks.relationships.detail'),
+    },
+    {
+      title: t('signalMarks.ordering.title'),
+      detail: t('signalMarks.ordering.detail'),
+    },
+    {
+      title: t('signalMarks.zaps.title'),
+      detail: t('signalMarks.zaps.detail'),
+    },
+  ]
+
+  const explorerFlow = [
+    {
+      eyebrow: t('explorerFlow.identity.eyebrow'),
+      title: t('explorerFlow.identity.title'),
+      detail: t('explorerFlow.identity.detail'),
+      status: t('explorerFlow.identity.status'),
+    },
+    {
+      eyebrow: t('explorerFlow.map.eyebrow'),
+      title: t('explorerFlow.map.title'),
+      detail: t('explorerFlow.map.detail'),
+      status: t('explorerFlow.map.status'),
+    },
+    {
+      eyebrow: t('explorerFlow.signal.eyebrow'),
+      title: t('explorerFlow.signal.title'),
+      detail: t('explorerFlow.signal.detail'),
+      status: t('explorerFlow.signal.status'),
+    },
+  ]
+
+  const protocolKinds = [
+    {
+      kind: '0',
+      name: t('kinds.entries.metadata.name'),
+      purpose: t('kinds.entries.metadata.purpose'),
+      surfaces: t('kinds.entries.metadata.surfaces'),
+      spec: t('kinds.entries.metadata.spec'),
+    },
+    {
+      kind: '1',
+      name: t('kinds.entries.notes.name'),
+      purpose: t('kinds.entries.notes.purpose'),
+      surfaces: t('kinds.entries.notes.surfaces'),
+      spec: t('kinds.entries.notes.spec'),
+    },
+    {
+      kind: '3',
+      name: t('kinds.entries.contacts.name'),
+      purpose: t('kinds.entries.contacts.purpose'),
+      surfaces: t('kinds.entries.contacts.surfaces'),
+      spec: t('kinds.entries.contacts.spec'),
+    },
+    {
+      kind: '10002',
+      name: t('kinds.entries.relays.name'),
+      purpose: t('kinds.entries.relays.purpose'),
+      surfaces: t('kinds.entries.relays.surfaces'),
+      spec: t('kinds.entries.relays.spec'),
+    },
+    {
+      kind: '9735',
+      name: t('kinds.entries.zaps.name'),
+      purpose: t('kinds.entries.zaps.purpose'),
+      surfaces: t('kinds.entries.zaps.surfaces'),
+      spec: t('kinds.entries.zaps.spec'),
+    },
+    {
+      kind: '10000119',
+      name: t('kinds.entries.primal.name'),
+      purpose: t('kinds.entries.primal.purpose'),
+      surfaces: t('kinds.entries.primal.surfaces'),
+      spec: t('kinds.entries.primal.spec'),
+    },
+  ] as const
+
   return (
     <LandingMotionProvider>
       <main className="landing-cypher overflow-hidden bg-[#060606] text-[#f6f1e8]">
@@ -107,7 +116,7 @@ export default function LandingPage() {
           <header className="relative z-10 flex items-center justify-between gap-6 text-sm">
             <Link
               className="block"
-              href="/"
+              href={localizePathname('/', locale)}
             >
               <BrandLogo
                 className="block"
@@ -116,15 +125,18 @@ export default function LandingPage() {
                 sizes="(max-width: 640px) 128px, 150px"
               />
             </Link>
-            <span className="hidden text-[#b8b0a6] sm:block">
-              IDENTITY / NOSTR ESPACIAL
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="hidden text-[#b8b0a6] sm:block">
+                {t('brandContext')}
+              </span>
+              <LanguageSwitcher variant="landing" />
+            </div>
           </header>
 
           <div className="relative z-10 grid min-h-[calc(100svh-76px)] items-center gap-14 py-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(420px,0.95fr)] lg:gap-8 lg:py-16">
             <Reveal className="max-w-2xl">
               <p className="mb-5 text-xs font-semibold uppercase tracking-[0.34em] text-[#ff6675] sm:text-sm">
-                La Crypta IDENTITY
+                {t('eyebrow')}
               </p>
               <h1 className="max-w-4xl text-[3.4rem] font-black leading-[0.88] text-[#f6f1e8] sm:text-[5.4rem] lg:text-[7.4rem]">
                 Nostr
@@ -132,16 +144,15 @@ export default function LandingPage() {
                 Espacial
               </h1>
               <p className="mt-6 max-w-lg text-base leading-7 text-[#cbc2b7] sm:text-lg">
-                Explorá las conexiones de las personas. Cargá un ID de Nostr,
-                explorá sus relaciones, mirá los zaps en vivo, entrá a los perfiles y entendé su red.
+                {t('heroDescription')}
               </p>
 
               <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:flex-wrap sm:items-center">
                 <Link
                   className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#ff4b5d] px-6 text-base font-bold text-[#080808] shadow-[0_0_44px_rgba(255,75,93,0.24)] transition hover:bg-[#ff6a78] focus:outline-none focus:ring-2 focus:ring-[#ff9aa4] focus:ring-offset-2 focus:ring-offset-[#060606]"
-                  href="/labs/sigma"
+                  href={localizePathname('/labs/sigma', locale)}
                 >
-                  Explorar conexiones
+                  {t('exploreCta')}
                 </Link>
                 <DeveloperZapButton
                   lightningAddress={developerZapLightningAddress}
@@ -149,7 +160,7 @@ export default function LandingPage() {
                 <div className="flex flex-wrap gap-3 text-sm">
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">
                     <span className="h-2.5 w-2.5 rounded-full border border-[#ada59b]/60" />
-                    Grafo interactivo
+                    {t('interactiveGraph')}
                   </span>
                 </div>
               </div>
@@ -178,20 +189,20 @@ export default function LandingPage() {
                 <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(6,6,6,0.7),transparent)]" />
                 <div className="absolute left-6 top-6 flex items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-[#f6f1e8]">
                   <span className="h-2 w-2 rounded-full bg-[#ff4b5d]" />
-                  Nostr Espacial live
+                  {t('preview.liveLabel')}
                 </div>
                 <div className="absolute right-6 top-6 text-right">
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-[#918980]">
-                    Relay-aware
+                    {t('preview.relayAware')}
                   </p>
-                  <p className="mt-2 text-3xl font-black text-[#f6f1e8]">mapa</p>
+                  <p className="mt-2 text-3xl font-black text-[#f6f1e8]">{t('preview.map')}</p>
                 </div>
                 <div className="absolute left-6 top-24 text-[10rem] font-black leading-none tracking-[-0.08em] text-[#f6f1e8]/7 sm:text-[12rem]">
                   01
                 </div>
                 <div className="absolute inset-[12%] rounded-[1.6rem] border border-[#ffffff14] bg-[#0f0f0f]">
                   <Image
-                    alt="Vista del explorador de identidad Nostr"
+                    alt={t('preview.imageAlt')}
                     className="h-full w-full object-cover opacity-60 mix-blend-screen"
                     fill
                     loading="eager"
@@ -203,17 +214,17 @@ export default function LandingPage() {
                 <div className="absolute bottom-6 left-6 right-6 flex items-end justify-between gap-6">
                   <div>
                     <p className="text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-[#8f877f]">
-                      Identity graph
+                      {t('preview.identityGraph')}
                     </p>
                     <p className="mt-2 text-xl font-bold text-[#f6f1e8]">
-                      relays, mutuals y contexto verificable
+                      {t('preview.identityGraphDetail')}
                     </p>
                   </div>
                   <div className="hidden text-right lg:block">
                     <p className="text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-[#8f877f]">
-                      Signal mode
+                      {t('preview.signalMode')}
                     </p>
-                    <p className="mt-2 text-sm text-[#cbc2b7]">stale y contexto social</p>
+                    <p className="mt-2 text-sm text-[#cbc2b7]">{t('preview.signalModeDetail')}</p>
                   </div>
                 </div>
               </div>
@@ -226,14 +237,14 @@ export default function LandingPage() {
             <Reveal className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-2xl">
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#ff6675]">
-                  Nostr Espacial hoy
+                  {t('today.eyebrow')}
                 </p>
                 <h2 className="mt-4 text-4xl font-black leading-tight text-[#f6f1e8] sm:text-5xl">
-                  Constelación de personas
+                  {t('today.title')}
                 </h2>
               </div>
               <p className="max-w-md text-sm leading-6 text-[#a9a197] sm:text-base">
-                Cargá una npub, mirá sus conexiones y expandí otros perfiles.
+                {t('today.description')}
               </p>
             </Reveal>
 
@@ -268,7 +279,7 @@ export default function LandingPage() {
                     {index < explorerFlow.length - 1 ? (
                       <div className="mt-6 flex items-center gap-3 text-[#ff4b5d] lg:hidden">
                         <span className="h-px flex-1 bg-[#ff4b5d]/40" />
-                        <span className="font-mono text-xs uppercase tracking-[0.24em]">sigue</span>
+                        <span className="font-mono text-xs uppercase tracking-[0.24em]">{t('explorerFlow.continue')}</span>
                       </div>
                     ) : null}
                   </Reveal>
@@ -283,16 +294,14 @@ export default function LandingPage() {
             <Reveal className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-3xl">
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#ff6675]">
-                  Kinds en uso
+                  {t('kinds.eyebrow')}
                 </p>
                 <h2 className="mt-4 text-4xl font-black leading-tight text-[#f6f1e8] sm:text-5xl">
-                  Que kinds usa hoy el proyecto
+                  {t('kinds.title')}
                 </h2>
               </div>
               <p className="max-w-xl text-sm leading-6 text-[#a9a197] sm:text-base">
-                Estos son los kinds que el producto consulta o interpreta hoy. Salen del codigo actual de
-                {' '}
-                Sigma y la identidad conectada.
+                {t('kinds.description')}
               </p>
             </Reveal>
 
@@ -319,7 +328,7 @@ export default function LandingPage() {
                   </p>
                   <div className="mt-5 border-t border-[#ffffff12] pt-3">
                     <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[#8f877f]">
-                      Donde entra
+                      {t('kinds.surfacesLabel')}
                     </p>
                     <p className="mt-2 text-sm text-[#a9a197]">
                       {entry.surfaces}
@@ -337,28 +346,27 @@ export default function LandingPage() {
           <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
             <Reveal className="max-w-xl">
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#ff6675]">
-                Demo principal
+                {t('demo.eyebrow')}
               </p>
               <h2 className="mt-4 text-4xl font-black leading-tight text-[#f6f1e8] sm:text-5xl">
-                Entrá por Nostr Espacial.
+                {t('demo.title')}
               </h2>
               <p className="mt-4 max-w-lg text-sm leading-6 text-[#b9b0a5] sm:text-base">
-                Entrá directo al mapa: explorá relaciones reales, leé zaps en vivo
-                y abrí perfiles para entender cómo se arma cada red.
+                {t('demo.description')}
               </p>
             </Reveal>
 
             <Reveal className="border-y border-[#ffffff12] py-8" delay={0.08}>
               <Link
                 className="group flex items-center justify-between gap-6"
-                href="/labs/sigma"
+                href={localizePathname('/labs/sigma', locale)}
               >
                 <div>
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.26em] text-[#8f877f]">
-                    Ruta del producto
+                    {t('demo.routeLabel')}
                   </p>
                   <p className="mt-2 text-4xl font-black tracking-[-0.055em] text-[#f6f1e8] transition group-hover:text-[#ff7b88] sm:text-6xl">
-                    Abrir Nostr Espacial
+                    {t('demo.cta')}
                   </p>
                 </div>
                 <span className="text-2xl text-[#ff6675] transition group-hover:translate-x-1">
@@ -377,7 +385,7 @@ export default function LandingPage() {
                 imageClassName="h-14 w-auto object-contain sm:h-16"
               />
               <p className="mt-3 max-w-md text-sm leading-6 text-[#9c948a]">
-                Proyecto participante de La Crypta IDENTITY Hackathon 2026 para explorar relaciones Nostr.
+                {t('footer.description')}
               </p>
             </Reveal>
 

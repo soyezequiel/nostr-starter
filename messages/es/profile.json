@@ -1,0 +1,30 @@
+{
+  "loading": {
+    "connectedProfile": "Cargando perfil conectado",
+    "prepare": "Preparando perfil...",
+    "connectNdk": "Conectando NDK y preparando relays del perfil...",
+    "parallelFetch": "Consultando followers, following y notas recientes en paralelo...",
+    "followersEstimated": "Followers estimados ({count}). Esperando follows y notas...",
+    "followingLoaded": "Following cargado ({count}). Terminando timeline de notas...",
+    "notesLoaded": "Notas recientes cargadas ({count}). Normalizando la vista...",
+    "applyData": "Aplicando metadata, contadores y timeline al perfil...",
+    "partialError": "La carga terminó con cobertura parcial o error de relay."
+  },
+  "empty": {
+    "description": "Conectá tu identidad para abrir la vista clásica del perfil y revisar actividad pública en Nostr",
+    "extension": "Extensión"
+  },
+  "labels": {
+    "bannerAlt": "Banner del perfil",
+    "profilePictureAlt": "Foto de perfil",
+    "following": "Following",
+    "followers": "Followers",
+    "notes": "Notas",
+    "publicKey": "Public Key",
+    "posts": "Posts",
+    "replies": "Replies",
+    "noReplies": "Todavía no hay replies",
+    "noPosts": "Todavía no hay posts",
+    "anonymous": "Anónimo"
+  }
+}

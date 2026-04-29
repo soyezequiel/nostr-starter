@@ -1,0 +1,30 @@
+{
+  "loading": {
+    "connectedProfile": "Loading connected profile",
+    "prepare": "Preparing profile...",
+    "connectNdk": "Connecting NDK and preparing profile relays...",
+    "parallelFetch": "Fetching followers, following, and recent notes in parallel...",
+    "followersEstimated": "Estimated followers ({count}). Waiting for follows and notes...",
+    "followingLoaded": "Following loaded ({count}). Finishing the notes timeline...",
+    "notesLoaded": "Recent notes loaded ({count}). Normalizing the view...",
+    "applyData": "Applying metadata, counters, and timeline to the profile...",
+    "partialError": "The load finished with partial coverage or a relay error."
+  },
+  "empty": {
+    "description": "Connect your identity to open the classic profile view and inspect public activity on Nostr",
+    "extension": "Extension"
+  },
+  "labels": {
+    "bannerAlt": "Profile banner",
+    "profilePictureAlt": "Profile picture",
+    "following": "Following",
+    "followers": "Followers",
+    "notes": "Notes",
+    "publicKey": "Public Key",
+    "posts": "Posts",
+    "replies": "Replies",
+    "noReplies": "No replies yet",
+    "noPosts": "No posts yet",
+    "anonymous": "Anonymous"
+  }
+}

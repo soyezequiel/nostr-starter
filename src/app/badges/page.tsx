@@ -1,11 +1,6 @@
-import Navbar from '@/components/Navbar';
-import Badges from '@/components/Badges';
+import {redirect} from 'next/navigation';
+import {defaultLocale, localizePathname} from '@/i18n/routing';
 
-export default function BadgesPage() {
-  return (
-    <main className="min-h-[100dvh] bg-lc-black lc-grid-bg">
-      <Navbar />
-      <Badges />
-    </main>
-  );
+export default function LegacyBadgesPage() {
+  redirect(localizePathname('/badges', defaultLocale));
 }

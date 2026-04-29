@@ -1,5 +1,6 @@
-import LandingPage from '@/components/landing/LandingPage'
+import {redirect} from 'next/navigation';
+import {defaultLocale, localizePathname} from '@/i18n/routing';
 
-export default function Home() {
-  return <LandingPage />
+export default function LegacyRootPage() {
+  redirect(localizePathname('/', defaultLocale));
 }

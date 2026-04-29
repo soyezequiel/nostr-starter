@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useFormatter, useTranslations } from 'next-intl'
 import { QRCodeSVG } from 'qrcode.react'
 
 type DeveloperZapButtonProps = {
@@ -24,11 +25,33 @@ type LnurlInvoiceResponse = {
 const DEFAULT_AMOUNTS = [1000, 5000, 21000]
 const REQUEST_TIMEOUT_MS = 12000
 
+type ZapErrorCode =
+  | 'invalid_lightning_address'
+  | 'invalid_lnurl_response'
+  | 'missing_lnurl_fields'
+  | 'insecure_callback'
+  | 'invoice_creation_failed'
+  | 'missing_invoice'
+  | 'missing_webln'
+  | 'prepare_zap'
+  | 'copy_invoice'
+
+class ZapError extends Error {
+  code: ZapErrorCode | 'upstream_status'
+  status?: number
+
+  constructor(code: ZapErrorCode | 'upstream_status', status?: number) {
+    super(code)
+    this.code = code
+    this.status = status
+  }
+}
+
 function parseLightningAddress(address: string) {
   const normalized = address.trim().toLowerCase()
   const [name, domain, ...rest] = normalized.split('@')
   if (!name || !domain || rest.length > 0) {
-    throw new Error('La Lightning Address no tiene formato usuario@dominio.')
+    throw new ZapError('invalid_lightning_address')
   }
   return {
     name,
@@ -39,7 +62,7 @@ function parseLightningAddress(address: string) {
 
 function assertLnurlPayResponse(value: unknown): asserts value is LnurlPayResponse {
   if (!value || typeof value !== 'object') {
-    throw new Error('El servidor LNURL no devolvio una respuesta valida.')
+    throw new ZapError('invalid_lnurl_response')
   }
 
   const candidate = value as Partial<LnurlPayResponse>
@@ -49,11 +72,11 @@ function assertLnurlPayResponse(value: unknown): asserts value is LnurlPayRespon
     typeof candidate.minSendable !== 'number' ||
     typeof candidate.metadata !== 'string'
   ) {
-    throw new Error('La Lightning Address no expone un endpoint LNURL-pay completo.')
+    throw new ZapError('missing_lnurl_fields')
   }
 
   if (!candidate.callback.startsWith('https://')) {
-    throw new Error('Por seguridad, el callback LNURL-pay debe usar HTTPS.')
+    throw new ZapError('insecure_callback')
   }
 }
 
@@ -67,7 +90,7 @@ async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
       signal: controller.signal,
     })
     if (!response.ok) {
-      throw new Error(`El servidor respondio ${response.status}.`)
+      throw new ZapError('upstream_status', response.status)
     }
     return (await response.json()) as T
   } finally {
@@ -92,9 +115,11 @@ function buildInvoiceUrl(lnurl: LnurlPayResponse, amountSats: number, comment: s
 }
 
 export default function DeveloperZapButton({ lightningAddress }: DeveloperZapButtonProps) {
+  const t = useTranslations('landing.zap')
+  const format = useFormatter()
   const [isOpen, setIsOpen] = useState(false)
   const [amountSats, setAmountSats] = useState(DEFAULT_AMOUNTS[0])
-  const [comment, setComment] = useState('Gracias por construir Nostr Espacial.')
+  const [comment, setComment] = useState(() => t('defaultComment'))
   const [invoice, setInvoice] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'invoice' | 'paid'>('idle')
@@ -102,7 +127,6 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
   const [copied, setCopied] = useState(false)
 
   const normalizedAddress = lightningAddress?.trim()
-
   const commentLimit = useMemo(() => Math.max(0, 140), [])
 
   const openModal = useCallback(() => {
@@ -116,6 +140,19 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
   const closeModal = useCallback(() => {
     setIsOpen(false)
   }, [])
+
+  const resolveErrorMessage = useCallback(
+    (input: unknown) => {
+      if (input instanceof ZapError) {
+        if (input.code === 'upstream_status') {
+          return t('errors.upstreamStatus', { status: input.status ?? 500 })
+        }
+        return t(`errors.${input.code}` as never)
+      }
+      return t('errors.prepareZap')
+    },
+    [t],
+  )
 
   useEffect(() => {
     if (!isOpen) return
@@ -151,10 +188,10 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
         const invoiceResponse = await fetchJsonWithTimeout<LnurlInvoiceResponse>(invoiceUrl)
 
         if (invoiceResponse.status === 'ERROR') {
-          throw new Error(invoiceResponse.reason ?? 'No se pudo crear la factura Lightning.')
+          throw new ZapError('invoice_creation_failed')
         }
         if (!invoiceResponse.pr) {
-          throw new Error('El servidor LNURL no devolvio una factura BOLT11.')
+          throw new ZapError('missing_invoice')
         }
 
         receivedInvoice = invoiceResponse.pr
@@ -163,18 +200,18 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
 
         if (payWithWebln) {
           if (!window.webln) {
-            throw new Error('No se detecto WebLN en este navegador.')
+            throw new ZapError('missing_webln')
           }
           await window.webln.enable()
           await window.webln.sendPayment(receivedInvoice)
           setStatus('paid')
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo preparar el zap.')
+        setError(resolveErrorMessage(err))
         setStatus(receivedInvoice ? 'invoice' : 'idle')
       }
     },
-    [amountSats, comment, normalizedAddress],
+    [amountSats, comment, normalizedAddress, resolveErrorMessage],
   )
 
   const copyInvoice = useCallback(async () => {
@@ -184,9 +221,9 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1800)
     } catch {
-      setError('No se pudo copiar la factura desde el navegador.')
+      setError(t('errors.copyInvoice'))
     }
-  }, [invoice])
+  }, [invoice, t])
 
   if (!normalizedAddress) {
     return null
@@ -200,7 +237,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
         type="button"
       >
         <span className="text-[#ff6675] transition group-hover:scale-110">zap</span>
-        Zapea al desarrollador
+        {t('button')}
       </button>
 
       {isOpen ? (
@@ -221,14 +258,14 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                     className="mt-2 text-2xl font-black tracking-[-0.04em] text-[#f6f1e8]"
                     id="developer-zap-title"
                   >
-                    Zapea al desarrollador
+                    {t('title')}
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-[#ada59b]">
-                    Envia sats a {normalizedAddress} para apoyar el desarrollo del explorador.
+                    {t('description', { address: normalizedAddress })}
                   </p>
                 </div>
                 <button
-                  aria-label="Cerrar modal de zap"
+                  aria-label={t('modalAriaLabel')}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#ffffff14] text-[#b8b0a6] transition hover:border-[#ff7b88]/50 hover:text-[#ff9aa4]"
                   onClick={closeModal}
                   type="button"
@@ -252,14 +289,14 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                     type="button"
                   >
                     <span className="whitespace-nowrap">
-                      {amount.toLocaleString('es-AR')} sats
+                      {format.number(amount)} sats
                     </span>
                   </button>
                 ))}
               </div>
 
               <label className="mt-5 block text-sm font-semibold text-[#f6f1e8]" htmlFor="zap-amount">
-                Monto personalizado
+                {t('customAmount')}
               </label>
               <div className="mt-2 flex items-center rounded-2xl border border-[#ffffff18] bg-[#ffffff08] px-3">
                 <input
@@ -274,7 +311,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
               </div>
 
               <label className="mt-5 block text-sm font-semibold text-[#f6f1e8]" htmlFor="zap-comment">
-                Mensaje
+                {t('message')}
               </label>
               <textarea
                 className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-[#ffffff18] bg-[#ffffff08] p-3 text-sm leading-6 text-[#f6f1e8] outline-none transition placeholder:text-[#6f6861] focus:border-[#ff6675]/60"
@@ -284,7 +321,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                 value={comment}
               />
               <p className="mt-2 text-xs text-[#8f877f]">
-                {comment.length}/{commentLimit} caracteres
+                {t('characters', { count: comment.length, limit: commentLimit })}
               </p>
 
               {error ? (
@@ -295,7 +332,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
 
               {status === 'paid' ? (
                 <div className="mt-5 rounded-2xl border border-[#ff6675]/25 bg-[#ff4b5d]/10 p-4 text-sm leading-6 text-[#f6f1e8]">
-                  Pago enviado por WebLN. Gracias por apoyar el desarrollo.
+                  {t('paid')}
                 </div>
               ) : null}
 
@@ -315,14 +352,14 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                       className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full bg-[#ff4b5d] px-4 text-sm font-bold text-[#080808] transition hover:bg-[#ff6a78]"
                       href={`lightning:${invoice}`}
                     >
-                      Abrir wallet
+                      {t('openWallet')}
                     </a>
                     <button
                       className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full border border-[#ffffff18] px-4 text-sm font-bold text-[#f6f1e8] transition hover:border-[#ff6675]/60"
                       onClick={copyInvoice}
                       type="button"
                     >
-                      {copied ? 'Copiada' : 'Copiar factura'}
+                      {copied ? t('copiedInvoice') : t('copyInvoice')}
                     </button>
                   </div>
                 </div>
@@ -336,7 +373,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                     onClick={() => void createInvoice(true)}
                     type="button"
                   >
-                    {status === 'loading' ? 'Preparando...' : 'Pagar con WebLN'}
+                    {status === 'loading' ? t('prepare') : t('payWithWebln')}
                   </button>
                 ) : null}
                 <button
@@ -345,7 +382,7 @@ export default function DeveloperZapButton({ lightningAddress }: DeveloperZapBut
                   onClick={() => void createInvoice(false)}
                   type="button"
                 >
-                  {status === 'loading' ? 'Preparando...' : 'Generar QR'}
+                  {status === 'loading' ? t('prepare') : t('generateInvoice')}
                 </button>
               </div>
             </div>

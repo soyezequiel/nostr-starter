@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
 import { useAuthStore } from '@/store/auth';
 import { getNDK, connectNDK } from '@/lib/nostr';
@@ -16,28 +17,28 @@ interface Badge {
   creator: string;
 }
 
-function BadgesSkeleton({ status }: { status: string }) {
+function BadgesSkeleton({ status, title }: { status: string; title: string }) {
   return (
     <div className="min-h-[100dvh] px-4 pb-12 pt-28 sm:px-6 sm:pt-24">
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 space-y-2">
-          <div className="lc-skeleton h-8 w-32" />
-          <div className="lc-skeleton h-4 w-64" />
+          <div className="h-8 w-32 lc-skeleton" />
+          <div className="h-4 w-64 lc-skeleton" />
         </div>
         <div
           aria-live="polite"
           className="mb-5 rounded-lg border border-lc-green/20 bg-lc-green/10 px-4 py-3 text-sm text-lc-white"
           role="status"
         >
-          <div className="font-semibold text-lc-green">Cargando badges NIP-58</div>
+          <div className="font-semibold text-lc-green">{title}</div>
           <div className="mt-1 text-lc-muted">{status}</div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-12">
+        <div className="grid grid-cols-2 gap-3 pb-12 sm:grid-cols-3 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="lc-card p-4 flex flex-col items-center">
-              <div className="w-20 h-20 lc-skeleton-rounded mb-3" />
-              <div className="lc-skeleton h-4 w-20 mb-1" />
-              <div className="lc-skeleton h-3 w-28" />
+            <div key={i} className="lc-card flex flex-col items-center p-4">
+              <div className="mb-3 h-20 w-20 lc-skeleton-rounded" />
+              <div className="mb-1 h-4 w-20 lc-skeleton" />
+              <div className="h-3 w-28 lc-skeleton" />
             </div>
           ))}
         </div>
@@ -48,9 +49,14 @@ function BadgesSkeleton({ status }: { status: string }) {
 
 export default function Badges() {
   const { isConnected, profile } = useAuthStore();
+  const t = useTranslations('badges');
   const [badges, setBadges] = useState<Badge[]>([]);
   const [loading, setLoading] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState('Preparando consulta de badges...');
+  const [loadingStatus, setLoadingStatus] = useState(t('loading.prepare'));
+
+  useEffect(() => {
+    setLoadingStatus(t('loading.prepare'));
+  }, [t]);
 
   useEffect(() => {
     if (!isConnected || !profile) return;
@@ -59,7 +65,7 @@ export default function Badges() {
 
     const loadBadges = async () => {
       setLoading(true);
-      setLoadingStatus('Conectando NDK para leer awards kind:8...');
+      setLoadingStatus(t('loading.connectNdk'));
 
       try {
         await connectNDK();
@@ -67,7 +73,7 @@ export default function Badges() {
 
         if (cancelled) return;
 
-        setLoadingStatus('Buscando awards kind:8 recibidos por tu pubkey...');
+        setLoadingStatus(t('loading.searchAwards'));
         const awardEvents = await Promise.race([
           ndk.fetchEvents({ kinds: [8], '#p': [profile.pubkey], limit: 50 }),
           new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 10000)),
@@ -77,10 +83,15 @@ export default function Badges() {
 
         const badgeDefIds = new Set<string>();
         awardEvents.forEach((event: NDKEvent) => {
-          const aTag = event.tags.find(t => t[0] === 'a' && t[1]?.startsWith('30009:'));
+          const aTag = event.tags.find((tag) => tag[0] === 'a' && tag[1]?.startsWith('30009:'));
           if (aTag) badgeDefIds.add(aTag[1]);
         });
-        setLoadingStatus(`Awards encontrados: ${awardEvents.size}. Resolviendo ${badgeDefIds.size} definiciones kind:30009...`);
+        setLoadingStatus(
+          t('loading.awardsFound', {
+            awards: awardEvents.size,
+            definitions: badgeDefIds.size,
+          }),
+        );
 
         const results = await Promise.allSettled(
           Array.from(badgeDefIds).map(async (defId, index) => {
@@ -88,8 +99,15 @@ export default function Badges() {
             if (!pubkey || !dTag) return null;
 
             if (!cancelled) {
-              setLoadingStatus(`Resolviendo definicion ${index + 1}/${badgeDefIds.size}: ${dTag}`);
+              setLoadingStatus(
+                t('loading.resolveDefinition', {
+                  index: index + 1,
+                  total: badgeDefIds.size,
+                  tag: dTag,
+                }),
+              );
             }
+
             const defEvents = await Promise.race([
               ndk.fetchEvents({ kinds: [30009], authors: [pubkey], '#d': [dTag], limit: 1 }),
               new Promise<Set<NDKEvent>>((resolve) => setTimeout(() => resolve(new Set()), 5000)),
@@ -98,28 +116,28 @@ export default function Badges() {
             const defEvent = Array.from(defEvents)[0];
             if (!defEvent) return null;
 
-            const name = defEvent.tags.find(t => t[0] === 'name')?.[1] || dTag;
-            const description = defEvent.tags.find(t => t[0] === 'description')?.[1] || '';
-            const image = defEvent.tags.find(t => t[0] === 'image')?.[1];
-            const thumb = defEvent.tags.find(t => t[0] === 'thumb')?.[1];
+            const name = defEvent.tags.find((tag) => tag[0] === 'name')?.[1] || dTag;
+            const description = defEvent.tags.find((tag) => tag[0] === 'description')?.[1] || '';
+            const image = defEvent.tags.find((tag) => tag[0] === 'image')?.[1];
+            const thumb = defEvent.tags.find((tag) => tag[0] === 'thumb')?.[1];
 
             return { id: defId, name, description, image, thumb, creator: pubkey } as Badge;
           }),
         );
 
         const parsedBadges = results
-          .filter((r): r is PromiseFulfilledResult<Badge | null> => r.status === 'fulfilled')
-          .map((r) => r.value)
-          .filter((b): b is Badge => b !== null);
+          .filter((result): result is PromiseFulfilledResult<Badge | null> => result.status === 'fulfilled')
+          .map((result) => result.value)
+          .filter((badge): badge is Badge => badge !== null);
 
         if (!cancelled) {
-          setLoadingStatus(`Normalizando media y preparando ${parsedBadges.length} badges visibles...`);
+          setLoadingStatus(t('loading.normalize', { count: parsedBadges.length }));
           setBadges(parsedBadges);
         }
       } catch (error) {
         if (!cancelled) {
           console.error('Error loading badges:', error);
-          setLoadingStatus('La carga de badges termino con error o cobertura parcial.');
+          setLoadingStatus(t('loading.partialError'));
         }
       } finally {
         if (!cancelled) {
@@ -133,31 +151,31 @@ export default function Badges() {
     return () => {
       cancelled = true;
     };
-  }, [isConnected, profile]);
+  }, [isConnected, profile, t]);
 
   if (!isConnected || !profile) return null;
 
   if (loading) {
-    return <BadgesSkeleton status={loadingStatus} />;
+    return <BadgesSkeleton status={loadingStatus} title={t('loading.title')} />;
   }
 
   return (
     <div className="min-h-[100dvh] px-4 pb-12 pt-28 sm:px-6 sm:pt-24">
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-lc-white tracking-tight">Badges</h1>
-          <p className="text-lc-muted mt-1">Nostr badges awarded to your profile (NIP-58)</p>
+          <h1 className="text-2xl font-extrabold tracking-tight text-lc-white sm:text-3xl">{t('page.title')}</h1>
+          <p className="mt-1 text-lc-muted">{t('page.description')}</p>
         </div>
 
         {badges.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="w-16 h-16 mx-auto mb-4 bg-lc-dark rounded-2xl flex items-center justify-center border border-lc-border/50">
+          <div className="py-16 text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-lc-border/50 bg-lc-dark">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="1.5">
                 <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
               </svg>
             </div>
-            <p className="text-lc-muted text-sm mb-1">No badges yet</p>
-            <p className="text-lc-muted/60 text-xs">Badges you receive from the Nostr network will appear here</p>
+            <p className="mb-1 text-sm text-lc-muted">{t('page.emptyTitle')}</p>
+            <p className="text-xs text-lc-muted/60">{t('page.emptyDescription')}</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 pb-12 md:grid-cols-3 xl:grid-cols-4">
@@ -167,31 +185,31 @@ export default function Badges() {
               return (
                 <div key={badge.id} className="lc-card flex flex-col items-center p-4 text-center sm:p-5">
                   {badgeImage ? (
-                  <div className="w-20 h-20 rounded-xl overflow-hidden mb-3">
-                    <SkeletonImage
-                      src={badgeImage}
-                      alt={badge.name}
-                      sizes="80px"
-                      className="object-cover"
-                      fallback={
-                        <div className="w-full h-full rounded-xl bg-lc-olive/40 flex items-center justify-center">
-                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5">
-                            <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
-                          </svg>
-                        </div>
-                      }
-                    />
-                  </div>
+                    <div className="mb-3 h-20 w-20 overflow-hidden rounded-xl">
+                      <SkeletonImage
+                        src={badgeImage}
+                        alt={badge.name}
+                        sizes="80px"
+                        className="object-cover"
+                        fallback={
+                          <div className="flex h-full w-full items-center justify-center rounded-xl bg-lc-olive/40">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5">
+                              <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
+                            </svg>
+                          </div>
+                        }
+                      />
+                    </div>
                   ) : (
-                    <div className="w-20 h-20 rounded-xl bg-lc-olive/40 flex items-center justify-center mb-3">
+                    <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-xl bg-lc-olive/40">
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#b4f953" strokeWidth="1.5">
                         <path d="M12 15l-2 5l9-6.5H13L15 2l-9 8.5h7z"/>
                       </svg>
                     </div>
                   )}
-                  <div className="font-semibold text-lc-white text-sm">{badge.name}</div>
+                  <div className="text-sm font-semibold text-lc-white">{badge.name}</div>
                   {badge.description && (
-                    <div className="text-xs text-lc-muted mt-1 line-clamp-2">{badge.description}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-lc-muted">{badge.description}</div>
                   )}
                 </div>
               );

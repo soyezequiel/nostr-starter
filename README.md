@@ -53,9 +53,12 @@ El explorador de identidades de nostr espacial ofrece varias interacciones clave
 
 | Ruta | Para que sirve |
 | --- | --- |
-| `/` | Landing de entrada con narrativa de producto |
-| `/labs/sigma` | Explorador principal del grafo de identidad con Sigma y captura PNG social |
+| `/{locale}` | Landing de entrada con narrativa de producto y selector de idioma |
+| `/{locale}/labs/sigma` | Explorador principal del grafo de identidad con Sigma y captura PNG social |
+| `/{locale}/profile` | Vista clasica del perfil conectado |
+| `/{locale}/badges` | Vista de badges NIP-58 del perfil conectado |
 
+Locales iniciales soportados: `es`, `en`.
 
 ## Stack
 
@@ -89,11 +92,37 @@ Para mostrar el boton **Zapea al desarrollador** en la landing, configura:
 NEXT_PUBLIC_DEV_ZAP_LIGHTNING_ADDRESS=naranja@walletofsatoshi.com
 ```
 
+Para definir la URL canonica usada en metadata localizada y `hreflang`, puedes configurar:
+
+```bash
+NEXT_PUBLIC_SITE_URL=https://nostr-en-el-espacio.vercel.app
+```
+
+## Internacionalizacion
+
+- Las rutas publicas usan prefijo obligatorio de locale, por ejemplo: `/es`, `/en`, `/es/profile`.
+- La resolucion de idioma prioriza:
+  1. locale explicito en la URL
+  2. cookie `NEXT_LOCALE`
+  3. header `Accept-Language`
+  4. fallback `es`
+- La primera entrega traduce landing, navbar, login modal, profile, badges y metadata publica.
+- Sigma ya entra por rutas localizadas, pero su UI interna sigue igual por ahora.
+
+### Agregar un idioma nuevo
+
+1. Registra el locale en `src/i18n/routing.ts`.
+2. Copia `messages/es/` como `messages/<nuevo-locale>/`.
+3. Traduce los valores.
+4. Registra ese locale en `src/i18n/messages.ts`.
+5. Corre `npm run lint` y `npm run build`.
+
 ## Validacion
 
 ```bash
 npm run lint
 npm run build
+npx tsx --test src/i18n/messages.test.ts src/i18n/proxy.test.ts
 ```
 
 ## Arquitectura rapida
@@ -110,7 +139,7 @@ src/
 ```
 ## Nota importante
 
-La superficie principal del producto es el grafo Sigma en `/labs/sigma`. `/` funciona como landing de entrada para orientar la demo y enviar a las rutas clave; `profile` sigue siendo util, pero la historia mas fuerte del proyecto esta en la exploracion de identidad, y la visualizacion de los zaps en vivo.
+La superficie principal del producto es el grafo Sigma en `/{locale}/labs/sigma`. `/{locale}` funciona como landing de entrada para orientar la demo y enviar a las rutas clave; `profile` sigue siendo util, pero la historia mas fuerte del proyecto esta en la exploracion de identidad y la visualizacion de los zaps en vivo.
 
 ## Solución de problemas
 

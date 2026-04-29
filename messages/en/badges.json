@@ -1,0 +1,18 @@
+{
+  "loading": {
+    "title": "Loading NIP-58 badges",
+    "prepare": "Preparing badge query...",
+    "connectNdk": "Connecting NDK to read kind:8 awards...",
+    "searchAwards": "Searching for kind:8 awards received by your pubkey...",
+    "awardsFound": "Awards found: {awards}. Resolving {definitions} kind:30009 definitions...",
+    "resolveDefinition": "Resolving definition {index}/{total}: {tag}",
+    "normalize": "Normalizing media and preparing {count} visible badges...",
+    "partialError": "Badge loading finished with an error or partial coverage."
+  },
+  "page": {
+    "title": "Badges",
+    "description": "Nostr badges awarded to your profile (NIP-58)",
+    "emptyTitle": "No badges yet",
+    "emptyDescription": "Badges you receive from the Nostr network will appear here"
+  }
+}

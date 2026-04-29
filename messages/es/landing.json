@@ -1,0 +1,141 @@
+{
+  "brandContext": "IDENTITY / NOSTR ESPACIAL",
+  "eyebrow": "La Crypta IDENTITY",
+  "heroDescription": "Explorá las conexiones de las personas. Cargá un ID de Nostr, explorá sus relaciones, mirá los zaps en vivo, entrá a los perfiles y entendé su red.",
+  "exploreCta": "Explorar conexiones",
+  "interactiveGraph": "Grafo interactivo",
+  "signalMarks": {
+    "relationships": {
+      "title": "Relaciones",
+      "detail": "sigo y me siguen"
+    },
+    "ordering": {
+      "title": "Ordenación",
+      "detail": "simulación física"
+    },
+    "zaps": {
+      "title": "Zaps",
+      "detail": "en vivo"
+    }
+  },
+  "preview": {
+    "liveLabel": "Nostr Espacial live",
+    "relayAware": "Relay-aware",
+    "map": "mapa",
+    "identityGraph": "Identity graph",
+    "identityGraphDetail": "relays, mutuals y contexto verificable",
+    "signalMode": "Signal mode",
+    "signalModeDetail": "stale y contexto social",
+    "imageAlt": "Vista del explorador de identidad Nostr"
+  },
+  "today": {
+    "eyebrow": "Nostr Espacial hoy",
+    "title": "Constelación de personas",
+    "description": "Cargá una npub, mirá sus conexiones y expandí otros perfiles."
+  },
+  "explorerFlow": {
+    "identity": {
+      "eyebrow": "Identidad",
+      "title": "identidad",
+      "detail": "Pega un npub o nprofile y abre el punto de partida.",
+      "status": "root"
+    },
+    "map": {
+      "eyebrow": "Mapa",
+      "title": "mapa vivo",
+      "detail": "Mirá conexiones y relays con simulación física de alto nivel.",
+      "status": "live"
+    },
+    "signal": {
+      "eyebrow": "Señal",
+      "title": "zaps",
+      "detail": "Leé zaps en vivo y perfiles como pistas para entender qué está pasando en la red.",
+      "status": "live"
+    },
+    "continue": "sigue"
+  },
+  "kinds": {
+    "eyebrow": "Kinds en uso",
+    "title": "Qué kinds usa hoy el proyecto",
+    "description": "Estos son los kinds que el producto consulta o interpreta hoy. Salen del código actual de Sigma y la identidad conectada.",
+    "surfacesLabel": "Dónde entra",
+    "entries": {
+      "metadata": {
+        "name": "Metadata de perfil",
+        "purpose": "Hidrata nombre, bio, avatar, nip05 y datos base para Sigma y la vista clásica del perfil.",
+        "surfaces": "Sigma y datos base de identidad",
+        "spec": "NIP-01"
+      },
+      "notes": {
+        "name": "Notas públicas",
+        "purpose": "Arma la timeline conectada y también alimenta la extracción de texto para keywords y contexto social.",
+        "surfaces": "Timeline conectada y análisis de Sigma",
+        "spec": "NIP-01"
+      },
+      "contacts": {
+        "name": "Contact list",
+        "purpose": "Resuelve follows del root, followers inbound, mutuals, expansión de nodos y paneles de estructura.",
+        "surfaces": "Sigma y estructura de identidad",
+        "spec": "NIP-02"
+      },
+      "relays": {
+        "name": "Relay list",
+        "purpose": "Lee los relays preferidos del usuario para discovery relay-aware, mejor cobertura y export más fiel.",
+        "surfaces": "Sigma, identidad conectada y export",
+        "spec": "NIP-65"
+      },
+      "zaps": {
+        "name": "Zap receipts",
+        "purpose": "Escucha y parsea recibos de zap para la capa live y el contexto económico sobre nodos visibles.",
+        "surfaces": "/labs/sigma",
+        "spec": "NIP-57"
+      },
+      "primal": {
+        "name": "Primal user info cache",
+        "purpose": "Lee media fallbacks y variantes de imagen desde cache2.primal.net para mejorar fotos de perfil.",
+        "surfaces": "Fallback de avatares en Sigma",
+        "spec": "No estándar"
+      }
+    }
+  },
+  "demo": {
+    "eyebrow": "Demo principal",
+    "title": "Entrá por Nostr Espacial.",
+    "description": "Entrá directo al mapa: explorá relaciones reales, leé zaps en vivo y abrí perfiles para entender cómo se arma cada red.",
+    "routeLabel": "Ruta del producto",
+    "cta": "Abrir Nostr Espacial"
+  },
+  "footer": {
+    "description": "Proyecto participante de La Crypta IDENTITY Hackathon 2026 para explorar relaciones Nostr."
+  },
+  "zap": {
+    "button": "Zapea al desarrollador",
+    "modalAriaLabel": "Cerrar modal de zap",
+    "title": "Zapea al desarrollador",
+    "description": "Enviá sats a {address} para apoyar el desarrollo del explorador.",
+    "customAmount": "Monto personalizado",
+    "message": "Mensaje",
+    "characters": "{count}/{limit} caracteres",
+    "paid": "Pago enviado por WebLN. Gracias por apoyar el desarrollo.",
+    "openWallet": "Abrir wallet",
+    "copyInvoice": "Copiar factura",
+    "copiedInvoice": "Copiada",
+    "payWithWebln": "Pagar con WebLN",
+    "prepare": "Preparando...",
+    "generateInvoice": "Generar factura",
+    "generatingInvoice": "Generando...",
+    "defaultComment": "Gracias por construir Nostr Espacial.",
+    "errors": {
+      "invalidLightningAddress": "La Lightning Address no tiene formato usuario@dominio.",
+      "invalidLnurlResponse": "El servidor LNURL no devolvió una respuesta válida.",
+      "missingLnurlFields": "La Lightning Address no expone un endpoint LNURL-pay completo.",
+      "insecureCallback": "Por seguridad, el callback LNURL-pay debe usar HTTPS.",
+      "upstreamStatus": "El servidor respondió {status}.",
+      "invoiceCreationFailed": "No se pudo crear la factura Lightning.",
+      "missingInvoice": "El servidor LNURL no devolvió una factura BOLT11.",
+      "missingWebln": "No se detectó WebLN en este navegador.",
+      "prepareZap": "No se pudo preparar el zap.",
+      "copyInvoice": "No se pudo copiar la factura desde el navegador."
+    }
+  }
+}
