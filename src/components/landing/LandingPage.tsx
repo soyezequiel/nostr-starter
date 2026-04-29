@@ -17,8 +17,7 @@ const ecosystem = [
   { name: 'Nostr', href: 'https://github.com/nostr-protocol/nips' },
 ]
 
-const developerZapLightningAddress =
-  process.env.NEXT_PUBLIC_DEV_ZAP_LIGHTNING_ADDRESS
+const DEVELOPER_ZAP_LIGHTNING_ADDRESS = 'naranja@walletofsatoshi.com'
 
 export default function LandingPage() {
   const t = useTranslations('landing')
@@ -155,7 +154,7 @@ export default function LandingPage() {
                   {t('exploreCta')}
                 </Link>
                 <DeveloperZapButton
-                  lightningAddress={developerZapLightningAddress}
+                  lightningAddress={DEVELOPER_ZAP_LIGHTNING_ADDRESS}
                 />
                 <div className="flex flex-wrap gap-3 text-sm">
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ffffff1f] bg-[#ffffff08] px-3 py-2 text-[#ada59b]">

@@ -86,14 +86,6 @@ npm install
 npm run dev
 ```
 
-### Optional configuration
-
-To show the **Zap the developer** button on the landing page, configure:
-
-```bash
-NEXT_PUBLIC_DEV_ZAP_LIGHTNING_ADDRESS=naranja@walletofsatoshi.com
-```
-
 To define the canonical URL used in localized metadata and `hreflang`, configure:
 
 ```bash

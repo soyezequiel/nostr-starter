@@ -86,14 +86,6 @@ npm install
 npm run dev
 ```
 
-### Configuraci&oacute;n opcional
-
-Para mostrar el bot&oacute;n **Zapea al desarrollador** en la landing, configura:
-
-```bash
-NEXT_PUBLIC_DEV_ZAP_LIGHTNING_ADDRESS=naranja@walletofsatoshi.com
-```
-
 Para definir la URL can&oacute;nica usada en metadata localizada y `hreflang`, puedes configurar:
 
 ```bash
