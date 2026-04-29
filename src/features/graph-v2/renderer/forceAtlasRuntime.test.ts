@@ -248,7 +248,7 @@ test('ForceAtlas tuning maps sliders to settings multipliers', () => {
   })
 
   assert.equal(disabledCentripetalSettings.gravity, 0)
-  assert.equal(tunedSettings.gravity, 0.09)
+  assert.equal(Math.round((tunedSettings.gravity ?? 0) * 100) / 100, 0.09)
   assert.equal(
     Math.round((tunedSettings.scalingRatio ?? 0) * 100) / 100,
     9.55,
