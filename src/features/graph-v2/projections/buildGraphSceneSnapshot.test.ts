@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import type { CanonicalGraphState } from '@/features/graph-v2/domain/types'
 import { buildGraphSceneSnapshot } from '@/features/graph-v2/projections/buildGraphSceneSnapshot'
+import { DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG } from '@/features/graph-v2/projections/graphSceneNodeSizeConfig'
 
 let sceneCounter = 0
 
@@ -203,6 +204,86 @@ test('reuses structural edges across visual-only updates while refreshing node m
   assert.equal(updatedAlice?.pictureUrl, 'https://cdn.example.com/alice.jpg')
 })
 
+test('keeps default root and expanded sizes when no node size config is provided', () => {
+  const state = createState()
+  state.nodesByPubkey.alice = {
+    ...state.nodesByPubkey.alice,
+    isExpanded: true,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const nodesByPubkey = Object.fromEntries(
+    scene.render.nodes.map((node) => [node.pubkey, node]),
+  )
+
+  assert.equal(
+    nodesByPubkey.root?.size,
+    DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG.rootSize,
+  )
+  assert.equal(
+    nodesByPubkey.alice?.size,
+    DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG.expandedSize,
+  )
+})
+
+test('applies custom root and expanded sizes independently', () => {
+  const state = createState()
+  state.nodesByPubkey.alice = {
+    ...state.nodesByPubkey.alice,
+    isExpanded: true,
+  }
+
+  const scene = buildGraphSceneSnapshot(state, {
+    nodeSizeConfig: {
+      rootSize: 24,
+      expandedSize: 31,
+    },
+  })
+  const nodesByPubkey = Object.fromEntries(
+    scene.render.nodes.map((node) => [node.pubkey, node]),
+  )
+
+  assert.equal(nodesByPubkey.root?.size, 24)
+  assert.equal(nodesByPubkey.alice?.size, 31)
+  assert.equal(nodesByPubkey.bob?.size, 9)
+})
+
+test('invalidates cached snapshots for node size changes while reusing structural edges', () => {
+  const state = createState()
+  state.nodesByPubkey.alice = {
+    ...state.nodesByPubkey.alice,
+    isExpanded: true,
+  }
+
+  const firstScene = buildGraphSceneSnapshot(state, {
+    nodeSizeConfig: {
+      rootSize: 18,
+      expandedSize: 18,
+    },
+  })
+  const secondScene = buildGraphSceneSnapshot(state, {
+    nodeSizeConfig: {
+      rootSize: 26,
+      expandedSize: 29,
+    },
+  })
+
+  assert.notStrictEqual(secondScene, firstScene)
+  assert.strictEqual(secondScene.render.visibleEdges, firstScene.render.visibleEdges)
+
+  const firstNodesByPubkey = Object.fromEntries(
+    firstScene.render.nodes.map((node) => [node.pubkey, node]),
+  )
+  const secondNodesByPubkey = Object.fromEntries(
+    secondScene.render.nodes.map((node) => [node.pubkey, node]),
+  )
+
+  assert.equal(firstNodesByPubkey.root?.size, 18)
+  assert.equal(secondNodesByPubkey.root?.size, 26)
+  assert.equal(firstNodesByPubkey.alice?.size, 18)
+  assert.equal(secondNodesByPubkey.alice?.size, 29)
+})
+
 test('builds compact deterministic topology signatures for render and physics', () => {
   const scene = buildGraphSceneSnapshot(createState())
 
@@ -359,7 +440,7 @@ test('colors root follow plus inbound follower evidence as mutual in the base gr
   assert.equal(edgesById['alice->root:inbound']?.color, '#5fd39d')
 })
 
-test('renders expanded nodes with the same base size as the root', () => {
+test('renders expanded nodes with the same base size as the root by default', () => {
   const state = createState()
   state.nodesByPubkey.alice = {
     ...state.nodesByPubkey.alice,

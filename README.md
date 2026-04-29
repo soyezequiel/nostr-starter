@@ -50,6 +50,7 @@ The Nostr Espacial identity explorer offers a few core interactions to navigate 
 
 - **Expand nodes:** Expand any node to discover and load its direct connections (follows and followers). You can do this by **double-clicking** the node, or by selecting it and using the **Expand connections** button in the side panel.
 - **Pin nodes:** To keep the graph visually stable while you inspect it, you can pin a node to a screen position so the physics engine does not move it. To pin or unpin a node, simply **drag and drop** it on the canvas, or use the pin button in the selected profile panel.
+- **Tune visuals:** Open **Settings > Visuals** to adjust startup zoom plus the base size of the root node and expanded nodes.
 
 ## Product surfaces
 

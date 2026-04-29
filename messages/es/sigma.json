@@ -274,6 +274,11 @@
     "visuals": {
       "camera": "Camara",
       "initialZoom": "Zoom inicial (acercamiento)",
+      "nodes": "Nodos",
+      "rootSize": "Tamano del root",
+      "rootSizeDesc": "Ajusta el tamano base del nodo root en el grafo.",
+      "expandedSize": "Tamano de nodos expandidos",
+      "expandedSizeDesc": "Ajusta el tamano base de los nodos con conexiones expandidas.",
       "labels": "Etiquetas",
       "visibleDegree": "Grado visible",
       "visibleDegreeDesc": "Cada nodo muestra cuantas aristas visibles lo tocan en la vista actual.",

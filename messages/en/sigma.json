@@ -274,6 +274,11 @@
     "visuals": {
       "camera": "Camera",
       "initialZoom": "Initial zoom",
+      "nodes": "Nodes",
+      "rootSize": "Root size",
+      "rootSizeDesc": "Adjusts the root node base size in the graph.",
+      "expandedSize": "Expanded node size",
+      "expandedSizeDesc": "Adjusts the base size of nodes with expanded connections.",
       "labels": "Labels",
       "visibleDegree": "Visible degree",
       "visibleDegreeDesc": "Each node shows how many visible edges touch it in the current view.",

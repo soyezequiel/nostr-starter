@@ -55,6 +55,15 @@ import {
 import { getProjectionCacheStats } from '@/features/graph-v2/projections/buildLayerProjection'
 import { buildNodeDetailProjection } from '@/features/graph-v2/projections/buildNodeDetailProjection'
 import {
+  DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG,
+  getGraphSceneNodeSizeConfigSignature,
+  GRAPH_SCENE_NODE_SIZE_STEP,
+  MAX_GRAPH_SCENE_NODE_SIZE,
+  MIN_GRAPH_SCENE_NODE_SIZE,
+  normalizeGraphSceneNodeSizeConfig,
+  type GraphSceneNodeSizeConfig,
+} from '@/features/graph-v2/projections/graphSceneNodeSizeConfig'
+import {
   applyPersonSearchHighlight,
   buildPersonSearchMatches,
 } from '@/features/graph-v2/projections/personSearchHighlight'
@@ -315,6 +324,7 @@ const AVATAR_PHOTOS_ENABLED_STORAGE_KEY = 'sigma.avatarPhotosEnabled'
 const RUNTIME_INSPECTOR_BUTTON_STORAGE_KEY = 'sigma.runtimeInspectorButtonEnabled'
 const VISIBLE_EDGE_COUNT_LABELS_STORAGE_KEY = 'sigma.visibleEdgeCountLabels'
 const INITIAL_CAMERA_ZOOM_STORAGE_KEY = 'sigma.initialCameraZoom'
+const NODE_SIZE_CONFIG_STORAGE_KEY = 'sigma.nodeSizeConfig'
 const RECENT_ZAP_REPLAY_LOOKBACK_STORAGE_KEY = 'sigma.recentZapReplayLookbackHours'
 const RECENT_ZAP_REPLAY_LOOKBACK_DEBOUNCE_MS = 350
 const ZAP_REPLAY_KEYBOARD_SEEK_STEP = 0.05
@@ -343,6 +353,25 @@ const readStoredInitialCameraZoom = () => {
       : clampInitialCameraZoom(Number.parseFloat(stored))
   } catch {
     return DEFAULT_INITIAL_CAMERA_ZOOM
+  }
+}
+
+const readStoredNodeSizeConfig = (): GraphSceneNodeSizeConfig => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG
+  }
+
+  try {
+    const stored = window.localStorage.getItem(NODE_SIZE_CONFIG_STORAGE_KEY)
+    if (stored === null) {
+      return DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG
+    }
+
+    return normalizeGraphSceneNodeSizeConfig(
+      JSON.parse(stored) as Partial<GraphSceneNodeSizeConfig>,
+    )
+  } catch {
+    return DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG
   }
 }
 
@@ -1190,16 +1219,20 @@ function DragTuningPanel({
 function VisualOptionsPanel({
   avatarRuntimeOptions,
   initialCameraZoom,
+  nodeSizeConfig,
   showVisibleEdgeCountLabels,
   onAvatarRuntimeOptionsChange,
   onInitialCameraZoomChange,
+  onNodeSizeConfigChange,
   onToggleVisibleEdgeCountLabels,
 }: {
   avatarRuntimeOptions: AvatarRuntimeOptions
   initialCameraZoom: number
+  nodeSizeConfig: GraphSceneNodeSizeConfig
   showVisibleEdgeCountLabels: boolean
   onAvatarRuntimeOptionsChange: (options: AvatarRuntimeOptions) => void
   onInitialCameraZoomChange: (zoom: number) => void
+  onNodeSizeConfigChange: (config: GraphSceneNodeSizeConfig) => void
   onToggleVisibleEdgeCountLabels: () => void
 }) {
   const t = useTranslations('sigma.settings.visuals')
@@ -1225,6 +1258,55 @@ function VisualOptionsPanel({
             step={0.05}
             type="range"
             value={initialCameraZoom}
+          />
+        </div>
+      </div>
+      <div className="sg-settings-section">
+        <h4>{t('nodes')}</h4>
+        <div className="sg-slider-row">
+          <div className="sg-slider-row__head">
+            <span className="sg-slider-row__lbl">{t('rootSize')}</span>
+            <span className="sg-slider-row__val">{nodeSizeConfig.rootSize}px</span>
+          </div>
+          <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>
+            {t('rootSizeDesc')}
+          </p>
+          <input
+            className="sg-slider"
+            max={MAX_GRAPH_SCENE_NODE_SIZE}
+            min={MIN_GRAPH_SCENE_NODE_SIZE}
+            onChange={(event) => {
+              onNodeSizeConfigChange({
+                ...nodeSizeConfig,
+                rootSize: Number.parseFloat(event.target.value),
+              })
+            }}
+            step={GRAPH_SCENE_NODE_SIZE_STEP}
+            type="range"
+            value={nodeSizeConfig.rootSize}
+          />
+        </div>
+        <div className="sg-slider-row">
+          <div className="sg-slider-row__head">
+            <span className="sg-slider-row__lbl">{t('expandedSize')}</span>
+            <span className="sg-slider-row__val">{nodeSizeConfig.expandedSize}px</span>
+          </div>
+          <p style={{ fontSize: 10.5, color: 'var(--sg-fg-faint)', margin: '2px 0 4px' }}>
+            {t('expandedSizeDesc')}
+          </p>
+          <input
+            className="sg-slider"
+            max={MAX_GRAPH_SCENE_NODE_SIZE}
+            min={MIN_GRAPH_SCENE_NODE_SIZE}
+            onChange={(event) => {
+              onNodeSizeConfigChange({
+                ...nodeSizeConfig,
+                expandedSize: Number.parseFloat(event.target.value),
+              })
+            }}
+            step={GRAPH_SCENE_NODE_SIZE_STEP}
+            type="range"
+            value={nodeSizeConfig.expandedSize}
           />
         </div>
       </div>
@@ -1947,6 +2029,9 @@ export default function GraphAppV2() {
   const [initialCameraZoom, setInitialCameraZoom] = useState(
     readStoredInitialCameraZoom,
   )
+  const [nodeSizeConfig, setNodeSizeConfig] = useState<GraphSceneNodeSizeConfig>(
+    readStoredNodeSizeConfig,
+  )
   const [avatarPerfSnapshot, setAvatarPerfSnapshot] = useState<PerfBudgetSnapshot | null>(null)
   const [activeSettingsTab, setActiveSettingsTab] = useState<SigmaSettingsTab>('performance')
   const [cacheClearStatus, setCacheClearStatus] =
@@ -2161,6 +2246,17 @@ export default function GraphAppV2() {
       // Non-critical preference persistence.
     }
   }, [initialCameraZoom])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        NODE_SIZE_CONFIG_STORAGE_KEY,
+        JSON.stringify(nodeSizeConfig),
+      )
+    } catch {
+      // Non-critical preference persistence.
+    }
+  }, [nodeSizeConfig])
 
   useEffect(() => {
     try {
@@ -2486,10 +2582,17 @@ export default function GraphAppV2() {
   const deferredSceneState = useDeferredValue(sceneState)
   const isSceneTransitionPending =
     sceneState.sceneSignature !== deferredSceneState.sceneSignature
+  const nodeSizeConfigSignature = useMemo(
+    () => getGraphSceneNodeSizeConfigSignature(nodeSizeConfig),
+    [nodeSizeConfig],
+  )
   const deferredScene = useMemo(
-    () => buildGraphSceneSnapshot(deferredSceneState),
+    () =>
+      buildGraphSceneSnapshot(deferredSceneState, {
+        nodeSizeConfig,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deferredSceneState.sceneSignature],
+    [deferredSceneState.sceneSignature, nodeSizeConfigSignature],
   )
   const visiblePubkeys = useMemo(
     () => deferredScene.render.nodes.map((node) => node.pubkey),
@@ -2685,7 +2788,9 @@ export default function GraphAppV2() {
       })
       const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
       // Ejecutar la proyeccion almacena la salida en snapshotCache.
-      const snapshot = buildGraphSceneSnapshot(warmupState)
+      const snapshot = buildGraphSceneSnapshot(warmupState, {
+        nodeSizeConfig,
+      })
       if (startedAtMs > 0) {
         traceGraphPerfDuration(
           'ui.fullGraphWarmup.snapshot',
@@ -2711,7 +2816,7 @@ export default function GraphAppV2() {
     return () => {
       clearTimeout(timeoutId)
     }
-  }, [deferredSceneState, isFixtureMode, isSceneTransitionPending])
+  }, [deferredSceneState, isFixtureMode, isSceneTransitionPending, nodeSizeConfig])
 
   const currentRootNode = sceneState.rootPubkey
     ? sceneState.nodesByPubkey[sceneState.rootPubkey] ?? null
@@ -3277,6 +3382,12 @@ export default function GraphAppV2() {
   const handleInitialCameraZoomChange = useCallback((zoom: number) => {
     setInitialCameraZoom(clampInitialCameraZoom(zoom))
   }, [])
+  const handleNodeSizeConfigChange = useCallback(
+    (config: GraphSceneNodeSizeConfig) => {
+      setNodeSizeConfig(normalizeGraphSceneNodeSizeConfig(config))
+    },
+    [],
+  )
 
   const handleApplyRelays = useCallback(async (relayUrls: string[]) => {
     if (isFixtureMode) {
@@ -4212,8 +4323,10 @@ export default function GraphAppV2() {
           <VisualOptionsPanel
             avatarRuntimeOptions={avatarRuntimeOptions}
             initialCameraZoom={initialCameraZoom}
+            nodeSizeConfig={nodeSizeConfig}
             onAvatarRuntimeOptionsChange={setAvatarRuntimeOptions}
             onInitialCameraZoomChange={handleInitialCameraZoomChange}
+            onNodeSizeConfigChange={handleNodeSizeConfigChange}
             onToggleVisibleEdgeCountLabels={() => {
               setShowVisibleEdgeCountLabels((current) => !current)
             }}

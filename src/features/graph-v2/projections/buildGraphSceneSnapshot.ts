@@ -12,6 +12,12 @@ import {
 } from '@/features/graph-runtime/debug/perfTrace'
 import { sortAndDedupeDirectedEdges } from '@/features/graph-v2/projections/dedupeEdges'
 import { buildLayerProjection } from '@/features/graph-v2/projections/buildLayerProjection'
+import {
+  DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG,
+  getGraphSceneNodeSizeConfigSignature,
+  normalizeGraphSceneNodeSizeConfig,
+  type GraphSceneNodeSizeConfig,
+} from '@/features/graph-v2/projections/graphSceneNodeSizeConfig'
 import type {
   GraphPhysicsEdge,
   GraphPhysicsNode,
@@ -55,8 +61,6 @@ const SELECTED_COLOR = '#f4fbff'
 const PINNED_COLOR = '#f4fbff'
 const ROOT_COLOR = '#7dd3a7'
 
-const SIZE_ROOT = 18
-const SIZE_EXPANDED = 18
 const SIZE_PINNED = 12
 const SIZE_DEFAULT = 9
 const SIZE_SELECTED_BOOST = 8
@@ -308,7 +312,14 @@ interface GraphSceneStructureSnapshot {
   reciprocalForceEdgeIds: ReadonlySet<string>
 }
 
-const snapshotCache = new WeakMap<CanonicalGraphSceneState, GraphSceneSnapshot>()
+interface BuildGraphSceneSnapshotOptions {
+  nodeSizeConfig?: Partial<GraphSceneNodeSizeConfig>
+}
+
+const snapshotCache = new WeakMap<
+  CanonicalGraphSceneState,
+  Map<string, GraphSceneSnapshot>
+>()
 const snapshotSignatureCache = new Map<string, GraphSceneSnapshot>()
 const structureCache = new WeakMap<
   CanonicalGraphSceneState['edgesById'],
@@ -358,16 +369,29 @@ const createStructureSignature = (state: CanonicalGraphSceneState) => {
   return [resolveTopologySignature(state), selectionContextPubkey].join('|')
 }
 
+const createSnapshotSignature = (
+  sceneSignature: string,
+  nodeSizeSignature: string,
+) => `${sceneSignature}|sizes:${nodeSizeSignature}`
+
 export const buildGraphSceneSnapshot = (
   state: CanonicalGraphSceneState,
+  options: BuildGraphSceneSnapshotOptions = {},
 ): GraphSceneSnapshot => {
   const isPerfEnabled = isGraphPerfStatsEnabled()
+  const normalizedNodeSizeConfig = normalizeGraphSceneNodeSizeConfig(
+    options.nodeSizeConfig,
+  )
+  const snapshotSignature = createSnapshotSignature(
+    state.sceneSignature,
+    getGraphSceneNodeSizeConfigSignature(normalizedNodeSizeConfig),
+  )
 
   if (isPerfEnabled) {
     _snapCalls += 1
   }
 
-  const cached = snapshotCache.get(state)
+  const cached = snapshotCache.get(state)?.get(snapshotSignature)
   if (cached) {
     if (isPerfEnabled) {
       _snapHits += 1
@@ -375,17 +399,20 @@ export const buildGraphSceneSnapshot = (
     return cached
   }
 
-  const signatureCached = snapshotSignatureCache.get(state.sceneSignature)
+  const signatureCached = snapshotSignatureCache.get(snapshotSignature)
   if (signatureCached) {
     if (isPerfEnabled) {
       _snapHits += 1
     }
-    snapshotCache.set(state, signatureCached)
+    const stateCache =
+      snapshotCache.get(state) ?? new Map<string, GraphSceneSnapshot>()
+    stateCache.set(snapshotSignature, signatureCached)
+    snapshotCache.set(state, stateCache)
     return signatureCached
   }
 
   const startedAtMs = isGraphPerfTraceEnabled() ? nowGraphPerfMs() : 0
-  const snapshot = computeGraphSceneSnapshot(state)
+  const snapshot = computeGraphSceneSnapshot(state, normalizedNodeSizeConfig)
   if (startedAtMs > 0) {
     traceGraphPerfDuration(
       'buildGraphSceneSnapshot.compute',
@@ -405,8 +432,11 @@ export const buildGraphSceneSnapshot = (
       { thresholdMs: 16 },
     )
   }
-  snapshotCache.set(state, snapshot)
-  rememberSnapshotBySignature(state.sceneSignature, snapshot)
+  const stateCache =
+    snapshotCache.get(state) ?? new Map<string, GraphSceneSnapshot>()
+  stateCache.set(snapshotSignature, snapshot)
+  snapshotCache.set(state, stateCache)
+  rememberSnapshotBySignature(snapshotSignature, snapshot)
   return snapshot
 }
 
@@ -418,6 +448,7 @@ export const getSnapshotCacheStats = () => ({
 
 const computeGraphSceneSnapshot = (
   state: CanonicalGraphSceneState,
+  nodeSizeConfig: GraphSceneNodeSizeConfig = DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG,
 ): GraphSceneSnapshot => {
   const structureSignature = createStructureSignature(state)
   let cachedStructuresByKey = structureCache.get(state.edgesById)
@@ -455,9 +486,9 @@ const computeGraphSceneSnapshot = (
       })
       const baseColor = resolveBaseNodeColor(node)
       const baseSize = isRoot
-        ? SIZE_ROOT
+        ? nodeSizeConfig.rootSize
         : node.isExpanded
-          ? SIZE_EXPANDED
+          ? nodeSizeConfig.expandedSize
           : isPinned
             ? SIZE_PINNED
             : SIZE_DEFAULT
