@@ -20,6 +20,14 @@ test('clamps recent zap replay lookback to the supported hour range', () => {
   assert.equal(clampRecentZapReplayLookbackHours(48), 24)
 })
 
+test('uses 24 hours as the default recent zap replay window', () => {
+  assert.equal(RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS, 24)
+  assert.equal(
+    formatRecentZapReplayWindowLabel(RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS),
+    'ultimas 24 horas',
+  )
+})
+
 test('rejects non-integer or non-finite recent zap replay lookback values', () => {
   assert.equal(
     clampRecentZapReplayLookbackHours(1.5),
