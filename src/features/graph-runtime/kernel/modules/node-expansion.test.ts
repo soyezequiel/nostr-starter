@@ -279,6 +279,108 @@ test('expandNode waits for reciprocal enrichment before resolving and avoids lat
   assert.equal(store.getState().nodeExpansionStates.target.status, 'ready')
 })
 
+test('expandNode fetches structure for a visible node that has not been explored yet', async () => {
+  const store = createExpandableStore()
+  store.getState().markNodeExpanded('target')
+
+  let relayAdapterCallCount = 0
+  const createRelayAdapter = () => {
+    relayAdapterCallCount += 1
+    return {
+      subscribe(filters: Array<Record<string, unknown>>) {
+        return {
+          subscribe(observer: {
+            next?: (value: unknown) => void
+            complete?: (summary: unknown) => void
+          }) {
+            queueMicrotask(() => {
+              const firstFilter = filters[0] ?? {}
+              if (Array.isArray(firstFilter.authors)) {
+                observer.next?.({
+                  event: {
+                    id: 'contact-list-event',
+                    pubkey: 'target',
+                    kind: 3,
+                    created_at: 123,
+                    tags: [['p', 'visible-follow']],
+                  },
+                  relayUrl: 'wss://relay.example',
+                  receivedAtMs: 123,
+                })
+              }
+
+              observer.complete?.({
+                relayCount: 1,
+              })
+            })
+
+            return () => {}
+          },
+        }
+      },
+      count: async () => [],
+      getRelayHealth: () => ({}),
+      subscribeToRelayHealth: () => () => {},
+      close: () => {},
+    }
+  }
+
+  const ctx = {
+    store,
+    repositories: {
+      contactLists: {
+        get: async () => null,
+      },
+      relayLists: createRelayListsRepositoryStub(),
+    },
+    eventsWorker: {
+      invoke: async (action: string) => {
+        if (action !== 'PARSE_CONTACT_LIST') {
+          throw new Error(`unexpected action ${action}`)
+        }
+
+        return {
+          followPubkeys: ['visible-follow'],
+          relayHints: [],
+          diagnostics: [],
+        }
+      },
+    },
+    graphWorker: {
+      invoke: async () => {
+        throw new Error('graph worker should not be used in this test')
+      },
+      dispose: () => {},
+    },
+    createRelayAdapter,
+    defaultRelayUrls: ['wss://relay.example'],
+    now: (() => {
+      let now = 1_000
+      return () => ++now
+    })(),
+    emitter: createKernelEventEmitter(),
+  }
+
+  const expansion = createNodeExpansionModule(ctx, {
+    ...createBaseCollaborators(),
+    loadDirectInboundFollowerEvidence: async () => ({
+      followerPubkeys: [],
+      partial: false,
+    }),
+    loadTargetedReciprocalFollowerEvidence: async () => ({
+      followerPubkeys: [],
+      partial: false,
+    }),
+  })
+
+  const result = await expansion.expandNode('target')
+
+  assert.equal(result.status, 'ready')
+  assert.ok(relayAdapterCallCount > 0)
+  assert.deepEqual(store.getState().adjacency.target, ['visible-follow'])
+  assert.equal(store.getState().nodeExpansionStates.target.status, 'ready')
+})
+
 test('expandNode reports partial when relays fail without cached contact list', async () => {
   const store = createExpandableStore()
 

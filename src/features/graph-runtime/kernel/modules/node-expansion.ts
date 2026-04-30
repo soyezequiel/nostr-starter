@@ -46,6 +46,11 @@ import type { RelayEventEnvelope } from '@/features/graph-runtime/nostr'
 const NODE_EXPANSION_TOTAL_STEPS = 5
 const MAX_PROFILE_HYDRATION_RELAY_URLS = MAX_SESSION_RELAYS
 const NODE_RELAY_LIST_KIND = 10002
+const EXPLORED_NODE_EXPANSION_STATUSES = new Set<NodeExpansionState['status']>([
+  'ready',
+  'partial',
+  'empty',
+])
 
 export function createNodeExpansionModule(
   ctx: KernelContext,
@@ -650,7 +655,12 @@ export function createNodeExpansionModule(
       }
     }
 
-    if (state.expandedNodePubkeys.has(pubkey) && !options?.force) {
+    const expansionState = state.nodeExpansionStates[pubkey]
+    if (
+      expansionState &&
+      EXPLORED_NODE_EXPANSION_STATUSES.has(expansionState.status) &&
+      !options?.force
+    ) {
       setTerminalState(
         pubkey,
         'ready',
