@@ -182,10 +182,10 @@ export function SigmaZapDetailPanel({
   const toNpub = encodeNpub(entry.toPubkey)
   const noteId = encodeNoteId(zappedEventId ?? '') ?? null
   const receiptId = entry.eventId ?? null
-  const postAuthorLabel =
-    post.phase === 'ready' && post.event
-      ? resolveActorLabel(post.event.pubkey)
-      : null
+  const readyPostEvent = post.phase === 'ready' ? post.event : null
+  const postAuthorLabel = readyPostEvent
+    ? resolveActorLabel(readyPostEvent.pubkey)
+    : null
 
   return (
     <div className="sg-zap-detail">
@@ -280,26 +280,26 @@ export function SigmaZapDetailPanel({
           </p>
         ) : post.phase === 'loading' ? (
           <p className="sg-zap-detail__post-empty">Cargando post original...</p>
-        ) : post.phase === 'ready' && post.event ? (
+        ) : readyPostEvent ? (
           <article className="sg-zap-detail__post-body">
             <div className="sg-zap-detail__post-meta">
               <button
                 className="sg-zap-detail__post-author"
-                onClick={() => onOpenIdentity(post.event.pubkey, postAuthorLabel ?? post.event.pubkey)}
+                onClick={() => onOpenIdentity(readyPostEvent.pubkey, postAuthorLabel ?? readyPostEvent.pubkey)}
                 type="button"
               >
                 {postAuthorLabel}
               </button>
               <time
-                dateTime={new Date((post.event.created_at ?? 0) * 1_000).toISOString()}
+                dateTime={new Date((readyPostEvent.created_at ?? 0) * 1_000).toISOString()}
               >
-                {post.event.created_at
-                  ? formatTimestamp(post.event.created_at)
+                {readyPostEvent.created_at
+                  ? formatTimestamp(readyPostEvent.created_at)
                   : ''}
               </time>
             </div>
             <p className="sg-zap-detail__post-content">
-              {post.event.content?.trim() || '(sin contenido textual)'}
+              {readyPostEvent.content?.trim() || '(sin contenido textual)'}
             </p>
           </article>
         ) : post.phase === 'error' ? (
