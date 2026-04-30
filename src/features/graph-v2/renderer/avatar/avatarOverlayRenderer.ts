@@ -55,6 +55,10 @@ const EXPANSION_RING_LINE_WIDTH_FACTOR = 0.22
 const EXPANSION_RING_TRACK_ALPHA = 0.18
 const EXPANSION_RING_PROGRESS_ALPHA = 0.96
 const EXPANSION_RING_COLOR = '#7dd3a7'
+const HIGH_QUALITY_AVATAR_DEVICE_PIXEL_RATIO_CAP = 2
+const HIGH_QUALITY_AVATAR_MIN_DIAMETER_PX = 48
+const HIGH_QUALITY_AVATAR_MIN_REQUESTED_PIXELS = 321
+const HIGH_QUALITY_AVATAR_MAX_BUCKET: ImageLodBucket = 512
 const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_FLOOR = 6
 const ALL_VISIBLE_AVATAR_LOAD_CONCURRENCY_CEILING = 8
 const AVATAR_URL_METADATA_CACHE_CAP = 4096
@@ -103,6 +107,7 @@ interface AvatarDrawItem {
   fastMoving: boolean
   monogramOnly: boolean
   isPersistentAvatar: boolean
+  isHighQualityAvatar: boolean
   zoomedOutMonogram: boolean
   priority: number
   monogramInput: MonogramInput
@@ -462,6 +467,70 @@ export const resolveAvatarLoadConcurrency = ({
   )
 }
 
+const clampAvatarQualityPixelRatio = (devicePixelRatio: number) =>
+  Number.isFinite(devicePixelRatio)
+    ? Math.min(
+        HIGH_QUALITY_AVATAR_DEVICE_PIXEL_RATIO_CAP,
+        Math.max(1, devicePixelRatio),
+      )
+    : 1
+
+const readAvatarQualityPixelRatio = () =>
+  typeof globalThis !== 'undefined' &&
+  typeof globalThis.devicePixelRatio === 'number'
+    ? clampAvatarQualityPixelRatio(globalThis.devicePixelRatio)
+    : 1
+
+export const resolveAvatarRequestedPixels = ({
+  visibleDiameterPx,
+  isHighQualityAvatar,
+  devicePixelRatio = 1,
+}: {
+  visibleDiameterPx: number
+  isHighQualityAvatar: boolean
+  devicePixelRatio?: number
+}) => {
+  const safeDiameter = Number.isFinite(visibleDiameterPx)
+    ? Math.max(0, visibleDiameterPx)
+    : 0
+
+  if (!isHighQualityAvatar) {
+    return safeDiameter
+  }
+
+  const requestedPixels =
+    safeDiameter * clampAvatarQualityPixelRatio(devicePixelRatio)
+  if (safeDiameter < HIGH_QUALITY_AVATAR_MIN_DIAMETER_PX) {
+    return requestedPixels
+  }
+
+  return Math.max(requestedPixels, HIGH_QUALITY_AVATAR_MIN_REQUESTED_PIXELS)
+}
+
+export const resolveAvatarCandidateMaxBucket = ({
+  isHighQualityAvatar,
+  budgetMaxBucket,
+  maxInteractiveBucket,
+}: {
+  isHighQualityAvatar: boolean
+  budgetMaxBucket: ImageLodBucket
+  maxInteractiveBucket: ImageLodBucket
+}): ImageLodBucket => {
+  const interactiveMaxBucket = Math.min(
+    budgetMaxBucket,
+    maxInteractiveBucket,
+  ) as ImageLodBucket
+
+  if (!isHighQualityAvatar) {
+    return interactiveMaxBucket
+  }
+
+  return Math.max(
+    interactiveMaxBucket,
+    HIGH_QUALITY_AVATAR_MAX_BUCKET,
+  ) as ImageLodBucket
+}
+
 const incrementCountMap = (map: Record<string, number>, key: string | null) => {
   if (!key) {
     return
@@ -575,6 +644,7 @@ export class AvatarOverlayRenderer {
     const rendererFocusNeighborPubkeys = this.getHoveredNeighborPubkeys()
     const allowZoomedOutImages =
       budget.allowZoomedOutImages || budget.showAllVisibleImages
+    const avatarQualityPixelRatio = readAvatarQualityPixelRatio()
 
     const cameraState = this.sigma.getCamera().getState()
     const cameraRatio = cameraState.ratio
@@ -622,6 +692,7 @@ export class AvatarOverlayRenderer {
         nodeAttrs.isRoot ||
         nodeAttrs.isPinned ||
         isFocusedAvatar
+      const isHighQualityAvatar = nodeAttrs.isExpanded === true
       const hasPriorityAvatarSizing =
         pubkey === directForcedAvatarPubkey ||
         nodeAttrs.isRoot ||
@@ -705,6 +776,7 @@ export class AvatarOverlayRenderer {
           zoomedOutMonogram &&
           !allowZoomedOutImages,
         isPersistentAvatar,
+        isHighQualityAvatar,
         zoomedOutMonogram,
         priority,
         monogramInput,
@@ -949,19 +1021,26 @@ export class AvatarOverlayRenderer {
       } else if (!urlKey) {
         loadSkipReason = 'missing_url'
       } else {
+        const maxBucket = resolveAvatarCandidateMaxBucket({
+          isHighQualityAvatar: item.isHighQualityAvatar,
+          budgetMaxBucket: budget.maxBucket,
+          maxInteractiveBucket: budget.maxInteractiveBucket,
+        })
         requestedBucket = this.resolveBucket(
           urlKey,
-          item.r * 2,
-          Math.min(
-            budget.maxBucket,
-            budget.maxInteractiveBucket,
-          ) as ImageLodBucket,
+          resolveAvatarRequestedPixels({
+            visibleDiameterPx: item.r * 2,
+            isHighQualityAvatar: item.isHighQualityAvatar,
+            devicePixelRatio: avatarQualityPixelRatio,
+          }),
+          maxBucket,
         )
         candidates.push({
           pubkey: item.pubkey,
           urlKey,
           url: item.url!,
           bucket: requestedBucket,
+          maxBucket,
           priority: item.priority,
           urgent: isPersistentAvatar,
           monogram: item.monogramInput,
@@ -1460,13 +1539,14 @@ const resolvePriority = (
 ): number => {
   if (attrs.isRoot) return 0
   if (attrs.isPinned) return 1
-  if (attrs.isSelected) return 2
-  if (attrs.isNeighbor) return 3
+  if (attrs.isExpanded) return 2
+  if (attrs.isSelected) return 3
+  if (attrs.isNeighbor) return 4
   const container = sigma.getContainer()
   const cx = container.clientWidth / 2
   const cy = container.clientHeight / 2
   const dx = viewport.x - cx
   const dy = viewport.y - cy
   const dist = Math.sqrt(dx * dx + dy * dy)
-  return 4 + dist
+  return 5 + dist
 }

@@ -19,6 +19,7 @@ export interface GraphRenderNode {
   expansionProgress: number | null
   isRoot: boolean
   isSelected: boolean
+  isExpanded?: boolean
   forceLabel?: boolean
   isPinned: boolean
   isNeighbor: boolean

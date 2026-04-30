@@ -556,6 +556,46 @@ test('scheduler clamps requested avatar buckets to the active budget', () => {
   }
 })
 
+test('scheduler honors candidate-specific high quality bucket caps', () => {
+  const restoreDocument = installDocumentStub()
+  const loadCalls: Array<{ bucket: number }> = []
+  const loader = {
+    isBlocked: () => false,
+    block: () => undefined,
+    load: (_url: string, bucket: number) => {
+      loadCalls.push({ bucket })
+      return new Promise(() => undefined)
+    },
+  }
+
+  try {
+    const scheduler = new AvatarScheduler({
+      cache: new AvatarBitmapCache(16),
+      loader: loader as never,
+    })
+
+    scheduler.reconcile(
+      [
+        {
+          pubkey: 'expanded',
+          urlKey: 'expanded::https://example.com/expanded.png',
+          url: 'https://example.com/expanded.png',
+          bucket: 512,
+          maxBucket: 512,
+          priority: 1,
+          monogram: { label: 'Expanded', color: '#7dd3a7' },
+        },
+      ],
+      { ...budget, maxBucket: 64 },
+    )
+
+    assert.equal(loadCalls[0]?.bucket, 512)
+    scheduler.dispose()
+  } finally {
+    restoreDocument()
+  }
+})
+
 test('failed avatar loads stay on monogram fallback', async () => {
   const restoreDocument = installDocumentStub()
   const cache = new AvatarBitmapCache(16)

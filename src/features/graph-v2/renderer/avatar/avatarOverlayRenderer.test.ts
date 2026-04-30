@@ -12,7 +12,9 @@ import {
   resolveAvatarDrawRadiusPx,
   resolveAvatarImageDisableReason,
   resolveAvatarItemGlobalMotionActive,
+  resolveAvatarCandidateMaxBucket,
   resolveAvatarLoadConcurrency,
+  resolveAvatarRequestedPixels,
   resolveFastNodeVelocityThresholdPx,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
@@ -91,6 +93,60 @@ test('retains visible inflight avatars even when the current frame cap drops the
   )
 
   assert.deepEqual([...retained], ['root', 'alice'])
+})
+
+test('expanded avatar requests use device pixel ratio for sharper buckets', () => {
+  assert.equal(
+    resolveAvatarRequestedPixels({
+      visibleDiameterPx: 96,
+      isHighQualityAvatar: false,
+      devicePixelRatio: 2,
+    }),
+    96,
+  )
+  assert.equal(
+    resolveAvatarRequestedPixels({
+      visibleDiameterPx: 96,
+      isHighQualityAvatar: true,
+      devicePixelRatio: 2,
+    }),
+    321,
+  )
+  assert.equal(
+    resolveAvatarRequestedPixels({
+      visibleDiameterPx: 32,
+      isHighQualityAvatar: true,
+      devicePixelRatio: 2,
+    }),
+    64,
+  )
+  assert.equal(
+    resolveAvatarRequestedPixels({
+      visibleDiameterPx: 96,
+      isHighQualityAvatar: true,
+      devicePixelRatio: 4,
+    }),
+    321,
+  )
+})
+
+test('expanded avatar candidates can exceed the normal interactive bucket cap', () => {
+  assert.equal(
+    resolveAvatarCandidateMaxBucket({
+      isHighQualityAvatar: false,
+      budgetMaxBucket: 256,
+      maxInteractiveBucket: 256,
+    }),
+    256,
+  )
+  assert.equal(
+    resolveAvatarCandidateMaxBucket({
+      isHighQualityAvatar: true,
+      budgetMaxBucket: 64,
+      maxInteractiveBucket: 256,
+    }),
+    512,
+  )
 })
 
 test('does not enlarge regular zoomed-out avatars beyond the node radius', () => {

@@ -43,13 +43,15 @@ const DISK_CACHE_MISS_PROBE_COOLDOWN_MS = 5000
 const resolveTargetBucket = (
   candidate: AvatarCandidate,
   budget: AvatarBudget,
-) => Math.min(candidate.bucket, budget.maxBucket) as ImageLodBucket
+) =>
+  Math.min(candidate.bucket, candidate.maxBucket ?? budget.maxBucket) as ImageLodBucket
 
 export interface AvatarCandidate {
   pubkey: string
   urlKey: AvatarUrlKey
   url: string
   bucket: ImageLodBucket
+  maxBucket?: ImageLodBucket
   priority: number
   urgent?: boolean
   monogram: MonogramInput

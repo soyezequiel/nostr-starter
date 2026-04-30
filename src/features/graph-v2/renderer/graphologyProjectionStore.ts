@@ -38,6 +38,7 @@ export interface RenderNodeAttributes {
   isSelected: boolean
   isNeighbor: boolean
   isRoot: boolean
+  isExpanded?: boolean
   isPinned: boolean
   zIndex: number
 }
@@ -94,6 +95,7 @@ const hasRenderNodeAttributeChanges = (
   current.isSelected !== next.isSelected ||
   current.isNeighbor !== next.isNeighbor ||
   current.isRoot !== next.isRoot ||
+  current.isExpanded !== next.isExpanded ||
   current.isPinned !== next.isPinned ||
   current.zIndex !== next.zIndex
 
@@ -405,6 +407,7 @@ export class RenderGraphStore {
         isSelected: node.isSelected,
         isNeighbor: node.isNeighbor,
         isRoot: node.isRoot,
+        isExpanded: node.isExpanded,
         isPinned: node.isPinned,
         zIndex: resolveRenderNodeZIndex(
           node.focusState,

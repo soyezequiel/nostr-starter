@@ -531,6 +531,7 @@ const computeGraphSceneSnapshot = (
         expansionProgress,
         isRoot,
         isSelected,
+        isExpanded: node.isExpanded,
         isPinned,
         isNeighbor,
         isDimmed: focusState === 'dim',
