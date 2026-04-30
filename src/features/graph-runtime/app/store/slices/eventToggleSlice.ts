@@ -35,6 +35,7 @@ export const createEventToggleSlice: AppStateCreator<EventToggleSlice> = (
   eventToggles: sanitizeEventToggles(undefined),
   eventFeedMode: 'live',
   pauseLiveEventsWhenSceneIsLarge: false,
+  autoAddExternalActivityNodes: false,
   setEventToggle: (kind: GraphEventKind, enabled: boolean) => {
     set((state) => ({
       eventToggles: { ...state.eventToggles, [kind]: enabled },
@@ -48,5 +49,8 @@ export const createEventToggleSlice: AppStateCreator<EventToggleSlice> = (
   },
   setPauseLiveEventsWhenSceneIsLarge: (paused) => {
     set(() => ({ pauseLiveEventsWhenSceneIsLarge: Boolean(paused) }))
+  },
+  setAutoAddExternalActivityNodes: (enabled) => {
+    set(() => ({ autoAddExternalActivityNodes: Boolean(enabled) }))
   },
 })

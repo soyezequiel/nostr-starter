@@ -1,6 +1,18 @@
 ﻿import type { Filter } from 'nostr-tools'
 
 import type {
+  GraphSlice,
+  UiSlice,
+} from '@/features/graph-runtime/app/store/types'
+import type {
+  ContactListRecord,
+} from '@/features/graph-runtime/db'
+import type {
+  ParseContactListResult,
+} from '@/features/graph-runtime/workers/events/contracts'
+import type {
+  AddActivityExternalNodeInput,
+  AddActivityExternalNodeResult,
   AddDetachedNodeInput,
   AddDetachedNodeResult,
   FindPathResult,
@@ -43,6 +55,10 @@ export function createNodeDetailModule(
     Promise<NodeDetailProfile | null>
   >()
   const activeNodeProfilePrefetchPubkeys = new Set<string>()
+  const activityRelationshipContactListCache = new Map<
+    string,
+    Promise<ReadonlySet<string> | null>
+  >()
 
   async function findPath(
     sourcePubkey: string,
@@ -158,6 +174,109 @@ export function createNodeDetailModule(
       message: existingNode
         ? 'Esa identidad ya estaba en el grafo.'
         : 'Identidad agregada al grafo como nodo aislado.',
+    }
+  }
+
+  async function addActivityExternalNode(
+    input: AddActivityExternalNodeInput,
+  ): Promise<AddActivityExternalNodeResult> {
+    const pubkey = input.pubkey.toLowerCase()
+    const anchorPubkeys = Array.from(
+      new Set(
+        input.anchorPubkeys
+          .map((anchorPubkey) => anchorPubkey.toLowerCase())
+          .filter((anchorPubkey) => anchorPubkey && anchorPubkey !== pubkey),
+      ),
+    )
+
+    if (pubkey.length === 0 || anchorPubkeys.length === 0) {
+      return {
+        status: 'skipped',
+        selectedPubkey: ctx.store.getState().selectedNodePubkey,
+        relationCount: 0,
+        message: 'Sin endpoints visibles para agregar identidad por actividad.',
+      }
+    }
+
+    if (
+      input.rootPubkey !== undefined &&
+      ctx.store.getState().rootNodePubkey !== input.rootPubkey
+    ) {
+      return {
+        status: 'skipped',
+        selectedPubkey: ctx.store.getState().selectedNodePubkey,
+        relationCount: 0,
+        message: 'Actividad descartada porque cambio la identidad raiz.',
+      }
+    }
+
+    const existingNode = ctx.store.getState().nodes[pubkey]
+    let nodeResult: AddDetachedNodeResult
+    try {
+      nodeResult = addDetachedNode({
+        pubkey,
+        label: existingNode?.label ?? null,
+        picture: existingNode?.picture ?? null,
+        about: existingNode?.about ?? null,
+        nip05: existingNode?.nip05 ?? null,
+        lud16: existingNode?.lud16 ?? null,
+        profileEventId: existingNode?.profileEventId ?? null,
+        profileFetchedAt: existingNode?.profileFetchedAt ?? null,
+        profileSource: existingNode?.profileSource ?? null,
+        profileState: existingNode?.profileState ?? 'loading',
+        source: existingNode?.source ?? 'activity',
+        pin: true,
+        select: false,
+        markExpanded: true,
+      })
+    } catch (error) {
+      if (
+        error instanceof KernelCommandError &&
+        error.code === 'CAP_REACHED'
+      ) {
+        return {
+          status: 'skipped',
+          selectedPubkey: ctx.store.getState().selectedNodePubkey,
+          relationCount: 0,
+          message: error.message,
+        }
+      }
+      throw error
+    }
+
+    if (
+      input.rootPubkey !== undefined &&
+      ctx.store.getState().rootNodePubkey !== input.rootPubkey
+    ) {
+      return {
+        status: 'skipped',
+        selectedPubkey: ctx.store.getState().selectedNodePubkey,
+        relationCount: 0,
+        message: 'Actividad descartada porque cambio la identidad raiz.',
+      }
+    }
+
+    await prefetchNodeProfiles([pubkey])
+
+    const relayUrls =
+      ctx.store.getState().relayUrls.length > 0
+        ? ctx.store.getState().relayUrls.slice()
+        : ctx.defaultRelayUrls.slice()
+    const relationCount = await addVerifiedActivityRelationships({
+      pubkey,
+      anchorPubkeys,
+      relayUrls,
+      rootPubkey: input.rootPubkey,
+    })
+
+    return {
+      status: nodeResult.status,
+      selectedPubkey: ctx.store.getState().selectedNodePubkey,
+      relationCount,
+      message:
+        relationCount > 0
+          ? 'Identidad agregada por actividad con relacion verificada.'
+          : 'Identidad agregada por actividad sin relacion social verificada.',
     }
   }
 
@@ -429,15 +548,215 @@ export function createNodeDetailModule(
 
   return {
     addDetachedNode,
+    addActivityExternalNode,
     findPath,
     selectNode,
     getNodeDetail,
     prefetchNodeProfiles,
     getActivePreviewRequest,
   }
+
+  async function addVerifiedActivityRelationships({
+    pubkey,
+    anchorPubkeys,
+    relayUrls,
+    rootPubkey,
+  }: {
+    pubkey: string
+    anchorPubkeys: readonly string[]
+    relayUrls: string[]
+    rootPubkey?: string | null
+  }): Promise<number> {
+    let relationCount = 0
+
+    for (const anchorPubkey of anchorPubkeys) {
+      const state = ctx.store.getState()
+      if (rootPubkey !== undefined && state.rootNodePubkey !== rootPubkey) {
+        return relationCount
+      }
+
+      if (hasFollowRelation(state, anchorPubkey, pubkey)) {
+        relationCount += upsertFollowRelationship(anchorPubkey, pubkey)
+        continue
+      }
+      if (hasInboundRelation(state, pubkey, anchorPubkey)) {
+        relationCount += upsertInboundRelationship(pubkey, anchorPubkey)
+        continue
+      }
+
+      const anchorFollows = await getActivityRelationshipFollows(
+        anchorPubkey,
+        relayUrls,
+      )
+      if (anchorFollows?.has(pubkey)) {
+        relationCount += upsertFollowRelationship(anchorPubkey, pubkey)
+      }
+
+      const externalFollows = await getActivityRelationshipFollows(
+        pubkey,
+        relayUrls,
+      )
+      if (externalFollows?.has(anchorPubkey)) {
+        relationCount += upsertInboundRelationship(pubkey, anchorPubkey)
+      }
+    }
+
+    return relationCount
+  }
+
+  async function getActivityRelationshipFollows(
+    pubkey: string,
+    relayUrls: string[],
+  ): Promise<ReadonlySet<string> | null> {
+    const cached = activityRelationshipContactListCache.get(pubkey)
+    if (cached) {
+      return cached
+    }
+
+    const request = loadActivityRelationshipFollows(pubkey, relayUrls).finally(
+      () => {
+        if (activityRelationshipContactListCache.get(pubkey) === request) {
+          activityRelationshipContactListCache.delete(pubkey)
+        }
+      },
+    )
+    activityRelationshipContactListCache.set(pubkey, request)
+    return request
+  }
+
+  async function loadActivityRelationshipFollows(
+    pubkey: string,
+    relayUrls: string[],
+  ): Promise<ReadonlySet<string> | null> {
+    const cachedRecord = await ctx.repositories.contactLists.get(pubkey)
+    if (cachedRecord) {
+      return contactListRecordToFollowSet(cachedRecord)
+    }
+
+    const adapter = ctx.createRelayAdapter({
+      relayUrls,
+      connectTimeoutMs: NODE_DETAIL_PREVIEW_CONNECT_TIMEOUT_MS,
+      pageTimeoutMs: NODE_DETAIL_PREVIEW_PAGE_TIMEOUT_MS,
+      retryCount: NODE_DETAIL_PREVIEW_RETRY_COUNT,
+      stragglerGraceMs: NODE_DETAIL_PREVIEW_STRAGGLER_GRACE_MS,
+    })
+
+    try {
+      const contactListResult = await collectRelayEvents(adapter, [
+        { authors: [pubkey], kinds: [3] } satisfies Filter,
+      ])
+      const latestContactListEvent = selectLatestReplaceableEvent(
+        contactListResult.events,
+      )
+      if (!latestContactListEvent) {
+        return null
+      }
+
+      const parsedContactList = await parseAndPersistContactList(
+        latestContactListEvent,
+      )
+      return new Set(parsedContactList.followPubkeys)
+    } catch {
+      return null
+    } finally {
+      adapter.close()
+    }
+  }
+
+  async function parseAndPersistContactList(
+    envelope: Awaited<ReturnType<typeof collectRelayEvents>>['events'][number],
+  ): Promise<ParseContactListResult> {
+    const parsedContactList = await ctx.eventsWorker.invoke(
+      'PARSE_CONTACT_LIST',
+      {
+        event: serializeContactListEvent(envelope.event),
+      },
+    )
+    await collaborators.persistence.persistContactListEvent(
+      envelope,
+      parsedContactList,
+    )
+    return parsedContactList
+  }
+
+  function upsertFollowRelationship(source: string, target: string): number {
+    const state = ctx.store.getState()
+    if (hasStoredFollowLink(state, source, target)) {
+      return 0
+    }
+    state.upsertLinks([{ source, target, relation: 'follow' }])
+    return 1
+  }
+
+  function upsertInboundRelationship(source: string, target: string): number {
+    const state = ctx.store.getState()
+    if (hasStoredInboundLink(state, source, target)) {
+      return 0
+    }
+    state.upsertInboundLinks([{ source, target, relation: 'inbound' }])
+    return 1
+  }
 }
 
 export type NodeDetailModule = ReturnType<typeof createNodeDetailModule>
+
+type RelationshipState = Pick<
+  GraphSlice & UiSlice,
+  'links' | 'inboundLinks'
+>
+
+const contactListRecordToFollowSet = (record: ContactListRecord) =>
+  new Set(record.follows.map((pubkey) => pubkey.toLowerCase()))
+
+const hasStoredFollowLink = (
+  state: RelationshipState,
+  source: string,
+  target: string,
+) =>
+  state.links.some(
+    (link) =>
+      link.source === source &&
+      link.target === target &&
+      link.relation === 'follow',
+  )
+
+const hasStoredInboundLink = (
+  state: RelationshipState,
+  source: string,
+  target: string,
+) =>
+  state.inboundLinks.some(
+    (link) =>
+      link.source === source &&
+      link.target === target &&
+      link.relation === 'inbound',
+  )
+
+const hasFollowRelation = (
+  state: RelationshipState,
+  source: string,
+  target: string,
+) =>
+  hasStoredFollowLink(state, source, target) ||
+  state.inboundLinks.some(
+    (link) =>
+      link.source === source &&
+      link.target === target &&
+      link.relation === 'inbound',
+  )
+
+const hasInboundRelation = (
+  state: RelationshipState,
+  source: string,
+  target: string,
+) =>
+  hasStoredInboundLink(state, source, target) ||
+  state.links.some(
+    (link) =>
+      link.source === source &&
+      link.target === target &&
+      link.relation === 'follow',
+  )
 
 const shouldHydrateNodeProfile = (node: {
   profileState?: 'idle' | 'loading' | 'ready' | 'missing'

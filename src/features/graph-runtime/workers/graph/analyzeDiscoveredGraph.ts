@@ -612,6 +612,7 @@ export const analyzeDiscoveredGraph = (
       const lowEvidenceNode =
         source === 'inbound' ||
         source === 'zap' ||
+        source === 'activity' ||
         communitySize < MICRO_GROUP_SIZE ||
         confidence === 'low'
       const nodeConfidence: DiscoveredGraphAnalysisConfidence =

@@ -14,7 +14,13 @@ import type {
   GraphEventToggleState,
 } from '@/features/graph-v2/events/types'
 
-export type GraphNodeSource = 'root' | 'follow' | 'inbound' | 'zap' | 'keyword'
+export type GraphNodeSource =
+  | 'root'
+  | 'follow'
+  | 'inbound'
+  | 'zap'
+  | 'activity'
+  | 'keyword'
 export type ProfileDataSource = 'relay' | 'primal-cache'
 export type GraphLinkRelation = 'follow' | 'inbound' | 'zap'
 export type ZapLayerStatus =
@@ -335,10 +341,12 @@ export interface EventToggleSlice {
   eventToggles: GraphEventToggleState
   eventFeedMode: GraphEventFeedMode
   pauseLiveEventsWhenSceneIsLarge: boolean
+  autoAddExternalActivityNodes: boolean
   setEventToggle: (kind: GraphEventKind, enabled: boolean) => void
   setEventToggles: (toggles: Partial<GraphEventToggleState>) => void
   setEventFeedMode: (mode: GraphEventFeedMode) => void
   setPauseLiveEventsWhenSceneIsLarge: (paused: boolean) => void
+  setAutoAddExternalActivityNodes: (enabled: boolean) => void
 }
 
 export interface KeywordSlice {

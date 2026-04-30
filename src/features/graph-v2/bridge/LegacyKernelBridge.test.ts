@@ -44,6 +44,17 @@ const createRuntimeStub = () => ({
     visitedCount: 0,
     algorithm: 'bfs' as const,
   }),
+  addDetachedNode: () => ({
+    status: 'inserted' as const,
+    selectedPubkey: null,
+    message: 'ok',
+  }),
+  addActivityExternalNode: async () => ({
+    status: 'inserted' as const,
+    selectedPubkey: null,
+    relationCount: 0,
+    message: 'ok',
+  }),
   selectNode: () => ({
     previousPubkey: null,
     selectedPubkey: null,

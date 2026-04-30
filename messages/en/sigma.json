@@ -134,7 +134,11 @@
       "pauseLargeScenes": "Pause live activity in large scenes",
       "pauseLargeScenesDesc": "Limits relay filters when more than {limit} nodes are visible.",
       "disableLargeSceneLimit": "Disable live activity limit",
-      "enableLargeSceneLimit": "Enable live activity pause in large scenes"
+      "enableLargeSceneLimit": "Enable live activity pause in large scenes",
+      "autoAddExternalNodes": "Auto-add external identities",
+      "autoAddExternalNodesDesc": "When activity touches an identity outside the current view, add it to the graph and create a relation only when a follow is verified.",
+      "disableAutoAddExternalNodes": "Disable external identity auto-add",
+      "enableAutoAddExternalNodes": "Enable external identity auto-add"
     },
     "panel": {
       "visible": "Visible activities",

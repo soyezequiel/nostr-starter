@@ -494,6 +494,7 @@ export function createKernelFacade(dependencies: AppKernelDependencies) {
     toggleLayer,
     findPath: nodeDetail.findPath,
     addDetachedNode: nodeDetail.addDetachedNode,
+    addActivityExternalNode: nodeDetail.addActivityExternalNode,
     selectNode: nodeDetail.selectNode,
     getNodeDetail: nodeDetail.getNodeDetail,
     prefetchNodeProfiles: nodeDetail.prefetchNodeProfiles,

@@ -90,6 +90,19 @@ export interface AddDetachedNodeResult {
   message: string
 }
 
+export interface AddActivityExternalNodeInput {
+  pubkey: string
+  anchorPubkeys: string[]
+  rootPubkey?: string | null
+}
+
+export interface AddActivityExternalNodeResult {
+  status: 'inserted' | 'existing' | 'skipped'
+  selectedPubkey: string | null
+  relationCount: number
+  message: string
+}
+
 export interface NodeDetailProfile {
   eventId: string
   fetchedAt: number
@@ -125,6 +138,9 @@ export interface RootLoader {
     algorithm?: 'bfs' | 'dijkstra',
   ) => Promise<FindPathResult>
   addDetachedNode: (input: AddDetachedNodeInput) => AddDetachedNodeResult
+  addActivityExternalNode: (
+    input: AddActivityExternalNodeInput,
+  ) => Promise<AddActivityExternalNodeResult>
   selectNode: (pubkey: string | null) => SelectNodeResult
   getNodeDetail: (pubkey: string) => Promise<NodeDetailProfile | null>
   prefetchNodeProfiles: (pubkeys: string[]) => Promise<string[]>

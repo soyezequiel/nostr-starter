@@ -184,11 +184,12 @@ function validateGraphNodeSource(
     value !== 'root' &&
     value !== 'follow' &&
     value !== 'inbound' &&
-    value !== 'zap'
+    value !== 'zap' &&
+    value !== 'activity'
   ) {
     throw new WorkerProtocolError(
       'INVALID_PAYLOAD',
-      `${path} must be one of root, follow, inbound or zap.`,
+      `${path} must be one of root, follow, inbound, zap or activity.`,
       { path },
     )
   }

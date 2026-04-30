@@ -134,7 +134,11 @@
       "pauseLargeScenes": "Pausar actividad live en escenas grandes",
       "pauseLargeScenesDesc": "Limita filtros de relay cuando hay mas de {limit} nodos visibles.",
       "disableLargeSceneLimit": "Desactivar limite de actividad live",
-      "enableLargeSceneLimit": "Activar pausa de actividad live en escenas grandes"
+      "enableLargeSceneLimit": "Activar pausa de actividad live en escenas grandes",
+      "autoAddExternalNodes": "Autoagregar identidades externas",
+      "autoAddExternalNodesDesc": "Cuando una actividad toca una identidad fuera de la vista, la agrega al grafo y solo crea una relacion si hay follow verificado.",
+      "disableAutoAddExternalNodes": "Desactivar autoagregado de identidades externas",
+      "enableAutoAddExternalNodes": "Activar autoagregado de identidades externas"
     },
     "panel": {
       "visible": "Actividades visibles",

@@ -642,3 +642,228 @@ test('addDetachedNode fails cleanly when the graph cap is already full', () => {
   )
   assert.equal(store.getState().nodes.alice, undefined)
 })
+
+test('addActivityExternalNode inserts a pinned unselected node, hydrates profile, and adds verified follow relation', async () => {
+  const store = createStoreForNodeDetail()
+  store.getState().setRootNodePubkey('root')
+  store.getState().upsertNodes([
+    {
+      pubkey: 'root',
+      label: 'Root',
+      keywordHits: 0,
+      discoveredAt: 1,
+      profileState: 'ready',
+      source: 'root',
+    },
+  ])
+
+  const nodeDetail = createNodeDetailModule(
+    {
+      store,
+      repositories: {
+        profiles: {
+          get: async () => null,
+        },
+        contactLists: {
+          get: async (pubkey: string) => {
+            if (pubkey === 'root') {
+              return {
+                pubkey: 'root',
+                eventId: 'contacts-root',
+                createdAt: 1,
+                fetchedAt: 2,
+                follows: ['external'],
+                relayHints: [],
+              }
+            }
+            if (pubkey === 'external') {
+              return {
+                pubkey: 'external',
+                eventId: 'contacts-external',
+                createdAt: 1,
+                fetchedAt: 2,
+                follows: [],
+                relayHints: [],
+              }
+            }
+            return null
+          },
+        },
+      },
+      eventsWorker: {
+        invoke: async () => {
+          throw new Error('events worker should not be used with cached contacts')
+        },
+      },
+      graphWorker: {
+        invoke: async () => {
+          throw new Error('graph worker should not be used in this test')
+        },
+        dispose: () => {},
+      },
+      createRelayAdapter: () => ({
+        subscribe: () => ({
+          subscribe: () => () => {},
+        }),
+        count: async () => [],
+        getRelayHealth: () => ({}),
+        subscribeToRelayHealth: () => () => {},
+        close: () => {},
+      }),
+      defaultRelayUrls: ['wss://relay.example'],
+      now: () => 3_000,
+      emitter: createKernelEventEmitter(),
+    },
+    {
+      persistence: {
+        persistContactListEvent: async () => {},
+        persistProfileEvent: async () => {},
+      },
+      profileHydration: {
+        hydrateNodeProfiles: async (pubkeys: string[]) => {
+          assert.deepEqual(pubkeys, ['external'])
+          const existingNode = store.getState().nodes.external
+          store.getState().upsertNodes([
+            {
+              ...existingNode,
+              label: 'External Actor',
+              picture: 'https://cdn.example.com/external.jpg',
+              keywordHits: 0,
+              discoveredAt: existingNode.discoveredAt,
+              profileState: 'ready',
+              source: existingNode.source,
+            },
+          ])
+        },
+        syncNodeProfile: () => {},
+        markNodeProfileMissing: () => {},
+      },
+    },
+  )
+
+  const result = await nodeDetail.addActivityExternalNode({
+    pubkey: 'external',
+    anchorPubkeys: ['root'],
+    rootPubkey: 'root',
+  })
+
+  assert.equal(result.status, 'inserted')
+  assert.equal(result.selectedPubkey, null)
+  assert.equal(result.relationCount, 1)
+  assert.equal(store.getState().selectedNodePubkey, null)
+  assert.equal(store.getState().openPanel, 'overview')
+  assert.equal(store.getState().expandedNodePubkeys.has('external'), true)
+  assert.equal(store.getState().pinnedNodePubkeys.has('external'), true)
+  assert.equal(store.getState().nodes.external?.source, 'activity')
+  assert.equal(store.getState().nodes.external?.label, 'External Actor')
+  assert.equal(
+    store.getState().links.some((link) =>
+      link.source === 'root' &&
+      link.target === 'external' &&
+      link.relation === 'follow',
+    ),
+    true,
+  )
+})
+
+test('addActivityExternalNode only adds inbound relation when the external kind 3 follows the visible anchor', async () => {
+  const store = createStoreForNodeDetail()
+  store.getState().setRootNodePubkey('root')
+  store.getState().upsertNodes([
+    {
+      pubkey: 'root',
+      label: 'Root',
+      keywordHits: 0,
+      discoveredAt: 1,
+      profileState: 'ready',
+      source: 'root',
+    },
+  ])
+
+  const nodeDetail = createNodeDetailModule(
+    {
+      store,
+      repositories: {
+        profiles: {
+          get: async () => null,
+        },
+        contactLists: {
+          get: async (pubkey: string) => {
+            if (pubkey === 'root') {
+              return {
+                pubkey: 'root',
+                eventId: 'contacts-root',
+                createdAt: 1,
+                fetchedAt: 2,
+                follows: [],
+                relayHints: [],
+              }
+            }
+            if (pubkey === 'external') {
+              return {
+                pubkey: 'external',
+                eventId: 'contacts-external',
+                createdAt: 1,
+                fetchedAt: 2,
+                follows: ['root'],
+                relayHints: [],
+              }
+            }
+            return null
+          },
+        },
+      },
+      eventsWorker: {
+        invoke: async () => {
+          throw new Error('events worker should not be used with cached contacts')
+        },
+      },
+      graphWorker: {
+        invoke: async () => {
+          throw new Error('graph worker should not be used in this test')
+        },
+        dispose: () => {},
+      },
+      createRelayAdapter: () => ({
+        subscribe: () => ({
+          subscribe: () => () => {},
+        }),
+        count: async () => [],
+        getRelayHealth: () => ({}),
+        subscribeToRelayHealth: () => () => {},
+        close: () => {},
+      }),
+      defaultRelayUrls: ['wss://relay.example'],
+      now: () => 3_000,
+      emitter: createKernelEventEmitter(),
+    },
+    {
+      persistence: {
+        persistContactListEvent: async () => {},
+        persistProfileEvent: async () => {},
+      },
+      profileHydration: {
+        hydrateNodeProfiles: async () => {},
+        syncNodeProfile: () => {},
+        markNodeProfileMissing: () => {},
+      },
+    },
+  )
+
+  const result = await nodeDetail.addActivityExternalNode({
+    pubkey: 'external',
+    anchorPubkeys: ['root'],
+    rootPubkey: 'root',
+  })
+
+  assert.equal(result.relationCount, 1)
+  assert.equal(store.getState().links.length, 0)
+  assert.equal(
+    store.getState().inboundLinks.some((link) =>
+      link.source === 'external' &&
+      link.target === 'root' &&
+      link.relation === 'inbound',
+    ),
+    true,
+  )
+})

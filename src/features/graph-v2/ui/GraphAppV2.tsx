@@ -308,6 +308,8 @@ const NOTIFICATION_AUTO_DISMISS_MS = 6500
 const NOTIFICATION_HISTORY_LIMIT = 100
 const ZAP_ACTIVITY_LIMIT = 80
 const GRAPH_EVENT_ACTIVITY_LIMIT = 200
+const AUTO_ACTIVITY_NODE_BATCH_SIZE = 4
+const AUTO_ACTIVITY_NODE_FLUSH_DELAY_MS = 250
 const MOBILE_PHYSICS_QUERY = '(max-width: 720px)'
 const MOBILE_FORCE_ATLAS_REPULSION_FORCE = 2.4
 const ZAP_ACTIVITY_SOURCE_LABELS: Record<ZapActivitySource, string> = {
@@ -2362,6 +2364,13 @@ export default function GraphAppV2() {
   const setPauseLiveEventsWhenSceneIsLarge = useAppStore(
     (state) => state.setPauseLiveEventsWhenSceneIsLarge,
   )
+  const autoAddExternalActivityNodes = useAppStore(
+    (state) => state.autoAddExternalActivityNodes,
+  )
+  const setAutoAddExternalActivityNodes = useAppStore(
+    (state) => state.setAutoAddExternalActivityNodes,
+  )
+  const canAutoAddExternalActivityNodes = isDev && autoAddExternalActivityNodes
   const setPauseLiveZapsWhenSceneIsLarge = useCallback(
     (updater: boolean | ((current: boolean) => boolean)) => {
       const next =
@@ -2393,6 +2402,10 @@ export default function GraphAppV2() {
   const activityRootPubkeyRef = useRef<string | null>(null)
   const zapActorProfileAttemptedRef = useRef(new Set<string>())
   const zapActorProfileInflightRef = useRef(new Set<string>())
+  const autoActivityNodePendingRef = useRef(new Map<string, Set<string>>())
+  const autoActivityNodeInflightRef = useRef(new Set<string>())
+  const autoActivityPairAttemptedRef = useRef(new Set<string>())
+  const autoActivityNodeFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sigmaHostRef = useRef<SigmaCanvasHostHandle | null>(null)
   const pendingExpansionAutoFitRef = useRef<ExpansionAutoFitRequest | null>(
     null,
@@ -3308,13 +3321,156 @@ export default function GraphAppV2() {
 
   useEffect(() => {
     activityRootPubkeyRef.current = sceneState.rootPubkey
+    autoActivityNodePendingRef.current.clear()
+    autoActivityPairAttemptedRef.current.clear()
+    if (autoActivityNodeFlushTimerRef.current !== null) {
+      clearTimeout(autoActivityNodeFlushTimerRef.current)
+      autoActivityNodeFlushTimerRef.current = null
+    }
   }, [sceneState.rootPubkey])
+
+  useEffect(() => () => {
+    if (autoActivityNodeFlushTimerRef.current !== null) {
+      clearTimeout(autoActivityNodeFlushTimerRef.current)
+      autoActivityNodeFlushTimerRef.current = null
+    }
+  }, [])
 
   const visibleNodeSet = useMemo(() => new Set(visiblePubkeys), [visiblePubkeys])
   const sceneConnectionLookup = useMemo(
     () => buildSceneConnectionIndex(sceneState.edgesById),
     [sceneState.edgesById],
   )
+  const scheduleDetachedNodePlacement = useCallback(
+    (pubkey: string, attempt = 0) => {
+      if (typeof window === 'undefined') {
+        return
+      }
+
+      window.requestAnimationFrame(() => {
+        const host = sigmaHostRef.current
+        const placed = host?.placeDetachedNode(pubkey) ?? false
+        if (placed) {
+          host?.setNodePinned(pubkey, true)
+          return
+        }
+        if (!placed && attempt < 4) {
+          scheduleDetachedNodePlacement(pubkey, attempt + 1)
+        }
+      })
+    },
+    [],
+  )
+  const flushAutoActivityNodeQueue = useCallback(() => {
+    autoActivityNodeFlushTimerRef.current = null
+    if (
+      !canAutoAddExternalActivityNodes ||
+      isFixtureMode ||
+      !sceneState.rootPubkey
+    ) {
+      autoActivityNodePendingRef.current.clear()
+      return
+    }
+
+    const entries = Array.from(autoActivityNodePendingRef.current.entries())
+      .slice(0, AUTO_ACTIVITY_NODE_BATCH_SIZE)
+    if (entries.length === 0) {
+      return
+    }
+
+    for (const [pubkey, anchorPubkeys] of entries) {
+      if (autoActivityNodeInflightRef.current.has(pubkey)) {
+        continue
+      }
+
+      autoActivityNodePendingRef.current.delete(pubkey)
+      autoActivityNodeInflightRef.current.add(pubkey)
+      void bridge.addActivityExternalNode({
+        pubkey,
+        anchorPubkeys: Array.from(anchorPubkeys),
+        rootPubkey: sceneState.rootPubkey,
+      }).then((result) => {
+        if (result.status !== 'skipped') {
+          scheduleDetachedNodePlacement(pubkey)
+        }
+      }).catch(() => {
+        // Activity-driven discovery is opportunistic. A failed relation/profile
+        // probe must not interrupt the live feed.
+      }).finally(() => {
+        autoActivityNodeInflightRef.current.delete(pubkey)
+        if (
+          autoActivityNodePendingRef.current.size > 0 &&
+          autoActivityNodeFlushTimerRef.current === null
+        ) {
+          autoActivityNodeFlushTimerRef.current = setTimeout(
+            flushAutoActivityNodeQueue,
+            AUTO_ACTIVITY_NODE_FLUSH_DELAY_MS,
+          )
+        }
+      })
+    }
+  }, [
+    canAutoAddExternalActivityNodes,
+    bridge,
+    isFixtureMode,
+    sceneState.rootPubkey,
+    scheduleDetachedNodePlacement,
+  ])
+  const enqueueAutoActivityExternalNode = useCallback(({
+    fromPubkey,
+    hasVisibleFrom,
+    hasVisibleTo,
+    toPubkey,
+  }: {
+    fromPubkey: string
+    hasVisibleFrom: boolean
+    hasVisibleTo: boolean
+    toPubkey: string
+  }) => {
+    if (
+      !canAutoAddExternalActivityNodes ||
+      isFixtureMode ||
+      !sceneState.rootPubkey ||
+      hasVisibleFrom === hasVisibleTo
+    ) {
+      return
+    }
+
+    const anchorPubkey = (hasVisibleFrom ? fromPubkey : toPubkey).toLowerCase()
+    const externalPubkey = (hasVisibleFrom ? toPubkey : fromPubkey).toLowerCase()
+    if (
+      !HEX_PUBKEY_RE.test(anchorPubkey) ||
+      !HEX_PUBKEY_RE.test(externalPubkey)
+    ) {
+      return
+    }
+
+    const pairKey =
+      anchorPubkey < externalPubkey
+        ? `${anchorPubkey}<->${externalPubkey}`
+        : `${externalPubkey}<->${anchorPubkey}`
+    if (autoActivityPairAttemptedRef.current.has(pairKey)) {
+      return
+    }
+    autoActivityPairAttemptedRef.current.add(pairKey)
+
+    const pendingAnchors =
+      autoActivityNodePendingRef.current.get(externalPubkey) ?? new Set<string>()
+    pendingAnchors.add(anchorPubkey)
+    autoActivityNodePendingRef.current.set(externalPubkey, pendingAnchors)
+
+    if (autoActivityNodeFlushTimerRef.current === null) {
+      autoActivityNodeFlushTimerRef.current = setTimeout(
+        flushAutoActivityNodeQueue,
+        AUTO_ACTIVITY_NODE_FLUSH_DELAY_MS,
+      )
+    }
+  }, [
+    canAutoAddExternalActivityNodes,
+    flushAutoActivityNodeQueue,
+    isFixtureMode,
+    sceneState.rootPubkey,
+  ])
   const appendZapActivity = useCallback((
     zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'> & {
       eventId?: string
@@ -3369,6 +3525,12 @@ export default function GraphAppV2() {
     // Animar el zap si al menos un nodo estÃ¡ presente en el renderizado
     const hasVisibleFrom = visibleNodeSet.has(zap.fromPubkey)
     const hasVisibleTo = visibleNodeSet.has(zap.toPubkey)
+    enqueueAutoActivityExternalNode({
+      fromPubkey: zap.fromPubkey,
+      hasVisibleFrom,
+      hasVisibleTo,
+      toPubkey: zap.toPubkey,
+    })
     if (!hasVisibleFrom && !hasVisibleTo) {
       if (shouldTrace) {
         traceZapFlow('uiZapGate.dropped', {
@@ -3410,6 +3572,7 @@ export default function GraphAppV2() {
     sceneState.activeLayer,
     sceneState.rootPubkey,
     showZaps,
+    enqueueAutoActivityExternalNode,
     visibleNodeSet,
   ])
 
@@ -3424,6 +3587,12 @@ export default function GraphAppV2() {
 
       const hasVisibleFrom = visibleNodeSet.has(event.fromPubkey)
       const hasVisibleTo = visibleNodeSet.has(event.toPubkey)
+      enqueueAutoActivityExternalNode({
+        fromPubkey: event.fromPubkey,
+        hasVisibleFrom,
+        hasVisibleTo,
+        toPubkey: event.toPubkey,
+      })
       if (!hasVisibleFrom && !hasVisibleTo) {
         return false
       }
@@ -3441,7 +3610,7 @@ export default function GraphAppV2() {
       })
       return played
     },
-    [sceneState.rootPubkey, visibleNodeSet],
+    [enqueueAutoActivityExternalNode, sceneState.rootPubkey, visibleNodeSet],
   )
 
   const handleReplayZapActivity = useCallback((entry: ZapActivityLogEntry) => {
@@ -4573,27 +4742,6 @@ export default function GraphAppV2() {
     setSelectedZapOffGraphIdentity(null)
   }, [])
 
-  const scheduleDetachedNodePlacement = useCallback(
-    (pubkey: string, attempt = 0) => {
-      if (typeof window === 'undefined') {
-        return
-      }
-
-      window.requestAnimationFrame(() => {
-        const host = sigmaHostRef.current
-        const placed = host?.placeDetachedNode(pubkey) ?? false
-        if (placed) {
-          host?.setNodePinned(pubkey, true)
-          return
-        }
-        if (!placed && attempt < 4) {
-          scheduleDetachedNodePlacement(pubkey, attempt + 1)
-        }
-      })
-    },
-    [],
-  )
-
   const handleOpenIdentityFromZap = useCallback((pubkey: string, fallbackLabel: string) => {
     if (isFixtureMode) {
       updateFixtureState((current) => ({ ...current, selectedNodePubkey: pubkey }))
@@ -5434,6 +5582,29 @@ export default function GraphAppV2() {
             type="button"
           />
         </div>
+        {isDev ? (
+          <div className="sg-setting-row">
+            <div>
+              <div className="sg-setting-row__lbl">{tSigma('zaps.settings.autoAddExternalNodes')}</div>
+              <div className="sg-setting-row__desc">
+                {tSigma('zaps.settings.autoAddExternalNodesDesc')}
+              </div>
+            </div>
+            <button
+              aria-pressed={autoAddExternalActivityNodes}
+              className={`sg-toggle${autoAddExternalActivityNodes ? ' sg-toggle--on' : ''}`}
+              onClick={() => {
+                setAutoAddExternalActivityNodes(!autoAddExternalActivityNodes)
+              }}
+              title={
+                autoAddExternalActivityNodes
+                  ? tSigma('zaps.settings.disableAutoAddExternalNodes')
+                  : tSigma('zaps.settings.enableAutoAddExternalNodes')
+              }
+              type="button"
+            />
+          </div>
+        ) : null}
       </div>
 
     </div>
