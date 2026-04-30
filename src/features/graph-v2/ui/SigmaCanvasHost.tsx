@@ -28,7 +28,7 @@ import type {
 import { GraphEventOverlay } from '@/features/graph-v2/events/graphEventOverlay'
 import type { ParsedGraphEvent } from '@/features/graph-v2/events/types'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
-import { resolveZapOverlayCssPosition } from '@/features/graph-v2/ui/zapOverlayPosition'
+import { resolveActivityOverlayCssPosition } from '@/features/graph-v2/ui/activityOverlayPosition'
 
 interface SigmaCanvasHostProps {
   scene: GraphSceneSnapshot
@@ -58,6 +58,7 @@ export interface SigmaCanvasHostHandle {
   playZap: (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => boolean
   playZapArrival: (zap: Pick<ParsedZap, 'toPubkey' | 'sats'>) => boolean
   playGraphEvent: (event: ParsedGraphEvent) => boolean
+  setActivityOverlayPaused: (paused: boolean) => void
   setZapOverlayPaused: (paused: boolean) => void
   recenterCamera: () => void
   fitCameraToGraph: () => void
@@ -255,7 +256,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       adapterRef.current = nextAdapter
 
       const nextOverlay = new GraphEventOverlay(container, (pubkey) => {
-        return resolveZapOverlayCssPosition(adapter, pubkey)
+        return resolveActivityOverlayCssPosition(adapter, pubkey)
       })
       overlay = nextOverlay
       overlayRef.current = nextOverlay
@@ -342,6 +343,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       playZap: (zap) => overlayRef.current?.playZap(zap) ?? false,
       playZapArrival: (zap) => overlayRef.current?.playZapArrival(zap) ?? false,
       playGraphEvent: (event) => overlayRef.current?.play(event) ?? false,
+      setActivityOverlayPaused: (paused) => overlayRef.current?.setPaused(paused),
       setZapOverlayPaused: (paused) => overlayRef.current?.setPaused(paused),
       recenterCamera: () => adapterRef.current?.recenterCamera(),
       fitCameraToGraph: () => adapterRef.current?.fitCameraToGraph(),

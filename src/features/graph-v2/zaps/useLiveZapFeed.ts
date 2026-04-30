@@ -90,7 +90,7 @@ export function useLiveZapFeed({
       })
       if (reason === 'visible-pubkey-limit') {
         onDroppedRef.current?.(
-          `Zaps live pausados: ${visiblePubkeyCount} nodos visibles supera el limite ${MAX_ZAP_FILTER_PUBKEYS}.`,
+          `Actividad live pausada: ${visiblePubkeyCount} nodos visibles supera el limite ${MAX_ZAP_FILTER_PUBKEYS}.`,
         )
       }
       return

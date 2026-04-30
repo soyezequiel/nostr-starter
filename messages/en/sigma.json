@@ -112,40 +112,40 @@
         "pagination": "Paginate inbound followers",
         "parse": "Correlate evidence in worker",
         "merge": "Merge visible graph",
-        "enrich": "Hydrate profiles and zaps"
+        "enrich": "Hydrate profiles and activity"
       }
     }
   },
   "settingsTabs": {
     "performance": "Performance",
     "visuals": "Visuals",
-    "zaps": "Zaps",
+    "zaps": "Activities",
     "relays": "Network",
     "dev": "Advanced"
   },
   "zaps": {
     "settings": {
-      "visualization": "Visualization",
-      "showInGraph": "Show zaps in the graph",
-      "showInGraphDesc": "Controls whether zap connections and animations are drawn over the scene.",
-      "hideZaps": "Hide zaps",
-      "showZaps": "Show zaps",
+      "visualization": "Activity types",
+      "showInGraph": "Show activity",
+      "showInGraphDesc": "Controls whether activity participates in the feed and animations.",
+      "hideZaps": "Hide activity",
+      "showZaps": "Show activity",
       "operationalProtection": "Operational protection",
-      "pauseLargeScenes": "Pause live feed in large scenes",
+      "pauseLargeScenes": "Pause live activity in large scenes",
       "pauseLargeScenesDesc": "Limits relay filters when more than {limit} nodes are visible.",
-      "disableLargeSceneLimit": "Disable live zap limit",
-      "enableLargeSceneLimit": "Enable live zap pause in large scenes"
+      "disableLargeSceneLimit": "Disable live activity limit",
+      "enableLargeSceneLimit": "Enable live activity pause in large scenes"
     },
     "panel": {
-      "visible": "Visible zaps",
+      "visible": "Visible activities",
       "statusPaused": "Paused",
-      "modeAria": "Zap mode",
+      "modeAria": "Activity mode",
       "keepWorking": "It keeps working even if you close this panel.",
       "configuredWindow": "Replay configured for {window}.",
       "historicalWindow": "Historical window",
-      "recentHoursAria": "Recent zap hours",
+      "recentHoursAria": "Recent activity hours",
       "collection": "Collection",
-      "collectionProgressAria": "Zap collection progress",
+      "collectionProgressAria": "Activity collection progress",
       "targets": "Targets",
       "batches": "Batches",
       "cache": "Cache",
@@ -170,7 +170,7 @@
       "replayZap": "Replay zap from {from} to {to}",
       "shownInGraph": "Shown in the graph",
       "outsideView": "Outside the current view",
-      "empty": "There are no visible zaps in this session yet.",
+      "empty": "There are no visible activities in this session yet.",
       "advancedDetails": "Technical details"
     }
   },
@@ -224,14 +224,14 @@
     "closeRuntime": "Close runtime inspector",
     "pausePhysics": "Pause physics",
     "resumePhysics": "Resume physics",
-    "zaps": "Zaps",
-    "closeZaps": "Close zaps panel",
+    "zaps": "Activities",
+    "closeZaps": "Close activities panel",
     "view": "Fit view",
     "relaysCurrent": "Relays up to date",
     "relaysRevert": "Revert relays",
     "filters": "Filters",
     "closeFilters": "Close connection filters",
-    "liveZaps": "Live zaps",
+    "liveZaps": "Live activities",
     "runtimeShort": "Runtime",
     "viewShort": "View",
     "replay": "Replay {window}",
@@ -241,7 +241,7 @@
   },
   "panelEyebrow": {
     "settings": "SETTINGS",
-    "zaps": "ZAPS",
+    "zaps": "ACTIVITIES",
     "notifications": "NOTIFICATIONS",
     "filters": "FILTERS",
     "identity": "IDENTITY"
@@ -403,7 +403,7 @@
   "canvas": {
     "replayShortcut": {
       "label": "Replay {window}",
-      "disabled": "Load an identity to replay zaps",
+      "disabled": "Load an identity to replay activity",
       "pauseLabel": "Pause active replay",
       "resumeLabel": "Resume replay"
     }

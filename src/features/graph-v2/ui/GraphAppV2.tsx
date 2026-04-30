@@ -158,7 +158,6 @@ import {
   PlayIcon,
   PulseIcon,
   TargetIcon,
-  ZapIcon,
 } from '@/features/graph-v2/ui/SigmaIcons'
 import { SigmaTopBar } from '@/features/graph-v2/ui/SigmaTopBar'
 import { SigmaFilterBar, type FilterPill } from '@/features/graph-v2/ui/SigmaFilterBar'
@@ -2292,7 +2291,7 @@ export default function GraphAppV2() {
   const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null)
   const [isRootSheetOpen, setIsRootSheetOpen] = useState(!isFixtureMode)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [isZapsPanelOpen, setIsZapsPanelOpen] = useState(false)
+  const [isActivitiesPanelOpen, setIsActivitiesPanelOpen] = useState(false)
   const [selectedZapDetailId, setSelectedZapDetailId] = useState<string | null>(null)
   const [selectedGraphEventDetailId, setSelectedGraphEventDetailId] =
     useState<string | null>(null)
@@ -2336,16 +2335,6 @@ export default function GraphAppV2() {
     (state) => state.setEventFeedMode,
   )
   const showZaps = eventToggles.zap
-  const setShowZaps = useCallback(
-    (updater: boolean | ((current: boolean) => boolean)) => {
-      const next =
-        typeof updater === 'function'
-          ? updater(eventToggles.zap)
-          : updater
-      setEventToggle('zap', next)
-    },
-    [eventToggles.zap, setEventToggle],
-  )
   const zapFeedMode: ZapFeedMode = persistedEventFeedMode
   const setZapFeedMode = useCallback(
     (mode: ZapFeedMode) => {
@@ -2752,7 +2741,7 @@ export default function GraphAppV2() {
         if (mobileUtilityPanel) { setMobileUtilityPanel(null); return }
         if (isPersonSearchOpen) { setIsPersonSearchOpen(false); return }
         if (isSettingsOpen) { setIsSettingsOpen(false); return }
-        if (isZapsPanelOpen) {
+        if (isActivitiesPanelOpen) {
           if (detailNodeRef.current) {
             clearSelectedNodeRef.current?.()
             return
@@ -2769,7 +2758,7 @@ export default function GraphAppV2() {
             setSelectedGraphEventDetailId(null)
             return
           }
-          setIsZapsPanelOpen(false)
+          setIsActivitiesPanelOpen(false)
           return
         }
         if (isNotificationsOpen) { setIsNotificationsOpen(false); return }
@@ -2786,7 +2775,7 @@ export default function GraphAppV2() {
         event.preventDefault()
         setIsPersonSearchOpen(false)
         setIsSettingsOpen(false)
-        setIsZapsPanelOpen(false)
+        setIsActivitiesPanelOpen(false)
         setIsNotificationsOpen(false)
         setMobileUtilityPanel(null)
         setIsRootSheetOpen(false)
@@ -2804,7 +2793,7 @@ export default function GraphAppV2() {
         event.preventDefault()
         if (sceneState.rootPubkey) {
           setIsSettingsOpen(false)
-          setIsZapsPanelOpen(false)
+          setIsActivitiesPanelOpen(false)
           setIsNotificationsOpen(false)
           setMobileUtilityPanel(null)
           setIsPersonSearchOpen(true)
@@ -2818,13 +2807,13 @@ export default function GraphAppV2() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [canUseRuntimeInspector, mobileUtilityPanel, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isZapsPanelOpen, selectedGraphEventDetailId, selectedZapDetailId, selectedZapOffGraphIdentity])
+  }, [canUseRuntimeInspector, mobileUtilityPanel, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isActivitiesPanelOpen, selectedGraphEventDetailId, selectedZapDetailId, selectedZapOffGraphIdentity])
 
   const closeCompetingSidePanels = useCallback(() => {
     setIsRootSheetOpen(false)
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobileUtilityPanel(null)
@@ -3606,7 +3595,7 @@ export default function GraphAppV2() {
   }, [appendZapActivity, handleZap])
   const handleQuickReplay = useCallback(() => {
     if (!canRunEventFeed) return
-    setIsZapsPanelOpen(true)
+    setIsActivitiesPanelOpen(true)
     setZapFeedMode('recent')
     setRecentZapReplayPlaybackPaused(false)
     setRecentZapReplayScrubProgress(null)
@@ -3781,7 +3770,7 @@ export default function GraphAppV2() {
     recentZapReplay.playableCount > 0
 
   useEffect(() => {
-    sigmaHostRef.current?.setZapOverlayPaused(
+    sigmaHostRef.current?.setActivityOverlayPaused(
       (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay) &&
         isRecentZapReplayPlaybackHeld,
     )
@@ -3791,8 +3780,8 @@ export default function GraphAppV2() {
     shouldEnableRecentZapReplay,
   ])
 
-  const recentZapReplayTimelineClassName = `sg-zap-replay-timeline__rail${
-    recentZapReplayScrubProgress !== null ? ' sg-zap-replay-timeline__rail--scrubbing' : ''
+  const recentZapReplayTimelineClassName = `sg-activity-replay-timeline__rail${
+    recentZapReplayScrubProgress !== null ? ' sg-activity-replay-timeline__rail--scrubbing' : ''
   }`
 
   const resolveZapReplayPointerProgress = useCallback(
@@ -3905,7 +3894,7 @@ export default function GraphAppV2() {
     if (zapFeedMode !== 'live' || !pauseLiveZapsWhenSceneIsLarge) {
       setZapFeedback((current) =>
         current?.includes(`supera el limite ${MAX_ZAP_FILTER_PUBKEYS}`) ||
-        current === 'Zaps live pausados: no hay nodos visibles para filtrar.'
+        current === 'Actividad live pausada: no hay nodos visibles para filtrar.'
           ? null
           : current,
       )
@@ -4023,7 +4012,7 @@ export default function GraphAppV2() {
     setActiveSettingsTab(tab)
     setIsRootSheetOpen(false)
     setIsPersonSearchOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobileUtilityPanel(null)
@@ -4045,7 +4034,7 @@ export default function GraphAppV2() {
       setLoadFeedback('Cargando root...')
       setIsRootSheetOpen(false)
       setIsRootLoadScreenOpen(true)
-      setIsZapsPanelOpen(false)
+      setIsActivitiesPanelOpen(false)
       setIsRuntimeInspectorOpen(false)
       if (isChangingRoot && !isFixtureMode) {
         setZapFeedMode('live')
@@ -4363,7 +4352,7 @@ export default function GraphAppV2() {
   const handleOpenRootSheet = useCallback(() => {
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobileUtilityPanel(null)
@@ -4377,7 +4366,7 @@ export default function GraphAppV2() {
     }
     setIsRootSheetOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobileUtilityPanel(null)
@@ -4392,7 +4381,7 @@ export default function GraphAppV2() {
     }
     setIsRootSheetOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobileUtilityPanel(null)
@@ -4445,7 +4434,7 @@ export default function GraphAppV2() {
     }
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsRuntimeInspectorOpen(false)
     setIsRootSheetOpen(false)
     setMobileUtilityPanel(null)
@@ -4453,9 +4442,9 @@ export default function GraphAppV2() {
     setIsNotificationsOpen(true)
   }, [clearSelectedNode, isNotificationsOpen])
 
-  const handleOpenZapsPanel = useCallback(() => {
-    if (isZapsPanelOpen) {
-      setIsZapsPanelOpen(false)
+  const handleOpenActivitiesPanel = useCallback(() => {
+    if (isActivitiesPanelOpen) {
+      setIsActivitiesPanelOpen(false)
       setSelectedZapDetailId(null)
       setSelectedGraphEventDetailId(null)
       setSelectedZapOffGraphIdentity(null)
@@ -4472,11 +4461,11 @@ export default function GraphAppV2() {
     setSelectedZapDetailId(null)
     setSelectedGraphEventDetailId(null)
     setSelectedZapOffGraphIdentity(null)
-    setIsZapsPanelOpen(true)
-  }, [clearSelectedNode, isZapsPanelOpen])
+    setIsActivitiesPanelOpen(true)
+  }, [clearSelectedNode, isActivitiesPanelOpen])
 
   useEffect(() => {
-    if (isZapsPanelOpen) return
+    if (isActivitiesPanelOpen) return
     if (selectedZapDetailId !== null) {
       setSelectedZapDetailId(null)
     }
@@ -4487,7 +4476,7 @@ export default function GraphAppV2() {
       setSelectedZapOffGraphIdentity(null)
     }
   }, [
-    isZapsPanelOpen,
+    isActivitiesPanelOpen,
     selectedGraphEventDetailId,
     selectedZapDetailId,
     selectedZapOffGraphIdentity,
@@ -4652,7 +4641,7 @@ export default function GraphAppV2() {
     }
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRootSheetOpen(false)
     setMobileUtilityPanel(null)
@@ -4671,7 +4660,7 @@ export default function GraphAppV2() {
     setIsRootSheetOpen(false)
     setIsPersonSearchOpen(false)
     setIsSettingsOpen(false)
-    setIsZapsPanelOpen(false)
+    setIsActivitiesPanelOpen(false)
     setIsNotificationsOpen(false)
     setIsRuntimeInspectorOpen(false)
     setMobilePanelSnap(snap)
@@ -4697,14 +4686,6 @@ export default function GraphAppV2() {
       return next
     })
   }, [])
-
-  const handleToggleZaps = useCallback(() => {
-    setShowZaps((current) => {
-      const next = !current
-      setActionFeedback(next ? 'Zaps visibles.' : 'Zaps ocultos.')
-      return next
-    })
-  }, [setShowZaps])
 
   const handleFitView = useCallback(() => {
     closeCompetingSidePanels()
@@ -4836,13 +4817,13 @@ export default function GraphAppV2() {
       id: 'zaps',
       tip: recentActivityReplayWorking
         ? `${activityReplayStatusLabel}: sigue trabajando`
-        : isZapsPanelOpen
+        : isActivitiesPanelOpen
           ? tSigma('rail.closeZaps')
           : tSigma('rail.zaps'),
-      icon: <ZapIcon />,
-      active: isZapsPanelOpen,
+      icon: <PulseIcon />,
+      active: isActivitiesPanelOpen,
       attention: recentActivityReplayWorking,
-      onClick: handleOpenZapsPanel,
+      onClick: handleOpenActivitiesPanel,
     },
     {
       id: 'replay',
@@ -4882,7 +4863,7 @@ export default function GraphAppV2() {
     activityReplayStatusLabel,
     canRunEventFeed,
     runtimeInspectorButtonVisible,
-    handleOpenZapsPanel,
+    handleOpenActivitiesPanel,
     handleOpenNotifications,
     handleOpenRuntimeInspector,
     handleOpenSettings,
@@ -4894,7 +4875,7 @@ export default function GraphAppV2() {
     isNotificationsOpen,
     isRuntimeInspectorOpen,
     isSettingsOpen,
-    isZapsPanelOpen,
+    isActivitiesPanelOpen,
     notificationHistory.length,
     physicsEnabled,
     recentActivityReplayWorking,
@@ -4919,14 +4900,14 @@ export default function GraphAppV2() {
       label: tSigma('rail.zaps'),
       tip: recentActivityReplayWorking
         ? `${activityReplayStatusLabel}: sigue trabajando`
-        : isZapsPanelOpen
+        : isActivitiesPanelOpen
           ? tSigma('rail.closeZaps')
           : tSigma('rail.liveZaps'),
-      icon: <ZapIcon />,
-      active: isZapsPanelOpen,
+      icon: <PulseIcon />,
+      active: isActivitiesPanelOpen,
       badge: activityPanelEntries.length,
       attention: recentActivityReplayWorking,
-      onClick: handleOpenZapsPanel,
+      onClick: handleOpenActivitiesPanel,
     },
     {
       id: 'replay',
@@ -4982,13 +4963,13 @@ export default function GraphAppV2() {
     runtimeInspectorButtonVisible,
     handleOpenMobileUtilityPanel,
     handleOpenRuntimeInspector,
-    handleOpenZapsPanel,
+    handleOpenActivitiesPanel,
     handleOpenSettings,
     handleQuickReplay,
     handleQuickReplayPauseToggle,
     isSettingsOpen,
     isRuntimeInspectorOpen,
-    isZapsPanelOpen,
+    isActivitiesPanelOpen,
     mobileUtilityPanel,
     handleFitView,
     recentActivityReplayWorking,
@@ -5167,7 +5148,7 @@ export default function GraphAppV2() {
           />
         )
       case 'zaps':
-        return renderZapSettingsContent()
+        return renderActivitySettingsContent()
       case 'relays':
         return (
           <div>
@@ -5362,36 +5343,21 @@ export default function GraphAppV2() {
 
   // Detail panel content
 
-  const renderZapSettingsContent = () => (
+  const renderActivitySettingsContent = () => (
     <div>
       <div className="sg-settings-section">
         <h4>{tSigma('zaps.settings.visualization')}</h4>
-        <div className="sg-setting-row">
-          <div>
-            <div className="sg-setting-row__lbl">{tSigma('zaps.settings.showInGraph')}</div>
-            <div className="sg-setting-row__desc">
-              {tSigma('zaps.settings.showInGraphDesc')}
-            </div>
-          </div>
-          <button
-            aria-pressed={showZaps}
-            className={`sg-toggle${showZaps ? ' sg-toggle--on' : ''}`}
-            onClick={handleToggleZaps}
-            title={showZaps ? tSigma('zaps.settings.hideZaps') : tSigma('zaps.settings.showZaps')}
-            type="button"
-          />
-        </div>
-      </div>
-
-      <div className="sg-settings-section">
-        <h4>{locale === 'en' ? 'Event types' : 'Tipos de actividad'}</h4>
         <div className="sg-setting-row__desc" style={{ marginBottom: 8 }}>
           {locale === 'en'
             ? 'Enable each Nostr activity type independently. Settings persist across sessions.'
-            : 'Activá cada tipo de actividad Nostr por separado. La configuracion queda persistida.'}
+            : 'Activa cada tipo de actividad Nostr por separado. La configuracion queda persistida.'}
         </div>
-        {GRAPH_EVENT_KINDS.filter((kind) => kind !== 'zap').map((kind) => {
+        {GRAPH_EVENT_KINDS.map((kind) => {
           const enabled = eventToggles[kind]
+          const actionLabel = locale === 'en'
+            ? `${enabled ? 'Disable' : 'Enable'} ${GRAPH_EVENT_KIND_LABELS[kind]}`
+            : `${enabled ? 'Desactivar' : 'Activar'} ${GRAPH_EVENT_KIND_LABELS[kind]}`
+
           return (
             <div className="sg-setting-row" key={`event-toggle-${kind}`}>
               <div>
@@ -5403,12 +5369,13 @@ export default function GraphAppV2() {
                 </div>
               </div>
               <button
+                aria-label={actionLabel}
                 aria-pressed={enabled}
                 className={`sg-toggle${enabled ? ' sg-toggle--on' : ''}`}
                 onClick={() => {
-                  setEventToggle(kind as GraphEventKind, !enabled)
+                  setEventToggle(kind, !enabled)
                 }}
-                title={`${enabled ? 'Disable' : 'Enable'} ${GRAPH_EVENT_KIND_LABELS[kind]}`}
+                title={actionLabel}
                 type="button"
               />
             </div>
@@ -5457,8 +5424,8 @@ export default function GraphAppV2() {
     : zapFeedMode === 'recent'
       ? selectedZapReplayWindowLabel
       : tSigma('zaps.panel.statusPaused')
-  const recentZapReplayCollectionClassName = `sg-zap-replay-collection sg-zap-replay-collection--${recentZapReplayCollection.status}${
-    recentZapReplayCollection.isIndeterminate ? ' sg-zap-replay-collection--waiting' : ''
+  const recentZapReplayCollectionClassName = `sg-activity-replay-collection sg-activity-replay-collection--${recentZapReplayCollection.status}${
+    recentZapReplayCollection.isIndeterminate ? ' sg-activity-replay-collection--waiting' : ''
   }`
   const canControlRecentZapReplay =
     zapFeedMode === 'recent' &&
@@ -5475,29 +5442,29 @@ export default function GraphAppV2() {
     ? tSigma('zaps.panel.resumeReplay')
     : tSigma('zaps.panel.pauseReplay')
 
-  const renderZapsContent = () => (
-    <div className="sg-zap-feed">
-      <div className="sg-zap-feed__head">
-        <div className="sg-zap-feed__summary">
+  const renderActivitiesContent = () => (
+    <div className="sg-activity-feed">
+      <div className="sg-activity-feed__head">
+        <div className="sg-activity-feed__summary">
           <span className="sg-section-label">Actividad visible</span>
           <strong>
             {activityPanelEntries.length} actividad{activityPanelEntries.length === 1 ? '' : 'es'}
           </strong>
         </div>
-        <div className="sg-zap-feed__actions">
+        <div className="sg-activity-feed__actions">
           <span
-            className={`sg-zap-feed__status${shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed ? ' sg-zap-feed__status--live' : ''}${recentActivityReplayWorking ? ' sg-zap-feed__status--working' : ''}`}
+            className={`sg-activity-feed__status${shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed ? ' sg-activity-feed__status--live' : ''}${recentActivityReplayWorking ? ' sg-activity-feed__status--working' : ''}`}
           >
             {zapFeedStatus}
           </span>
         </div>
       </div>
 
-      <div className="sg-zap-console">
-        <div className="sg-zap-console__mode" role="group" aria-label={tSigma('zaps.panel.modeAria')}>
+      <div className="sg-activity-console">
+        <div className="sg-activity-console__mode" role="group" aria-label={tSigma('zaps.panel.modeAria')}>
           <button
             aria-pressed={zapFeedMode === 'live'}
-            className={`sg-zap-console__mode-btn${zapFeedMode === 'live' ? ' sg-zap-console__mode-btn--active' : ''}`}
+            className={`sg-activity-console__mode-btn${zapFeedMode === 'live' ? ' sg-activity-console__mode-btn--active' : ''}`}
             onClick={() => {
               setZapFeedMode('live')
               setRecentZapReplayPlaybackPaused(false)
@@ -5508,7 +5475,7 @@ export default function GraphAppV2() {
           </button>
           <button
             aria-pressed={zapFeedMode === 'recent'}
-            className={`sg-zap-console__mode-btn${zapFeedMode === 'recent' ? ' sg-zap-console__mode-btn--active' : ''}`}
+            className={`sg-activity-console__mode-btn${zapFeedMode === 'recent' ? ' sg-activity-console__mode-btn--active' : ''}`}
             onClick={() => {
               setZapFeedMode('recent')
               setRecentZapReplayPlaybackPaused(false)
@@ -5523,10 +5490,10 @@ export default function GraphAppV2() {
       {zapFeedMode === 'recent' ? (
         <div
           aria-live={recentActivityReplayWorking ? 'polite' : 'off'}
-          className={`sg-zap-replay-console${recentActivityReplayWorking ? ' sg-zap-replay-console--working' : ''}`}
+          className={`sg-activity-replay-console${recentActivityReplayWorking ? ' sg-activity-replay-console--working' : ''}`}
         >
-          <div className="sg-zap-replay-console__head">
-            <span className="sg-zap-replay-console__dot" aria-hidden="true" />
+          <div className="sg-activity-replay-console__head">
+            <span className="sg-activity-replay-console__dot" aria-hidden="true" />
             <div>
               <strong>{recentZapReplayStatusLabel}</strong>
               <span>
@@ -5535,12 +5502,12 @@ export default function GraphAppV2() {
                   : tSigma('zaps.panel.configuredWindow', { window: appliedZapReplayWindowText })}
               </span>
             </div>
-            <span className="sg-zap-replay-console__percent">
+            <span className="sg-activity-replay-console__percent">
               {recentZapReplayPlaybackProgressValue}%
             </span>
           </div>
 
-          <div className="sg-zap-replay-window">
+          <div className="sg-activity-replay-window">
             <div className="sg-slider-row__head">
               <span className="sg-slider-row__lbl">{tSigma('zaps.panel.historicalWindow')}</span>
               <span className="sg-slider-row__val">{selectedZapReplayWindowLabel}</span>
@@ -5564,7 +5531,7 @@ export default function GraphAppV2() {
           </div>
 
           <div className={recentZapReplayCollectionClassName}>
-            <div className="sg-zap-replay-section-head">
+            <div className="sg-activity-replay-section-head">
               <span>{tSigma('zaps.panel.collection')}</span>
               <span>{recentZapReplayCollectionProgressValue}%</span>
             </div>
@@ -5573,14 +5540,14 @@ export default function GraphAppV2() {
               aria-valuemax={100}
               aria-valuemin={0}
               aria-valuenow={recentZapReplayCollectionProgressValue}
-              className="sg-zap-replay-collection__bar"
+              className="sg-activity-replay-collection__bar"
               role="progressbar"
             >
               <span style={{ width: `${recentZapReplayCollectionProgressValue}%` }} />
             </div>
-            <details className="sg-zap-replay-details">
+            <details className="sg-activity-replay-details">
               <summary>{tSigma('zaps.panel.advancedDetails')}</summary>
-              <dl className="sg-zap-replay-metrics">
+              <dl className="sg-activity-replay-metrics">
                 <div>
                   <dt>{tSigma('zaps.panel.targets')}</dt>
                   <dd>{formatInteger(recentZapReplay.targetCount)}</dd>
@@ -5614,7 +5581,7 @@ export default function GraphAppV2() {
               </dl>
             </details>
             {enabledNonZapGraphEventKinds.length > 0 ? (
-              <p className="sg-zap-replay-console__detail">
+              <p className="sg-activity-replay-console__detail">
                 Actividad extra: {formatInteger(recentGraphEventReplay.playableCount)} reproducibles,
                 {' '}
                 {formatInteger(recentGraphEventReplay.playedCount)} visibles,
@@ -5624,8 +5591,8 @@ export default function GraphAppV2() {
             ) : null}
           </div>
 
-          <div className="sg-zap-replay-playback">
-            <div className="sg-zap-replay-section-head">
+          <div className="sg-activity-replay-playback">
+            <div className="sg-activity-replay-section-head">
               <span>{tSigma('zaps.panel.playback')}</span>
               <span>
                 {tSigma('zaps.panel.playbackSummary', {
@@ -5638,10 +5605,10 @@ export default function GraphAppV2() {
                 })}
               </span>
             </div>
-            <div className="sg-zap-replay-controls">
+            <div className="sg-activity-replay-controls">
               <button
                 aria-label={recentZapReplayPlayButtonLabel}
-                className="sg-zap-replay-transport"
+                className="sg-activity-replay-transport"
                 disabled={!canToggleRecentZapReplayPlayback}
                 onClick={() => {
                   setRecentZapReplayPlaybackPaused((current) => !current)
@@ -5676,8 +5643,8 @@ export default function GraphAppV2() {
               </button>
             </div>
 
-            <div className="sg-zap-replay-timeline">
-              <div className="sg-zap-replay-timeline__head">
+            <div className="sg-activity-replay-timeline">
+              <div className="sg-activity-replay-timeline__head">
                 <span>{tSigma('zaps.panel.timeline')}</span>
                 <span>{displayedZapReplayProgressValue}% - {recentZapReplayCurrentTimeLabel}</span>
               </div>
@@ -5697,22 +5664,22 @@ export default function GraphAppV2() {
                 role="slider"
                 tabIndex={canSeekRecentZapReplay ? 0 : -1}
               >
-                <span className="sg-zap-replay-timeline__tick sg-zap-replay-timeline__tick--start" />
-                <span className="sg-zap-replay-timeline__tick sg-zap-replay-timeline__tick--end" />
+                <span className="sg-activity-replay-timeline__tick sg-activity-replay-timeline__tick--start" />
+                <span className="sg-activity-replay-timeline__tick sg-activity-replay-timeline__tick--end" />
                 <span
-                  className="sg-zap-replay-timeline__fill"
+                  className="sg-activity-replay-timeline__fill"
                   style={{
                     width: formatProgressPercent(displayedZapReplayProgress),
                   }}
                 />
                 <span
-                  className="sg-zap-replay-timeline__marker"
+                  className="sg-activity-replay-timeline__marker"
                   style={{
                     left: formatProgressPercent(displayedZapReplayProgress),
                   }}
                 />
               </div>
-              <div className="sg-zap-replay-timeline__labels">
+              <div className="sg-activity-replay-timeline__labels">
                 <span>
                   <strong>{tSigma('zaps.panel.start')}</strong>
                   <time>{recentZapReplayWindowStartLabel}</time>
@@ -5729,21 +5696,21 @@ export default function GraphAppV2() {
             </div>
           </div>
 
-          <p className="sg-zap-replay-console__detail">{recentZapReplayStatusDetail}</p>
+          <p className="sg-activity-replay-console__detail">{recentZapReplayStatusDetail}</p>
           {recentGraphEventReplay.message ? (
-            <p className="sg-zap-replay-console__detail">
+            <p className="sg-activity-replay-console__detail">
               Actividad: {recentGraphEventReplay.message}
             </p>
           ) : null}
         </div>
       ) : (
         liveZapFeedFeedback ? (
-          <p className="sg-zap-feed__feedback">{liveZapFeedFeedback}</p>
+          <p className="sg-activity-feed__feedback">{liveZapFeedFeedback}</p>
         ) : null
       )}
 
       {activityPanelEntries.length > 0 ? (
-        <div className="sg-zap-feed__list">
+        <div className="sg-activity-feed__list">
           {activityPanelEntries.map((entry) => {
             const isZapEntry = entry.type === 'zap'
             const graphEvent = entry.graphEvent
@@ -5773,7 +5740,7 @@ export default function GraphAppV2() {
             return (
               <article
                 aria-label={`${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
-                className={`sg-zap-feed__item${entry.played ? '' : ' sg-zap-feed__item--dropped'}`}
+                className={`sg-activity-feed__item${entry.played ? '' : ' sg-activity-feed__item--dropped'}`}
                 key={entry.id}
                 onClick={replay}
                 onKeyDown={(event) => {
@@ -5784,13 +5751,13 @@ export default function GraphAppV2() {
                 role="button"
                 tabIndex={0}
               >
-                <div className="sg-zap-feed__meta">
+                <div className="sg-activity-feed__meta">
                   <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
                   <time dateTime={new Date(entry.receivedAt).toISOString()}>
                     {NOTIFICATION_TIME_FORMATTER.format(entry.receivedAt)}
                   </time>
                 </div>
-                <div className="sg-zap-feed__amount" style={{ color }}>
+                <div className="sg-activity-feed__amount" style={{ color }}>
                   <span>{kindLabel}</span>
                   <span aria-hidden="true">{' - '}</span>
                   <span>{title}</span>
@@ -5800,13 +5767,13 @@ export default function GraphAppV2() {
                   <span aria-hidden="true">{'->'}</span>
                   <span>{getZapActorLabel(entry.toPubkey)}</span>
                 </p>
-                <div className="sg-zap-feed__item-actions">
-                  <span className="sg-zap-feed__result">
+                <div className="sg-activity-feed__item-actions">
+                  <span className="sg-activity-feed__result">
                     {entry.played ? tSigma('zaps.panel.shownInGraph') : tSigma('zaps.panel.outsideView')}
                   </span>
                   <button
                     aria-label={`Ver detalles de ${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
-                    className="sg-zap-feed__details-btn"
+                    className="sg-activity-feed__details-btn"
                     onClick={(event) => {
                       event.stopPropagation()
                       openDetails()
@@ -5822,7 +5789,7 @@ export default function GraphAppV2() {
           })}
         </div>
       ) : (
-        <p className="sg-zap-feed__empty">
+        <p className="sg-activity-feed__empty">
           {tSigma('zaps.panel.empty')}
         </p>
       )}
@@ -6169,14 +6136,14 @@ export default function GraphAppV2() {
     detail.node !== null &&
     !isRootSheetOpen &&
     !isSettingsOpen &&
-    !isZapsPanelOpen &&
+    !isActivitiesPanelOpen &&
     !isNotificationsOpen &&
     !isMobileUtilityPanelOpen
   const handleCloseSidePanel = useCallback(() => {
     if (isSettingsOpen) {
       setIsSettingsOpen(false)
     }
-    if (isZapsPanelOpen) {
+    if (isActivitiesPanelOpen) {
       // Stack de niveles dentro del panel de actividad:
       //   identidad del grafo / identidad off-graph -> detalle -> listado -> cerrar
       if (detail.node) {
@@ -6198,7 +6165,7 @@ export default function GraphAppV2() {
         setSelectedGraphEventDetailId(null)
         return
       }
-      setIsZapsPanelOpen(false)
+      setIsActivitiesPanelOpen(false)
     }
     if (isNotificationsOpen) {
       setIsNotificationsOpen(false)
@@ -6220,7 +6187,7 @@ export default function GraphAppV2() {
     isMobileUtilityPanelOpen,
     isNotificationsOpen,
     isSettingsOpen,
-    isZapsPanelOpen,
+    isActivitiesPanelOpen,
     selectedGraphEventDetailId,
     selectedZapDetailId,
     selectedZapOffGraphIdentity,
@@ -6347,7 +6314,7 @@ export default function GraphAppV2() {
       ) : null}
 
       {(isSettingsOpen ||
-        isZapsPanelOpen ||
+        isActivitiesPanelOpen ||
         isNotificationsOpen ||
         isIdentityPanelOpen ||
         isMobileUtilityPanelOpen) &&
@@ -6356,7 +6323,7 @@ export default function GraphAppV2() {
           eyebrow={
             isSettingsOpen
               ? tSigma('panelEyebrow.settings')
-              : isZapsPanelOpen
+              : isActivitiesPanelOpen
                 ? (detail.node || selectedZapOffGraphIdentity)
                   ? tSigma('panelEyebrow.identity')
                   : selectedZapDetail || selectedGraphEventDetail
@@ -6393,16 +6360,16 @@ export default function GraphAppV2() {
         >
           {isSettingsOpen ? (
             renderSettingsContent()
-          ) : isZapsPanelOpen && detail.node ? (
+          ) : isActivitiesPanelOpen && detail.node ? (
             renderDetailContent()
-          ) : isZapsPanelOpen && selectedZapOffGraphIdentity ? (
+          ) : isActivitiesPanelOpen && selectedZapOffGraphIdentity ? (
             <SigmaOffGraphIdentityPanel
               fallbackLabel={selectedZapOffGraphIdentity.fallbackLabel}
               onAddToGraph={handleAddZapOffGraphIdentityToGraph}
               onBack={handleCloseZapOffGraphIdentity}
               pubkey={selectedZapOffGraphIdentity.pubkey}
             />
-          ) : isZapsPanelOpen && selectedZapDetail ? (
+          ) : isActivitiesPanelOpen && selectedZapDetail ? (
             <SigmaZapDetailPanel
               entry={selectedZapDetail}
               onBack={handleCloseZapDetail}
@@ -6411,7 +6378,7 @@ export default function GraphAppV2() {
               resolveActorLabel={getZapActorLabel}
               sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedZapDetail.source]}
             />
-          ) : isZapsPanelOpen && selectedGraphEventDetail ? (
+          ) : isActivitiesPanelOpen && selectedGraphEventDetail ? (
             <SigmaGraphEventDetailPanel
               entry={selectedGraphEventDetail}
               onBack={handleCloseZapDetail}
@@ -6420,8 +6387,8 @@ export default function GraphAppV2() {
               resolveActorLabel={getZapActorLabel}
               sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedGraphEventDetail.source]}
             />
-          ) : isZapsPanelOpen ? (
-            renderZapsContent()
+          ) : isActivitiesPanelOpen ? (
+            renderActivitiesContent()
           ) : isNotificationsOpen ? (
             renderNotificationsContent()
           ) : mobileUtilityPanel === 'filters' ? (
@@ -6488,4 +6455,3 @@ export default function GraphAppV2() {
     </main>
   )
 }
-

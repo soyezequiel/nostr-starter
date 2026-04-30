@@ -102,7 +102,7 @@ const DEFAULT_COPY: RootLoadProgressCopy = {
   { id: 'pagination', label: 'Paginar followers inbound', floor: 62 },
   { id: 'parse', label: 'Correlacionar evidencia en worker', floor: 74 },
   { id: 'merge', label: 'Integrar grafo visible', floor: 86 },
-  { id: 'enrich', label: 'Hidratar perfiles y zaps', floor: 92 },
+  { id: 'enrich', label: 'Hidratar perfiles y actividad', floor: 92 },
   ],
 }
 
