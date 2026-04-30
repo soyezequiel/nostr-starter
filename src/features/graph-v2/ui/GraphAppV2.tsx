@@ -4297,7 +4297,7 @@ export default function GraphAppV2() {
         source: 'zap',
         pin: true,
         select: true,
-        markExpanded: true,
+        markExpanded: false,
       })
       if (result.status === 'inserted') {
         scheduleDetachedNodePlacement(input.pubkey)

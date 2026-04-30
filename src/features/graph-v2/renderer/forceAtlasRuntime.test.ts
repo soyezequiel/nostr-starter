@@ -197,12 +197,12 @@ test('ForceAtlas settings scale repulsion and damping for dense sigma graphs', (
   assert.equal(resolveForceAtlasDenseFactor(80), 0)
   assert.equal(resolveForceAtlasDenseFactor(2200), 1)
   assert.equal(Math.round((smallSettings.scalingRatio ?? 0) * 100) / 100, 15.91)
-  assert.equal(smallSettings.gravity, 0)
+  assert.equal(smallSettings.gravity, 0.01)
   assert.equal(smallCentripetalSettings.gravity, 0.05)
   assert.equal(Math.round((smallSettings.slowDown ?? 0) * 10) / 10, 28)
   assert.equal(Math.round((smallSettings.edgeWeightInfluence ?? 0) * 100) / 100, 1.77)
   assert.equal(Math.round((denseSettings.scalingRatio ?? 0) * 100) / 100, 31.82)
-  assert.equal(denseSettings.gravity, 0)
+  assert.equal(denseSettings.gravity, 0.01)
   assert.equal(denseCentripetalSettings.gravity, 0.08)
   assert.equal(Math.round((denseSettings.slowDown ?? 0) * 10) / 10, 44)
   assert.equal(Math.round((denseSettings.edgeWeightInfluence ?? 0) * 100) / 100, 0.92)
@@ -309,7 +309,7 @@ test('reports ForceAtlas physics diagnostics for the sigma debug probe', () => {
   assert.equal(diagnostics.autoFreezeEnabled, true)
   assert.deepEqual(diagnostics.tuning, DEFAULT_FORCE_ATLAS_PHYSICS_TUNING)
   assert.equal(Math.round((diagnostics.settings.scalingRatio ?? 0) * 100) / 100, 15.91)
-  assert.equal(diagnostics.settings.gravity, 0)
+  assert.equal(diagnostics.settings.gravity, 0.01)
   assert.ok(diagnostics.settingsKey?.startsWith('obsidian-v2::'))
   assert.deepEqual(diagnostics.bounds, {
     minX: 0,

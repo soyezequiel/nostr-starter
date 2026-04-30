@@ -65,7 +65,7 @@ export interface ForceAtlasPhysicsTuning {
 }
 
 export const DEFAULT_FORCE_ATLAS_PHYSICS_TUNING: ForceAtlasPhysicsTuning = {
-  centripetalForce: 0,
+  centripetalForce: 0.01,
   repulsionForce: 5,
   linkForce: 1,
   linkDistance: 0.5,
