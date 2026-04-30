@@ -1,20 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import type { NDKEvent } from '@nostr-dev-kit/ndk'
 import { nip19 } from 'nostr-tools'
 
-import { connectNDK } from '@/lib/nostr'
+import {
+  useReferencedNote,
+  type ReferencedNoteState,
+} from '@/features/graph-v2/events/referencedNoteCache'
 
 const HEX_64_RE = /^[0-9a-f]{64}$/i
-
-type FetchPhase = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
-
-interface ZapPostState {
-  phase: FetchPhase
-  event: NDKEvent | null
-  message: string | null
-}
 
 const TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
@@ -73,79 +66,7 @@ export interface SigmaZapDetailPanelProps {
   sourceLabel: string
 }
 
-const EMPTY_POST_STATE: ZapPostState = {
-  phase: 'empty',
-  event: null,
-  message: null,
-}
-
-function useZapPost(eventId: string | null | undefined): ZapPostState {
-  // Solo guardamos el resultado de la fetch (ready/empty/error) por eventId.
-  // El estado "loading" se deriva de "no hay resultado para este eventId".
-  const [fetchResult, setFetchResult] = useState<{
-    eventId: string
-    state: ZapPostState
-  } | null>(null)
-
-  useEffect(() => {
-    if (!eventId) {
-      return undefined
-    }
-
-    let cancelled = false
-
-    void (async () => {
-      try {
-        const ndk = await connectNDK()
-        // fetchEvent solo trae el evento solicitado, sin abrir suscripciones
-        // residuales. Si los relays demoran mas de 8s lo damos por vacio.
-        const timeoutMs = 8_000
-        const event = await Promise.race([
-          ndk.fetchEvent({ ids: [eventId] }),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-        ])
-
-        if (cancelled) return
-        if (event) {
-          setFetchResult({
-            eventId,
-            state: { phase: 'ready', event, message: null },
-          })
-        } else {
-          setFetchResult({
-            eventId,
-            state: {
-              phase: 'empty',
-              event: null,
-              message: 'No encontramos el post original en los relays.',
-            },
-          })
-        }
-      } catch (error) {
-        if (cancelled) return
-        setFetchResult({
-          eventId,
-          state: {
-            phase: 'error',
-            event: null,
-            message:
-              error instanceof Error
-                ? error.message
-                : 'No se pudo cargar el post original.',
-          },
-        })
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [eventId])
-
-  if (!eventId) return EMPTY_POST_STATE
-  if (fetchResult && fetchResult.eventId === eventId) return fetchResult.state
-  return { phase: 'loading', event: null, message: null }
-}
+type ZapPostState = ReferencedNoteState
 
 const renderActorButton = (
   pubkey: string,
@@ -177,7 +98,7 @@ export function SigmaZapDetailPanel({
   sourceLabel,
 }: SigmaZapDetailPanelProps): React.JSX.Element {
   const zappedEventId = entry.zappedEventId ?? null
-  const post = useZapPost(zappedEventId)
+  const post: ZapPostState = useReferencedNote(zappedEventId)
   const fromNpub = encodeNpub(entry.fromPubkey)
   const toNpub = encodeNpub(entry.toPubkey)
   const noteId = encodeNoteId(zappedEventId ?? '') ?? null

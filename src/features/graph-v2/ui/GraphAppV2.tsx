@@ -31,6 +31,23 @@ import type {
   SavedRootEntry,
   SavedRootProfileSnapshot,
 } from '@/features/graph-runtime/app/store/types'
+import {
+  GRAPH_EVENT_KIND_COLORS,
+  GRAPH_EVENT_KIND_DESCRIPTIONS,
+  GRAPH_EVENT_KIND_LABELS,
+  GRAPH_EVENT_KINDS,
+  GRAPH_EVENT_KIND_SINGULAR_LABELS,
+  type GraphEventActivityLogEntry,
+  type GraphEventActivitySource,
+  type GraphEventKind,
+  type ParsedGraphEvent,
+} from '@/features/graph-v2/events/types'
+import {
+  activityEntryToParsedGraphEvent,
+  graphEventToActivityEntry,
+} from '@/features/graph-v2/events/eventAdapters'
+import { useLiveGraphEventFeed } from '@/features/graph-v2/events/useLiveGraphEventFeed'
+import { useRecentGraphEventReplay } from '@/features/graph-v2/events/useRecentGraphEventReplay'
 import type {
   RootIdentityResolution,
 } from '@/features/graph-runtime/kernel/rootIdentity'
@@ -165,6 +182,7 @@ import { SigmaRootInput } from '@/features/graph-v2/ui/SigmaRootInput'
 import { SigmaOffGraphIdentityPanel } from '@/features/graph-v2/ui/SigmaOffGraphIdentityPanel'
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
+import { SigmaGraphEventDetailPanel } from '@/features/graph-v2/ui/SigmaGraphEventDetailPanel'
 import { SigmaZapDetailPanel } from '@/features/graph-v2/ui/SigmaZapDetailPanel'
 import { resolveZapIdentityPanelMode } from '@/features/graph-v2/ui/zapIdentityPanelMode'
 import { RuntimeInspectorDrawer } from '@/features/graph-v2/ui/runtime-inspector/RuntimeInspectorDrawer'
@@ -262,10 +280,35 @@ interface ZapOffGraphIdentitySelection {
   pubkey: string
 }
 
+type ActivityPanelEntry =
+  | {
+      type: 'zap'
+      id: string
+      source: ZapActivitySource
+      fromPubkey: string
+      toPubkey: string
+      played: boolean
+      receivedAt: number
+      zap: ZapActivityLogEntry
+      graphEvent: null
+    }
+  | {
+      type: 'graph-event'
+      id: string
+      source: GraphEventActivitySource
+      fromPubkey: string
+      toPubkey: string
+      played: boolean
+      receivedAt: number
+      zap: null
+      graphEvent: GraphEventActivityLogEntry
+    }
+
 const INTEGER_FORMATTER = new Intl.NumberFormat('es-AR')
 const NOTIFICATION_AUTO_DISMISS_MS = 6500
 const NOTIFICATION_HISTORY_LIMIT = 100
 const ZAP_ACTIVITY_LIMIT = 80
+const GRAPH_EVENT_ACTIVITY_LIMIT = 200
 const MOBILE_PHYSICS_QUERY = '(max-width: 720px)'
 const MOBILE_FORCE_ATLAS_REPULSION_FORCE = 2.4
 const ZAP_ACTIVITY_SOURCE_LABELS: Record<ZapActivitySource, string> = {
@@ -584,6 +627,29 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
 })
 
 const formatInteger = (value: number) => INTEGER_FORMATTER.format(value)
+
+const getGraphEventCardValue = (entry: GraphEventActivityLogEntry): string => {
+  switch (entry.payload.kind) {
+    case 'like':
+      return entry.payload.data.reaction || '+'
+    case 'repost':
+      return entry.payload.data.repostedKind
+        ? `kind ${entry.payload.data.repostedKind}`
+        : 'repost'
+    case 'save':
+      return entry.payload.data.listIdentifier
+        ? `lista ${entry.payload.data.listIdentifier}`
+        : 'bookmark'
+    case 'quote':
+      return 'quote'
+    case 'comment':
+      return 'comment'
+    case 'zap':
+      return entry.payload.data.amountSats
+        ? `${formatInteger(entry.payload.data.amountSats)} sats`
+        : 'zap'
+  }
+}
 
 const resolveZapActorProfileLabel = (profile: NostrProfile) =>
   profile.displayName?.trim() ||
@@ -2228,6 +2294,8 @@ export default function GraphAppV2() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isZapsPanelOpen, setIsZapsPanelOpen] = useState(false)
   const [selectedZapDetailId, setSelectedZapDetailId] = useState<string | null>(null)
+  const [selectedGraphEventDetailId, setSelectedGraphEventDetailId] =
+    useState<string | null>(null)
   const [selectedZapOffGraphIdentity, setSelectedZapOffGraphIdentity] =
     useState<ZapOffGraphIdentitySelection | null>(null)
   // Refs para que el handler de Escape (declarado mas arriba en el archivo)
@@ -2261,8 +2329,30 @@ export default function GraphAppV2() {
   const [showVisibleEdgeCountLabels, setShowVisibleEdgeCountLabels] = useState(
     readStoredVisibleEdgeCountLabelsEnabled,
   )
-  const [showZaps, setShowZaps] = useState(true)
-  const [zapFeedMode, setZapFeedMode] = useState<ZapFeedMode>('live')
+  const eventToggles = useAppStore((state) => state.eventToggles)
+  const setEventToggle = useAppStore((state) => state.setEventToggle)
+  const persistedEventFeedMode = useAppStore((state) => state.eventFeedMode)
+  const setPersistedEventFeedMode = useAppStore(
+    (state) => state.setEventFeedMode,
+  )
+  const showZaps = eventToggles.zap
+  const setShowZaps = useCallback(
+    (updater: boolean | ((current: boolean) => boolean)) => {
+      const next =
+        typeof updater === 'function'
+          ? updater(eventToggles.zap)
+          : updater
+      setEventToggle('zap', next)
+    },
+    [eventToggles.zap, setEventToggle],
+  )
+  const zapFeedMode: ZapFeedMode = persistedEventFeedMode
+  const setZapFeedMode = useCallback(
+    (mode: ZapFeedMode) => {
+      setPersistedEventFeedMode(mode)
+    },
+    [setPersistedEventFeedMode],
+  )
   const [recentZapReplayLookbackHours, setRecentZapReplayLookbackHours] =
     useState(readStoredRecentZapReplayLookbackHours)
   const [
@@ -2277,9 +2367,37 @@ export default function GraphAppV2() {
     useState<number | null>(null)
   const [recentZapReplayPlaybackPaused, setRecentZapReplayPlaybackPaused] =
     useState(false)
-  const [pauseLiveZapsWhenSceneIsLarge, setPauseLiveZapsWhenSceneIsLarge] =
-    useState(false)
+  const pauseLiveZapsWhenSceneIsLarge = useAppStore(
+    (state) => state.pauseLiveEventsWhenSceneIsLarge,
+  )
+  const setPauseLiveEventsWhenSceneIsLarge = useAppStore(
+    (state) => state.setPauseLiveEventsWhenSceneIsLarge,
+  )
+  const setPauseLiveZapsWhenSceneIsLarge = useCallback(
+    (updater: boolean | ((current: boolean) => boolean)) => {
+      const next =
+        typeof updater === 'function'
+          ? updater(pauseLiveZapsWhenSceneIsLarge)
+          : updater
+      setPauseLiveEventsWhenSceneIsLarge(next)
+    },
+    [pauseLiveZapsWhenSceneIsLarge, setPauseLiveEventsWhenSceneIsLarge],
+  )
+  const enabledGraphEventKinds = useMemo(
+    () => GRAPH_EVENT_KINDS.filter((kind) => eventToggles[kind]),
+    [eventToggles],
+  )
+  const enabledNonZapGraphEventKinds = useMemo(
+    () =>
+      enabledGraphEventKinds.filter(
+        (kind): kind is Exclude<GraphEventKind, 'zap'> => kind !== 'zap',
+      ),
+    [enabledGraphEventKinds],
+  )
   const [zapActivityLog, setZapActivityLog] = useState<ZapActivityLogEntry[]>([])
+  const [graphEventActivityLog, setGraphEventActivityLog] = useState<
+    GraphEventActivityLogEntry[]
+  >([])
   const [zapActorLabelsByPubkey, setZapActorLabelsByPubkey] =
     useState<Record<string, string>>({})
   const zapActivitySequenceRef = useRef(0)
@@ -2647,6 +2765,10 @@ export default function GraphAppV2() {
             setSelectedZapDetailId(null)
             return
           }
+          if (selectedGraphEventDetailId) {
+            setSelectedGraphEventDetailId(null)
+            return
+          }
           setIsZapsPanelOpen(false)
           return
         }
@@ -2696,7 +2818,7 @@ export default function GraphAppV2() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [canUseRuntimeInspector, mobileUtilityPanel, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isZapsPanelOpen, selectedZapDetailId, selectedZapOffGraphIdentity])
+  }, [canUseRuntimeInspector, mobileUtilityPanel, sceneState.rootPubkey, isNotificationsOpen, isPersonSearchOpen, isRootSheetOpen, isRuntimeInspectorOpen, isSettingsOpen, isZapsPanelOpen, selectedGraphEventDetailId, selectedZapDetailId, selectedZapOffGraphIdentity])
 
   const closeCompetingSidePanels = useCallback(() => {
     setIsRootSheetOpen(false)
@@ -3287,6 +3409,33 @@ export default function GraphAppV2() {
     return played
   }, [sceneConnectionLookup, sceneState.activeLayer, showZaps, visibleNodeSet])
 
+  const handleGraphEvent = useCallback(
+    (
+      event: ParsedGraphEvent,
+      source: GraphEventActivitySource = 'live',
+    ): boolean => {
+      const hasVisibleFrom = visibleNodeSet.has(event.fromPubkey)
+      const hasVisibleTo = visibleNodeSet.has(event.toPubkey)
+      if (!hasVisibleFrom && !hasVisibleTo) {
+        return false
+      }
+      const played = sigmaHostRef.current?.playGraphEvent(event) ?? false
+      const entry = graphEventToActivityEntry({
+        event,
+        id: `${event.kind}:${event.eventId}`,
+        source,
+        played,
+        receivedAt: Date.now(),
+      })
+      setGraphEventActivityLog((current) => {
+        if (current.some((item) => item.id === entry.id)) return current
+        return [entry, ...current].slice(0, GRAPH_EVENT_ACTIVITY_LIMIT)
+      })
+      return played
+    },
+    [visibleNodeSet],
+  )
+
   const handleReplayZapActivity = useCallback((entry: ZapActivityLogEntry) => {
     const played = handleZap(entry)
     setZapActivityLog((current) =>
@@ -3301,13 +3450,30 @@ export default function GraphAppV2() {
     )
   }, [handleZap])
 
+  const handleReplayGraphEventActivity = useCallback(
+    (entry: GraphEventActivityLogEntry) => {
+      const played = handleGraphEvent(activityEntryToParsedGraphEvent(entry), entry.source)
+      setGraphEventActivityLog((current) =>
+        current.map((item) =>
+          item.id === entry.id ? { ...item, played } : item,
+        ),
+      )
+      setZapFeedback(
+        played
+          ? `${GRAPH_EVENT_KIND_SINGULAR_LABELS[entry.kind]} reproducido.`
+          : 'No se pudo reproducir esa actividad en la vista actual.',
+      )
+    },
+    [handleGraphEvent],
+  )
+
   // Propagate physics pause/resume to the Sigma runtime when toggled.
   useEffect(() => {
     sigmaHostRef.current?.setPhysicsSuspended(!physicsEnabled)
   }, [physicsEnabled])
 
   useEffect(() => {
-    if (zapActivityLog.length === 0) return
+    if (zapActivityLog.length === 0 && graphEventActivityLog.length === 0) return
 
     const attemptedPubkeys = zapActorProfileAttemptedRef.current
     const inflightPubkeys = zapActorProfileInflightRef.current
@@ -3328,6 +3494,23 @@ export default function GraphAppV2() {
         if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
       }
       if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
+    }
+    if (pubkeys.length < ZAP_ACTOR_PROFILE_BATCH_SIZE) {
+      for (const entry of graphEventActivityLog) {
+        for (const rawPubkey of [entry.fromPubkey, entry.toPubkey]) {
+          const pubkey = rawPubkey.toLowerCase()
+          if (seenPubkeys.has(pubkey)) continue
+          seenPubkeys.add(pubkey)
+          if (!HEX_PUBKEY_RE.test(pubkey)) continue
+          if (sceneState.nodesByPubkey[pubkey]?.label?.trim()) continue
+          if (zapActorLabelsByPubkey[pubkey]?.trim()) continue
+          if (attemptedPubkeys.has(pubkey) || inflightPubkeys.has(pubkey)) continue
+
+          pubkeys.push(pubkey)
+          if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
+        }
+        if (pubkeys.length >= ZAP_ACTOR_PROFILE_BATCH_SIZE) break
+      }
     }
 
     if (pubkeys.length === 0) return
@@ -3364,16 +3547,34 @@ export default function GraphAppV2() {
     return () => {
       cancelled = true
     }
-  }, [sceneState.nodesByPubkey, zapActivityLog, zapActorLabelsByPubkey])
+  }, [
+    graphEventActivityLog,
+    sceneState.nodesByPubkey,
+    zapActivityLog,
+    zapActorLabelsByPubkey,
+  ])
 
   const canRunZapFeed = canRunZapFeedForScene({
     showZaps,
     isFixtureMode,
     activeLayer: sceneState.activeLayer,
   })
+  const canRunEventFeed = canRunZapFeedForScene({
+    showZaps: enabledGraphEventKinds.length > 0,
+    isFixtureMode,
+    activeLayer: sceneState.activeLayer,
+  })
   const shouldEnableLiveZapFeed = canRunZapFeed && zapFeedMode === 'live'
   const shouldEnableRecentZapReplay =
     canRunZapFeed && zapFeedMode === 'recent'
+  const shouldEnableLiveGraphEventFeed =
+    canRunEventFeed &&
+    zapFeedMode === 'live' &&
+    enabledNonZapGraphEventKinds.length > 0
+  const shouldEnableRecentGraphEventReplay =
+    canRunEventFeed &&
+    zapFeedMode === 'recent' &&
+    enabledNonZapGraphEventKinds.length > 0
   const formatReplayWindowLabel = useCallback(
     (hours: number) =>
       locale === 'en'
@@ -3404,7 +3605,7 @@ export default function GraphAppV2() {
     return played
   }, [appendZapActivity, handleZap])
   const handleQuickReplay = useCallback(() => {
-    if (!canRunZapFeed) return
+    if (!canRunEventFeed) return
     setIsZapsPanelOpen(true)
     setZapFeedMode('recent')
     setRecentZapReplayPlaybackPaused(false)
@@ -3415,7 +3616,7 @@ export default function GraphAppV2() {
       key: current.key + 1,
       progress: 0,
     }))
-  }, [canRunZapFeed])
+  }, [canRunEventFeed, setZapFeedMode])
   const handleQuickReplayPauseToggle = useCallback(() => {
     setRecentZapReplayPlaybackPaused((current) => !current)
   }, [])
@@ -3431,6 +3632,45 @@ export default function GraphAppV2() {
       setZapFeedback(msg)
     },
   })
+
+  // One live-feed hook per non-zap kind. Each subscription is independently
+  // gated on its persisted toggle; the inner hook short-circuits when
+  // disabled, so this just spawns/teardowns subscriptions on toggle change.
+  useLiveGraphEventFeed({
+    kind: 'like',
+    visiblePubkeys,
+    enabled: shouldEnableLiveGraphEventFeed && eventToggles.like,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
+    onEvent: handleGraphEvent,
+  })
+  useLiveGraphEventFeed({
+    kind: 'repost',
+    visiblePubkeys,
+    enabled: shouldEnableLiveGraphEventFeed && eventToggles.repost,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
+    onEvent: handleGraphEvent,
+  })
+  useLiveGraphEventFeed({
+    kind: 'save',
+    visiblePubkeys,
+    enabled: shouldEnableLiveGraphEventFeed && eventToggles.save,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
+    onEvent: handleGraphEvent,
+  })
+  useLiveGraphEventFeed({
+    kind: 'quote',
+    visiblePubkeys,
+    enabled: shouldEnableLiveGraphEventFeed && eventToggles.quote,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
+    onEvent: handleGraphEvent,
+  })
+  useLiveGraphEventFeed({
+    kind: 'comment',
+    visiblePubkeys,
+    enabled: shouldEnableLiveGraphEventFeed && eventToggles.comment,
+    enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
+    onEvent: handleGraphEvent,
+  })
   const recentZapReplay = useRecentZapReplay({
     visiblePubkeys,
     enabled: shouldEnableRecentZapReplay,
@@ -3442,6 +3682,16 @@ export default function GraphAppV2() {
     seekProgress: recentZapReplaySeekRequest.progress,
     onZap: handleRecentZapReplay,
   })
+  const recentGraphEventReplay = useRecentGraphEventReplay({
+    visiblePubkeys,
+    enabled: shouldEnableRecentGraphEventReplay,
+    kinds: enabledNonZapGraphEventKinds,
+    lookbackHours: appliedRecentZapReplayLookbackHours,
+    replayKey: recentZapReplayRequest,
+    refreshKey: recentZapReplayRefreshRequest,
+    playbackPaused: isRecentZapReplayPlaybackHeld,
+    onEvent: (event) => handleGraphEvent(event, 'recent'),
+  })
   const recentZapReplayCollection = useMemo(
     () => buildRecentZapReplayCollectionViewModel(recentZapReplay),
     [recentZapReplay],
@@ -3449,6 +3699,16 @@ export default function GraphAppV2() {
   const recentZapReplayWorking =
     shouldEnableRecentZapReplay &&
     (recentZapReplay.phase === 'loading' || recentZapReplay.phase === 'playing')
+  const recentGraphEventReplayWorking =
+    shouldEnableRecentGraphEventReplay &&
+    (recentGraphEventReplay.phase === 'loading' ||
+      recentGraphEventReplay.phase === 'playing')
+  const recentActivityReplayWorking =
+    recentZapReplayWorking || recentGraphEventReplayWorking
+  const recentZapReplayPlaybackIsPaused =
+    recentZapReplayPlaybackPaused ||
+    recentZapReplay.playbackPaused ||
+    recentGraphEventReplay.playbackPaused
   const recentZapReplayStatusLabel = useMemo(() => {
     if (locale !== 'en') {
       return getZapReplayStatusLabel(recentZapReplay)
@@ -3476,6 +3736,10 @@ export default function GraphAppV2() {
         return 'Replay waiting'
     }
   }, [locale, recentZapReplay])
+  const activityReplayStatusLabel =
+    recentGraphEventReplayWorking && !recentZapReplayWorking
+      ? 'Replay de actividad'
+      : recentZapReplayStatusLabel
   const recentZapReplayCollectionProgressValue = formatProgressValue(
     recentZapReplayCollection.progress,
   )
@@ -3518,9 +3782,14 @@ export default function GraphAppV2() {
 
   useEffect(() => {
     sigmaHostRef.current?.setZapOverlayPaused(
-      shouldEnableRecentZapReplay && isRecentZapReplayPlaybackHeld,
+      (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay) &&
+        isRecentZapReplayPlaybackHeld,
     )
-  }, [isRecentZapReplayPlaybackHeld, shouldEnableRecentZapReplay])
+  }, [
+    isRecentZapReplayPlaybackHeld,
+    shouldEnableRecentGraphEventReplay,
+    shouldEnableRecentZapReplay,
+  ])
 
   const recentZapReplayTimelineClassName = `sg-zap-replay-timeline__rail${
     recentZapReplayScrubProgress !== null ? ' sg-zap-replay-timeline__rail--scrubbing' : ''
@@ -3832,7 +4101,7 @@ export default function GraphAppV2() {
           })
       })
     },
-    [bridge, isFixtureMode, sceneState.rootPubkey, upsertSavedRoot],
+    [bridge, isFixtureMode, sceneState.rootPubkey, setZapFeedMode, upsertSavedRoot],
   )
 
   const handleExpandRoot = useCallback(() => {
@@ -4188,6 +4457,7 @@ export default function GraphAppV2() {
     if (isZapsPanelOpen) {
       setIsZapsPanelOpen(false)
       setSelectedZapDetailId(null)
+      setSelectedGraphEventDetailId(null)
       setSelectedZapOffGraphIdentity(null)
       clearSelectedNode()
       return
@@ -4200,6 +4470,7 @@ export default function GraphAppV2() {
     setMobileUtilityPanel(null)
     setMobilePanelSnap('mid')
     setSelectedZapDetailId(null)
+    setSelectedGraphEventDetailId(null)
     setSelectedZapOffGraphIdentity(null)
     setIsZapsPanelOpen(true)
   }, [clearSelectedNode, isZapsPanelOpen])
@@ -4209,24 +4480,76 @@ export default function GraphAppV2() {
     if (selectedZapDetailId !== null) {
       setSelectedZapDetailId(null)
     }
+    if (selectedGraphEventDetailId !== null) {
+      setSelectedGraphEventDetailId(null)
+    }
     if (selectedZapOffGraphIdentity !== null) {
       setSelectedZapOffGraphIdentity(null)
     }
-  }, [isZapsPanelOpen, selectedZapDetailId, selectedZapOffGraphIdentity])
+  }, [
+    isZapsPanelOpen,
+    selectedGraphEventDetailId,
+    selectedZapDetailId,
+    selectedZapOffGraphIdentity,
+  ])
 
   const selectedZapDetail = useMemo(() => {
     if (!selectedZapDetailId) return null
     return zapActivityLog.find((entry) => entry.id === selectedZapDetailId) ?? null
   }, [selectedZapDetailId, zapActivityLog])
 
+  const selectedGraphEventDetail = useMemo(() => {
+    if (!selectedGraphEventDetailId) return null
+    return (
+      graphEventActivityLog.find((entry) => entry.id === selectedGraphEventDetailId) ??
+      null
+    )
+  }, [graphEventActivityLog, selectedGraphEventDetailId])
+
+  const activityPanelEntries = useMemo<ActivityPanelEntry[]>(() => {
+    const zapEntries: ActivityPanelEntry[] = zapActivityLog.map((entry) => ({
+      type: 'zap',
+      id: `zap:${entry.id}`,
+      source: entry.source,
+      fromPubkey: entry.fromPubkey,
+      toPubkey: entry.toPubkey,
+      played: entry.played,
+      receivedAt: entry.createdAt,
+      zap: entry,
+      graphEvent: null,
+    }))
+    const graphEntries: ActivityPanelEntry[] = graphEventActivityLog.map((entry) => ({
+      type: 'graph-event',
+      id: `graph-event:${entry.id}`,
+      source: entry.source,
+      fromPubkey: entry.fromPubkey,
+      toPubkey: entry.toPubkey,
+      played: entry.played,
+      receivedAt: entry.receivedAt,
+      zap: null,
+      graphEvent: entry,
+    }))
+    return [...zapEntries, ...graphEntries].sort(
+      (left, right) => right.receivedAt - left.receivedAt,
+    )
+  }, [graphEventActivityLog, zapActivityLog])
+
   const handleOpenZapDetail = useCallback((entryId: string) => {
     setSelectedZapOffGraphIdentity(null)
+    setSelectedGraphEventDetailId(null)
     setSelectedZapDetailId(entryId)
+  }, [])
+
+  const handleOpenGraphEventDetail = useCallback((entryId: string) => {
+    setSelectedZapOffGraphIdentity(null)
+    setSelectedZapDetailId(null)
+    setSelectedGraphEventDetailId(entryId)
   }, [])
 
   const handleCloseZapDetail = useCallback(() => {
     setSelectedZapOffGraphIdentity(null)
     setSelectedZapDetailId(null)
+    setSelectedGraphEventDetailId(null)
   }, [])
 
   const handleCloseZapOffGraphIdentity = useCallback(() => {
@@ -4381,7 +4704,7 @@ export default function GraphAppV2() {
       setActionFeedback(next ? 'Zaps visibles.' : 'Zaps ocultos.')
       return next
     })
-  }, [])
+  }, [setShowZaps])
 
   const handleFitView = useCallback(() => {
     closeCompetingSidePanels()
@@ -4511,31 +4834,31 @@ export default function GraphAppV2() {
     },
     {
       id: 'zaps',
-      tip: recentZapReplayWorking
-        ? `${recentZapReplayStatusLabel}: sigue trabajando`
+      tip: recentActivityReplayWorking
+        ? `${activityReplayStatusLabel}: sigue trabajando`
         : isZapsPanelOpen
           ? tSigma('rail.closeZaps')
           : tSigma('rail.zaps'),
       icon: <ZapIcon />,
       active: isZapsPanelOpen,
-      attention: recentZapReplayWorking,
+      attention: recentActivityReplayWorking,
       onClick: handleOpenZapsPanel,
     },
     {
       id: 'replay',
-      tip: !canRunZapFeed
+      tip: !canRunEventFeed
         ? tSigma('canvas.replayShortcut.disabled')
-        : recentZapReplayWorking
-          ? recentZapReplay.playbackPaused
+        : recentActivityReplayWorking
+          ? recentZapReplayPlaybackIsPaused
             ? tSigma('rail.replayResume')
             : tSigma('rail.replayPause')
           : tSigma('rail.replay', { window: appliedZapReplayWindowLabel }),
-      icon: recentZapReplayWorking && !recentZapReplay.playbackPaused
+      icon: recentActivityReplayWorking && !recentZapReplayPlaybackIsPaused
         ? <PauseIcon />
         : <PlayIcon />,
-      active: recentZapReplayWorking,
-      attention: recentZapReplayWorking,
-      onClick: recentZapReplayWorking
+      active: recentActivityReplayWorking,
+      attention: recentActivityReplayWorking,
+      onClick: recentActivityReplayWorking
         ? handleQuickReplayPauseToggle
         : handleQuickReplay,
       dividerAfter: true,
@@ -4556,7 +4879,8 @@ export default function GraphAppV2() {
     },
   ], [
     appliedZapReplayWindowLabel,
-    canRunZapFeed,
+    activityReplayStatusLabel,
+    canRunEventFeed,
     runtimeInspectorButtonVisible,
     handleOpenZapsPanel,
     handleOpenNotifications,
@@ -4573,9 +4897,8 @@ export default function GraphAppV2() {
     isZapsPanelOpen,
     notificationHistory.length,
     physicsEnabled,
-    recentZapReplay.playbackPaused,
-    recentZapReplayStatusLabel,
-    recentZapReplayWorking,
+    recentActivityReplayWorking,
+    recentZapReplayPlaybackIsPaused,
     relayState.isGraphStale,
     tSigma,
   ])
@@ -4594,33 +4917,33 @@ export default function GraphAppV2() {
     {
       id: 'zaps',
       label: tSigma('rail.zaps'),
-      tip: recentZapReplayWorking
-        ? `${recentZapReplayStatusLabel}: sigue trabajando`
+      tip: recentActivityReplayWorking
+        ? `${activityReplayStatusLabel}: sigue trabajando`
         : isZapsPanelOpen
           ? tSigma('rail.closeZaps')
           : tSigma('rail.liveZaps'),
       icon: <ZapIcon />,
       active: isZapsPanelOpen,
-      badge: zapActivityLog.length,
-      attention: recentZapReplayWorking,
+      badge: activityPanelEntries.length,
+      attention: recentActivityReplayWorking,
       onClick: handleOpenZapsPanel,
     },
     {
       id: 'replay',
       label: tSigma('rail.replayShort'),
-      tip: !canRunZapFeed
+      tip: !canRunEventFeed
         ? tSigma('canvas.replayShortcut.disabled')
-        : recentZapReplayWorking
-          ? recentZapReplay.playbackPaused
+        : recentActivityReplayWorking
+          ? recentZapReplayPlaybackIsPaused
             ? tSigma('rail.replayResume')
             : tSigma('rail.replayPause')
           : tSigma('rail.replay', { window: appliedZapReplayWindowLabel }),
-      icon: recentZapReplayWorking && !recentZapReplay.playbackPaused
+      icon: recentActivityReplayWorking && !recentZapReplayPlaybackIsPaused
         ? <PauseIcon />
         : <PlayIcon />,
-      active: recentZapReplayWorking,
-      attention: recentZapReplayWorking,
-      onClick: recentZapReplayWorking
+      active: recentActivityReplayWorking,
+      attention: recentActivityReplayWorking,
+      onClick: recentActivityReplayWorking
         ? handleQuickReplayPauseToggle
         : handleQuickReplay,
     },
@@ -4652,8 +4975,10 @@ export default function GraphAppV2() {
       onClick: handleOpenSettings,
     },
   ], [
+    activityPanelEntries.length,
     appliedZapReplayWindowLabel,
-    canRunZapFeed,
+    activityReplayStatusLabel,
+    canRunEventFeed,
     runtimeInspectorButtonVisible,
     handleOpenMobileUtilityPanel,
     handleOpenRuntimeInspector,
@@ -4666,11 +4991,9 @@ export default function GraphAppV2() {
     isZapsPanelOpen,
     mobileUtilityPanel,
     handleFitView,
-    recentZapReplay.playbackPaused,
-    recentZapReplayStatusLabel,
-    recentZapReplayWorking,
+    recentActivityReplayWorking,
+    recentZapReplayPlaybackIsPaused,
     tSigma,
-    zapActivityLog.length,
   ])
 
   // Toasts â€” combine feedback sources
@@ -5061,6 +5384,39 @@ export default function GraphAppV2() {
       </div>
 
       <div className="sg-settings-section">
+        <h4>{locale === 'en' ? 'Event types' : 'Tipos de actividad'}</h4>
+        <div className="sg-setting-row__desc" style={{ marginBottom: 8 }}>
+          {locale === 'en'
+            ? 'Enable each Nostr activity type independently. Settings persist across sessions.'
+            : 'Activá cada tipo de actividad Nostr por separado. La configuracion queda persistida.'}
+        </div>
+        {GRAPH_EVENT_KINDS.filter((kind) => kind !== 'zap').map((kind) => {
+          const enabled = eventToggles[kind]
+          return (
+            <div className="sg-setting-row" key={`event-toggle-${kind}`}>
+              <div>
+                <div className="sg-setting-row__lbl">
+                  {GRAPH_EVENT_KIND_LABELS[kind]}
+                </div>
+                <div className="sg-setting-row__desc">
+                  {GRAPH_EVENT_KIND_DESCRIPTIONS[kind]}
+                </div>
+              </div>
+              <button
+                aria-pressed={enabled}
+                className={`sg-toggle${enabled ? ' sg-toggle--on' : ''}`}
+                onClick={() => {
+                  setEventToggle(kind as GraphEventKind, !enabled)
+                }}
+                title={`${enabled ? 'Disable' : 'Enable'} ${GRAPH_EVENT_KIND_LABELS[kind]}`}
+                type="button"
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="sg-settings-section">
         <h4>{tSigma('zaps.settings.operationalProtection')}</h4>
         <div className="sg-setting-row">
           <div>
@@ -5096,7 +5452,7 @@ export default function GraphAppV2() {
     return label || zapActorLabel || `${pubkey.slice(0, 8)}...`
   }
 
-  const zapFeedStatus = shouldEnableLiveZapFeed
+  const zapFeedStatus = shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed
     ? 'Live'
     : zapFeedMode === 'recent'
       ? selectedZapReplayWindowLabel
@@ -5105,14 +5461,16 @@ export default function GraphAppV2() {
     recentZapReplayCollection.isIndeterminate ? ' sg-zap-replay-collection--waiting' : ''
   }`
   const canControlRecentZapReplay =
-    zapFeedMode === 'recent' && shouldEnableRecentZapReplay
+    zapFeedMode === 'recent' &&
+    (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay)
   const canToggleRecentZapReplayPlayback =
     canControlRecentZapReplay &&
     (recentZapReplay.phase === 'loading' ||
       recentZapReplay.phase === 'playing' ||
-      recentZapReplay.playableCount > 0)
-  const recentZapReplayPlaybackIsPaused =
-    recentZapReplayPlaybackPaused || recentZapReplay.playbackPaused
+      recentZapReplay.playableCount > 0 ||
+      recentGraphEventReplay.phase === 'loading' ||
+      recentGraphEventReplay.phase === 'playing' ||
+      recentGraphEventReplay.playableCount > 0)
   const recentZapReplayPlayButtonLabel = recentZapReplayPlaybackIsPaused
     ? tSigma('zaps.panel.resumeReplay')
     : tSigma('zaps.panel.pauseReplay')
@@ -5121,12 +5479,14 @@ export default function GraphAppV2() {
     <div className="sg-zap-feed">
       <div className="sg-zap-feed__head">
         <div className="sg-zap-feed__summary">
-          <span className="sg-section-label">{tSigma('zaps.panel.visible')}</span>
-          <strong>{zapActivityLog.length} zap{zapActivityLog.length === 1 ? '' : 's'}</strong>
+          <span className="sg-section-label">Actividad visible</span>
+          <strong>
+            {activityPanelEntries.length} actividad{activityPanelEntries.length === 1 ? '' : 'es'}
+          </strong>
         </div>
         <div className="sg-zap-feed__actions">
           <span
-            className={`sg-zap-feed__status${shouldEnableLiveZapFeed ? ' sg-zap-feed__status--live' : ''}${recentZapReplayWorking ? ' sg-zap-feed__status--working' : ''}`}
+            className={`sg-zap-feed__status${shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed ? ' sg-zap-feed__status--live' : ''}${recentActivityReplayWorking ? ' sg-zap-feed__status--working' : ''}`}
           >
             {zapFeedStatus}
           </span>
@@ -5162,15 +5522,15 @@ export default function GraphAppV2() {
 
       {zapFeedMode === 'recent' ? (
         <div
-          aria-live={recentZapReplayWorking ? 'polite' : 'off'}
-          className={`sg-zap-replay-console${recentZapReplayWorking ? ' sg-zap-replay-console--working' : ''}`}
+          aria-live={recentActivityReplayWorking ? 'polite' : 'off'}
+          className={`sg-zap-replay-console${recentActivityReplayWorking ? ' sg-zap-replay-console--working' : ''}`}
         >
           <div className="sg-zap-replay-console__head">
             <span className="sg-zap-replay-console__dot" aria-hidden="true" />
             <div>
               <strong>{recentZapReplayStatusLabel}</strong>
               <span>
-                {recentZapReplayWorking
+                {recentActivityReplayWorking
                   ? tSigma('zaps.panel.keepWorking')
                   : tSigma('zaps.panel.configuredWindow', { window: appliedZapReplayWindowText })}
               </span>
@@ -5253,6 +5613,15 @@ export default function GraphAppV2() {
                 </div>
               </dl>
             </details>
+            {enabledNonZapGraphEventKinds.length > 0 ? (
+              <p className="sg-zap-replay-console__detail">
+                Actividad extra: {formatInteger(recentGraphEventReplay.playableCount)} reproducibles,
+                {' '}
+                {formatInteger(recentGraphEventReplay.playedCount)} visibles,
+                {' '}
+                {formatInteger(recentGraphEventReplay.droppedCount)} fuera de vista.
+              </p>
+            ) : null}
           </div>
 
           <div className="sg-zap-replay-playback">
@@ -5260,8 +5629,12 @@ export default function GraphAppV2() {
               <span>{tSigma('zaps.panel.playback')}</span>
               <span>
                 {tSigma('zaps.panel.playbackSummary', {
-                  visible: formatInteger(recentZapReplay.playedCount),
-                  dropped: formatInteger(recentZapReplay.droppedCount),
+                  visible: formatInteger(
+                    recentZapReplay.playedCount + recentGraphEventReplay.playedCount,
+                  ),
+                  dropped: formatInteger(
+                    recentZapReplay.droppedCount + recentGraphEventReplay.droppedCount,
+                  ),
                 })}
               </span>
             </div>
@@ -5357,6 +5730,11 @@ export default function GraphAppV2() {
           </div>
 
           <p className="sg-zap-replay-console__detail">{recentZapReplayStatusDetail}</p>
+          {recentGraphEventReplay.message ? (
+            <p className="sg-zap-replay-console__detail">
+              Actividad: {recentGraphEventReplay.message}
+            </p>
+          ) : null}
         </div>
       ) : (
         liveZapFeedFeedback ? (
@@ -5364,58 +5742,84 @@ export default function GraphAppV2() {
         ) : null
       )}
 
-      {zapActivityLog.length > 0 ? (
+      {activityPanelEntries.length > 0 ? (
         <div className="sg-zap-feed__list">
-          {zapActivityLog.map((entry) => (
-            <article
-              aria-label={tSigma('zaps.panel.replayZap', {
-                from: getZapActorLabel(entry.fromPubkey),
-                to: getZapActorLabel(entry.toPubkey),
-              })}
-              className={`sg-zap-feed__item${entry.played ? '' : ' sg-zap-feed__item--dropped'}`}
-              key={entry.id}
-              onClick={() => handleReplayZapActivity(entry)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                handleReplayZapActivity(entry)
-              }}
-              role="button"
-              tabIndex={0}
-            >
-              <div className="sg-zap-feed__meta">
-                <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
-                <time dateTime={new Date(entry.createdAt).toISOString()}>
-                  {NOTIFICATION_TIME_FORMATTER.format(entry.createdAt)}
-                </time>
-              </div>
-              <div className="sg-zap-feed__amount">
-                {formatInteger(entry.sats)} sats
-              </div>
-              <p>
-                <span>{getZapActorLabel(entry.fromPubkey)}</span>
-                <span aria-hidden="true">{'->'}</span>
-                <span>{getZapActorLabel(entry.toPubkey)}</span>
-              </p>
-              <div className="sg-zap-feed__item-actions">
-                <span className="sg-zap-feed__result">
-                  {entry.played ? tSigma('zaps.panel.shownInGraph') : tSigma('zaps.panel.outsideView')}
-                </span>
-                <button
-                  aria-label={`Ver detalles del zap de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
-                  className="sg-zap-feed__details-btn"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    handleOpenZapDetail(entry.id)
-                  }}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  type="button"
-                >
-                  Detalles
-                </button>
-              </div>
-            </article>
-          ))}
+          {activityPanelEntries.map((entry) => {
+            const isZapEntry = entry.type === 'zap'
+            const graphEvent = entry.graphEvent
+            const kind = isZapEntry ? 'zap' : graphEvent!.kind
+            const title = isZapEntry
+              ? `${formatInteger(entry.zap.sats)} sats`
+              : getGraphEventCardValue(graphEvent!)
+            const kindLabel = isZapEntry
+              ? 'Zap'
+              : GRAPH_EVENT_KIND_SINGULAR_LABELS[kind]
+            const color = GRAPH_EVENT_KIND_COLORS[kind]
+            const replay = () => {
+              if (isZapEntry) {
+                handleReplayZapActivity(entry.zap)
+              } else {
+                handleReplayGraphEventActivity(graphEvent!)
+              }
+            }
+            const openDetails = () => {
+              if (isZapEntry) {
+                handleOpenZapDetail(entry.zap.id)
+              } else {
+                handleOpenGraphEventDetail(graphEvent!.id)
+              }
+            }
+
+            return (
+              <article
+                aria-label={`${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
+                className={`sg-zap-feed__item${entry.played ? '' : ' sg-zap-feed__item--dropped'}`}
+                key={entry.id}
+                onClick={replay}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  replay()
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="sg-zap-feed__meta">
+                  <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
+                  <time dateTime={new Date(entry.receivedAt).toISOString()}>
+                    {NOTIFICATION_TIME_FORMATTER.format(entry.receivedAt)}
+                  </time>
+                </div>
+                <div className="sg-zap-feed__amount" style={{ color }}>
+                  <span>{kindLabel}</span>
+                  <span aria-hidden="true">{' - '}</span>
+                  <span>{title}</span>
+                </div>
+                <p>
+                  <span>{getZapActorLabel(entry.fromPubkey)}</span>
+                  <span aria-hidden="true">{'->'}</span>
+                  <span>{getZapActorLabel(entry.toPubkey)}</span>
+                </p>
+                <div className="sg-zap-feed__item-actions">
+                  <span className="sg-zap-feed__result">
+                    {entry.played ? tSigma('zaps.panel.shownInGraph') : tSigma('zaps.panel.outsideView')}
+                  </span>
+                  <button
+                    aria-label={`Ver detalles de ${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
+                    className="sg-zap-feed__details-btn"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openDetails()
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    type="button"
+                  >
+                    Detalles
+                  </button>
+                </div>
+              </article>
+            )
+          })}
         </div>
       ) : (
         <p className="sg-zap-feed__empty">
@@ -5773,8 +6177,8 @@ export default function GraphAppV2() {
       setIsSettingsOpen(false)
     }
     if (isZapsPanelOpen) {
-      // Stack de niveles dentro del panel de zaps:
-      //   identidad del grafo / identidad off-graph -> detalle del zap -> listado -> cerrar
+      // Stack de niveles dentro del panel de actividad:
+      //   identidad del grafo / identidad off-graph -> detalle -> listado -> cerrar
       if (detail.node) {
         if (!isIdentityHelpDismissed) {
           dismissIdentityHelp()
@@ -5788,6 +6192,10 @@ export default function GraphAppV2() {
       }
       if (selectedZapDetailId) {
         setSelectedZapDetailId(null)
+        return
+      }
+      if (selectedGraphEventDetailId) {
+        setSelectedGraphEventDetailId(null)
         return
       }
       setIsZapsPanelOpen(false)
@@ -5813,6 +6221,7 @@ export default function GraphAppV2() {
     isNotificationsOpen,
     isSettingsOpen,
     isZapsPanelOpen,
+    selectedGraphEventDetailId,
     selectedZapDetailId,
     selectedZapOffGraphIdentity,
   ])
@@ -5950,8 +6359,8 @@ export default function GraphAppV2() {
               : isZapsPanelOpen
                 ? (detail.node || selectedZapOffGraphIdentity)
                   ? tSigma('panelEyebrow.identity')
-                  : selectedZapDetail
-                    ? 'DETALLE DE ZAP'
+                  : selectedZapDetail || selectedGraphEventDetail
+                    ? 'DETALLE DE ACTIVIDAD'
                     : tSigma('panelEyebrow.zaps')
                 : isNotificationsOpen
                   ? tSigma('panelEyebrow.notifications')
@@ -6001,6 +6410,15 @@ export default function GraphAppV2() {
               onReplay={() => handleReplayZapActivity(selectedZapDetail)}
               resolveActorLabel={getZapActorLabel}
               sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedZapDetail.source]}
+            />
+          ) : isZapsPanelOpen && selectedGraphEventDetail ? (
+            <SigmaGraphEventDetailPanel
+              entry={selectedGraphEventDetail}
+              onBack={handleCloseZapDetail}
+              onOpenIdentity={handleOpenIdentityFromZap}
+              onReplay={() => handleReplayGraphEventActivity(selectedGraphEventDetail)}
+              resolveActorLabel={getZapActorLabel}
+              sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedGraphEventDetail.source]}
             />
           ) : isZapsPanelOpen ? (
             renderZapsContent()

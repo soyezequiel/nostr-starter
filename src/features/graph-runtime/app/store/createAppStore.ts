@@ -1,8 +1,13 @@
-﻿import { useStore } from 'zustand'
+import { useStore } from 'zustand'
 import { createJSONStorage, persist, subscribeWithSelector } from 'zustand/middleware'
 import { createStore } from 'zustand/vanilla'
 
 import { createAnalysisSlice } from '@/features/graph-runtime/app/store/slices/analysisSlice'
+import {
+  createEventToggleSlice,
+  sanitizeEventFeedMode,
+  sanitizeEventToggles,
+} from '@/features/graph-runtime/app/store/slices/eventToggleSlice'
 import { createExportSlice } from '@/features/graph-runtime/app/store/slices/exportSlice'
 import { createGraphSlice } from '@/features/graph-runtime/app/store/slices/graphSlice'
 import { createKeywordSlice } from '@/features/graph-runtime/app/store/slices/keywordSlice'
@@ -18,11 +23,18 @@ import type {
   AppStoreApi,
   SavedRootEntry,
 } from '@/features/graph-runtime/app/store/types'
+import type {
+  GraphEventFeedMode,
+  GraphEventToggleState,
+} from '@/features/graph-v2/events/types'
 
-const SAVED_ROOTS_PERSIST_VERSION = 1
+const PERSIST_VERSION = 2
 
-interface PersistedSavedRootsState {
+interface PersistedAppState {
   savedRoots?: SavedRootEntry[]
+  eventToggles?: Partial<GraphEventToggleState>
+  eventFeedMode?: GraphEventFeedMode
+  pauseLiveEventsWhenSceneIsLarge?: boolean
 }
 
 const getPersistedSavedRoots = (
@@ -31,12 +43,22 @@ const getPersistedSavedRoots = (
   if (
     typeof persistedState === 'object' &&
     persistedState !== null &&
-    Array.isArray((persistedState as PersistedSavedRootsState).savedRoots)
+    Array.isArray((persistedState as PersistedAppState).savedRoots)
   ) {
-    return (persistedState as PersistedSavedRootsState).savedRoots ?? []
+    return (persistedState as PersistedAppState).savedRoots ?? []
   }
 
   return []
+}
+
+const getPersistedRecord = <T extends keyof PersistedAppState>(
+  persistedState: unknown,
+  key: T,
+): PersistedAppState[T] | undefined => {
+  if (typeof persistedState === 'object' && persistedState !== null) {
+    return (persistedState as PersistedAppState)[key]
+  }
+  return undefined
 }
 
 export const createAppStore = (): AppStoreApi =>
@@ -47,6 +69,7 @@ export const createAppStore = (): AppStoreApi =>
           ...createGraphSlice(...args),
           ...createAnalysisSlice(...args),
           ...createZapSlice(...args),
+          ...createEventToggleSlice(...args),
           ...createKeywordSlice(...args),
           ...createRelaySlice(...args),
           ...createUiSlice(...args),
@@ -55,21 +78,36 @@ export const createAppStore = (): AppStoreApi =>
         }),
         {
           name: 'nostr-graph-saved-roots',
-          version: SAVED_ROOTS_PERSIST_VERSION,
+          version: PERSIST_VERSION,
           storage: createJSONStorage(() => localStorage),
-          partialize: (state): { savedRoots: SavedRootEntry[] } => ({
+          partialize: (state): PersistedAppState => ({
             savedRoots: state.savedRoots,
+            eventToggles: state.eventToggles,
+            eventFeedMode: state.eventFeedMode,
+            pauseLiveEventsWhenSceneIsLarge: state.pauseLiveEventsWhenSceneIsLarge,
           }),
-          migrate: (persistedState, version): PersistedSavedRootsState => {
+          migrate: (persistedState, version): PersistedAppState => {
             const savedRoots = getPersistedSavedRoots(persistedState)
+            const seededSavedRoots =
+              version < 1 ? seedDefaultSavedRoots(savedRoots) : savedRoots
 
-            if (version < SAVED_ROOTS_PERSIST_VERSION) {
-              return {
-                savedRoots: seedDefaultSavedRoots(savedRoots),
-              }
+            // v2 introduces persisted graph-event toggles. Older snapshots
+            // simply lack the new keys; sanitiser fills them with defaults.
+            return {
+              savedRoots: seededSavedRoots,
+              eventToggles: sanitizeEventToggles(
+                getPersistedRecord(persistedState, 'eventToggles'),
+              ),
+              eventFeedMode: sanitizeEventFeedMode(
+                getPersistedRecord(persistedState, 'eventFeedMode'),
+              ),
+              pauseLiveEventsWhenSceneIsLarge: Boolean(
+                getPersistedRecord(
+                  persistedState,
+                  'pauseLiveEventsWhenSceneIsLarge',
+                ),
+              ),
             }
-
-            return { savedRoots }
           },
           onRehydrateStorage: () => (state) => {
             state?.setSavedRootsHydrated(true)

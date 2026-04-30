@@ -8,6 +8,11 @@ import type {
   RootIdentityEvidence,
   RootIdentitySource,
 } from '@/features/graph-runtime/kernel/rootIdentity'
+import type {
+  GraphEventFeedMode,
+  GraphEventKind,
+  GraphEventToggleState,
+} from '@/features/graph-v2/events/types'
 
 export type GraphNodeSource = 'root' | 'follow' | 'inbound' | 'zap' | 'keyword'
 export type ProfileDataSource = 'relay' | 'primal-cache'
@@ -326,6 +331,16 @@ export interface ZapSlice {
   resetZapLayer: () => void
 }
 
+export interface EventToggleSlice {
+  eventToggles: GraphEventToggleState
+  eventFeedMode: GraphEventFeedMode
+  pauseLiveEventsWhenSceneIsLarge: boolean
+  setEventToggle: (kind: GraphEventKind, enabled: boolean) => void
+  setEventToggles: (toggles: Partial<GraphEventToggleState>) => void
+  setEventFeedMode: (mode: GraphEventFeedMode) => void
+  setPauseLiveEventsWhenSceneIsLarge: (paused: boolean) => void
+}
+
 export interface KeywordSlice {
   keywordLayer: KeywordLayerState
   setKeywordLayerState: (state: Partial<KeywordLayerState>) => void
@@ -543,6 +558,7 @@ export interface PathfindingSlice {
 
 export type AppStore = GraphSlice &
   ZapSlice &
+  EventToggleSlice &
   KeywordSlice &
   RelaySlice &
   UiSlice &

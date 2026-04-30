@@ -25,7 +25,8 @@ import type {
   DebugViewportPosition,
   SigmaLabDebugApi,
 } from '@/features/graph-v2/testing/browserDebug'
-import { ZapElectronOverlay } from '@/features/graph-v2/zaps/zapElectronOverlay'
+import { GraphEventOverlay } from '@/features/graph-v2/events/graphEventOverlay'
+import type { ParsedGraphEvent } from '@/features/graph-v2/events/types'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { resolveZapOverlayCssPosition } from '@/features/graph-v2/ui/zapOverlayPosition'
 
@@ -56,6 +57,7 @@ export type MinimapViewport = MinimapSnapshot['viewport']
 export interface SigmaCanvasHostHandle {
   playZap: (zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => boolean
   playZapArrival: (zap: Pick<ParsedZap, 'toPubkey' | 'sats'>) => boolean
+  playGraphEvent: (event: ParsedGraphEvent) => boolean
   setZapOverlayPaused: (paused: boolean) => void
   recenterCamera: () => void
   fitCameraToGraph: () => void
@@ -169,7 +171,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   const containerRef = useRef<HTMLDivElement | null>(null)
   const backdropCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const adapterRef = useRef<SigmaRendererAdapter | null>(null)
-  const overlayRef = useRef<ZapElectronOverlay | null>(null)
+  const overlayRef = useRef<GraphEventOverlay | null>(null)
   const sceneRef = useRef(scene)
   const dragInfluenceTuningRef = useRef(dragInfluenceTuning)
   const physicsTuningRef = useRef(physicsTuning)
@@ -216,7 +218,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     }
 
     let adapter: SigmaRendererAdapter | null = null
-    let overlay: ZapElectronOverlay | null = null
+    let overlay: GraphEventOverlay | null = null
     let pendingMountFrame: number | null = null
     let disposed = false
 
@@ -252,7 +254,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       adapter = nextAdapter
       adapterRef.current = nextAdapter
 
-      const nextOverlay = new ZapElectronOverlay(container, (pubkey) => {
+      const nextOverlay = new GraphEventOverlay(container, (pubkey) => {
         return resolveZapOverlayCssPosition(adapter, pubkey)
       })
       overlay = nextOverlay
@@ -337,8 +339,9 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   useImperativeHandle(
     ref,
     () => ({
-      playZap: (zap) => overlayRef.current?.play(zap) ?? false,
-      playZapArrival: (zap) => overlayRef.current?.playArrival(zap) ?? false,
+      playZap: (zap) => overlayRef.current?.playZap(zap) ?? false,
+      playZapArrival: (zap) => overlayRef.current?.playZapArrival(zap) ?? false,
+      playGraphEvent: (event) => overlayRef.current?.play(event) ?? false,
       setZapOverlayPaused: (paused) => overlayRef.current?.setPaused(paused),
       recenterCamera: () => adapterRef.current?.recenterCamera(),
       fitCameraToGraph: () => adapterRef.current?.fitCameraToGraph(),
