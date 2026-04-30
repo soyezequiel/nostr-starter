@@ -143,6 +143,10 @@ export function createNodeDetailModule(
       state.markNodeExpanded(input.pubkey)
     }
 
+    if (input.pin === true) {
+      state.pinNode(input.pubkey)
+    }
+
     const selectResult =
       input.select === false
         ? { selectedPubkey: state.selectedNodePubkey }

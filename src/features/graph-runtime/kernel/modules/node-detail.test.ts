@@ -497,7 +497,7 @@ test('selectNode prefetches node detail metadata for the identity panel', async 
   assert.equal(store.getState().nodes.alice?.about, 'Writer, neuroscientist')
 })
 
-test('addDetachedNode inserts a disconnected zap identity, marks it expanded, and selects it', () => {
+test('addDetachedNode inserts a disconnected zap identity, marks it expanded, pins it, and selects it', () => {
   const store = createStoreForNodeDetail()
 
   const nodeDetail = createNodeDetailModule(
@@ -550,6 +550,7 @@ test('addDetachedNode inserts a disconnected zap identity, marks it expanded, an
     label: 'Alice desde zap',
     about: 'bio importada',
     profileFetchedAt: 2_000,
+    pin: true,
     profileState: 'ready',
     source: 'zap',
   })
@@ -559,6 +560,7 @@ test('addDetachedNode inserts a disconnected zap identity, marks it expanded, an
   assert.equal(store.getState().selectedNodePubkey, 'alice')
   assert.equal(store.getState().openPanel, 'node-detail')
   assert.equal(store.getState().expandedNodePubkeys.has('alice'), true)
+  assert.equal(store.getState().pinnedNodePubkeys.has('alice'), true)
   assert.equal(store.getState().nodes.alice?.source, 'zap')
   assert.equal(store.getState().nodes.alice?.label, 'Alice desde zap')
   assert.equal(store.getState().nodes.alice?.about, 'bio importada')

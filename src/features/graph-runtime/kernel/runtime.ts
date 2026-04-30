@@ -79,6 +79,7 @@ export interface AddDetachedNodeInput {
   profileState?: 'idle' | 'loading' | 'ready' | 'missing'
   discoveredAt?: number | null
   source?: GraphNodeSource
+  pin?: boolean
   select?: boolean
   markExpanded?: boolean
 }

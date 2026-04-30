@@ -164,6 +164,7 @@ import { SigmaOffGraphIdentityPanel } from '@/features/graph-v2/ui/SigmaOffGraph
 import { SigmaSavedRootsPanel } from '@/features/graph-v2/ui/SigmaSavedRootsPanel'
 import { SigmaToasts, type SigmaToast } from '@/features/graph-v2/ui/SigmaToasts'
 import { SigmaZapDetailPanel } from '@/features/graph-v2/ui/SigmaZapDetailPanel'
+import { resolveZapIdentityPanelMode } from '@/features/graph-v2/ui/zapIdentityPanelMode'
 import { RuntimeInspectorDrawer } from '@/features/graph-v2/ui/runtime-inspector/RuntimeInspectorDrawer'
 import {
   buildAvatarRuntimeDebugFilename,
@@ -4225,21 +4226,45 @@ export default function GraphAppV2() {
     setSelectedZapOffGraphIdentity(null)
   }, [])
 
+  const scheduleDetachedNodePlacement = useCallback(
+    (pubkey: string, attempt = 0) => {
+      if (typeof window === 'undefined') {
+        return
+      }
+
+      window.requestAnimationFrame(() => {
+        const host = sigmaHostRef.current
+        const placed = host?.placeDetachedNode(pubkey) ?? false
+        if (placed) {
+          host?.setNodePinned(pubkey, true)
+          return
+        }
+        if (!placed && attempt < 4) {
+          scheduleDetachedNodePlacement(pubkey, attempt + 1)
+        }
+      })
+    },
+    [],
+  )
+
   const handleOpenIdentityFromZap = useCallback((pubkey: string, fallbackLabel: string) => {
     if (isFixtureMode) {
       updateFixtureState((current) => ({ ...current, selectedNodePubkey: pubkey }))
       return
     }
     setSelectedZapOffGraphIdentity(null)
-    // Si el actor ya existe en el grafo, reutilizamos el panel de identidad
-    // actual. Si no existe, abrimos una vista read-only con su perfil remoto
-    // sin tocar el root ni mutar el grafo.
-    if (sceneState.nodesByPubkey[pubkey]) {
+    // Para abrir la identidad desde zaps importa si el nodo esta en la escena
+    // renderizada actual, no si existe en el store canonico pero quedo fuera
+    // de la capa/proyeccion visible.
+    if (resolveZapIdentityPanelMode({
+      pubkey,
+      renderedNodePubkeys: visibleNodeSet,
+    }) === 'scene') {
       bridge.selectNode(pubkey)
       return
     }
     setSelectedZapOffGraphIdentity({ fallbackLabel, pubkey })
-  }, [bridge, isFixtureMode, sceneState.nodesByPubkey, updateFixtureState])
+  }, [bridge, isFixtureMode, updateFixtureState, visibleNodeSet])
 
   const handleAddZapOffGraphIdentityToGraph = useCallback((input: {
     fallbackLabel: string
@@ -4270,9 +4295,15 @@ export default function GraphAppV2() {
         profileFetchedAt: hasResolvedProfileData ? Date.now() : null,
         profileState: hasResolvedProfileData ? 'ready' : 'idle',
         source: 'zap',
+        pin: true,
         select: true,
         markExpanded: true,
       })
+      if (result.status === 'inserted') {
+        scheduleDetachedNodePlacement(input.pubkey)
+      } else {
+        sigmaHostRef.current?.setNodePinned(input.pubkey, true)
+      }
       setSelectedZapOffGraphIdentity(null)
       setActionFeedback(result.message)
     } catch (error) {
@@ -4282,7 +4313,7 @@ export default function GraphAppV2() {
           : 'No se pudo agregar esa identidad al grafo.',
       )
     }
-  }, [bridge, isFixtureMode, setActionFeedback])
+  }, [bridge, isFixtureMode, scheduleDetachedNodePlacement, setActionFeedback])
 
   const handleOpenRuntimeInspector = useCallback(() => {
     if (!canUseRuntimeInspector) {

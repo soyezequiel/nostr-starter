@@ -6,6 +6,7 @@ import {
   NodePositionLedger,
   PhysicsGraphStore,
   RenderGraphStore,
+  resolveDetachedNodePlacement,
 } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 
 const createScene = (
@@ -262,6 +263,38 @@ test('physics store translates node positions without changing their fixed state
 
   assert.deepEqual(physicsStore.getNodePosition('A'), { x: 7, y: -2 })
   assert.equal(physicsStore.isNodeFixed('A'), true)
+})
+
+test('resolveDetachedNodePlacement returns a stable origin when there are no other nodes', () => {
+  assert.deepEqual(resolveDetachedNodePlacement({ nodes: [] }), { x: 0, y: 0 })
+})
+
+test('resolveDetachedNodePlacement picks a position outside the occupied bbox', () => {
+  const placement = resolveDetachedNodePlacement({
+    nodes: [
+      { pubkey: 'A', size: 16, x: -20, y: -10 },
+      { pubkey: 'B', size: 16, x: 20, y: -10 },
+      { pubkey: 'C', size: 16, x: 20, y: 10 },
+      { pubkey: 'D', size: 16, x: -20, y: 10 },
+      { pubkey: 'target', size: 16, x: 0, y: 0 },
+    ],
+    targetPubkey: 'target',
+    targetSize: 16,
+  })
+
+  assert.equal(
+    placement.x < -20 || placement.x > 20 || placement.y < -10 || placement.y > 10,
+    true,
+  )
+  assert.equal(
+    Math.min(
+      Math.hypot(placement.x + 20, placement.y + 10),
+      Math.hypot(placement.x - 20, placement.y + 10),
+      Math.hypot(placement.x - 20, placement.y - 10),
+      Math.hypot(placement.x + 20, placement.y - 10),
+    ) > 0,
+    true,
+  )
 })
 
 test('shared ledger reuses render positions across layer changes', () => {

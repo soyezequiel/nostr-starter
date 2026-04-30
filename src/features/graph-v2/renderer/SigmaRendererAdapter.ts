@@ -24,6 +24,7 @@ import {
   NodePositionLedger,
   PhysicsGraphStore,
   RenderGraphStore,
+  resolveDetachedNodePlacement,
 } from '@/features/graph-v2/renderer/graphologyProjectionStore'
 import type {
   RenderEdgeAttributes,
@@ -1146,6 +1147,46 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.forceRuntime?.reheat()
     this.safeRefresh()
     this.ensurePhysicsPositionBridge()
+  }
+
+  public placeDetachedNode(pubkey: string) {
+    if (!this.renderStore || !this.physicsStore) {
+      return false
+    }
+
+    const renderGraph = this.renderStore.getGraph()
+    if (!renderGraph.hasNode(pubkey)) {
+      return false
+    }
+
+    const targetAttributes = renderGraph.getNodeAttributes(pubkey)
+    const targetPosition = resolveDetachedNodePlacement({
+      nodes: renderGraph
+        .nodes()
+        .map((nodePubkey) => {
+          const attributes = renderGraph.getNodeAttributes(nodePubkey)
+          return {
+            pubkey: nodePubkey,
+            size: attributes.size,
+            x: attributes.x,
+            y: attributes.y,
+          }
+        }),
+      targetPubkey: pubkey,
+      targetSize: targetAttributes.size,
+    })
+
+    this.manualDragFixedNodes.delete(pubkey)
+    this.renderStore.setNodePosition(pubkey, targetPosition.x, targetPosition.y)
+    this.physicsStore.setNodePosition(
+      pubkey,
+      targetPosition.x,
+      targetPosition.y,
+      true,
+    )
+    this.nodeHitTester?.markDirty()
+    this.safeRefresh()
+    return true
   }
 
   private rememberReleasedNodePosition(

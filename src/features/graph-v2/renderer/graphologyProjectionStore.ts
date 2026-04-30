@@ -13,6 +13,13 @@ export interface NodePosition {
   y: number
 }
 
+export interface PositionedNodeSample {
+  pubkey?: string
+  size: number
+  x: number
+  y: number
+}
+
 export interface RenderNodeAttributes {
   x: number
   y: number
@@ -125,6 +132,91 @@ export const createSeedPosition = (index: number, total: number) => {
     x: Math.cos(angle) * radius,
     y: Math.sin(angle) * radius,
   }
+}
+
+const DETACHED_NODE_CANDIDATE_COUNT = 24
+const DETACHED_NODE_RING_COUNT = 5
+
+const isFinitePosition = (value: number) => Number.isFinite(value)
+
+export const resolveDetachedNodePlacement = ({
+  nodes,
+  targetPubkey,
+  targetSize = 0,
+}: {
+  nodes: ReadonlyArray<PositionedNodeSample>
+  targetPubkey?: string | null
+  targetSize?: number
+}): NodePosition => {
+  const positionedNodes = nodes.filter(
+    (node) =>
+      node.pubkey !== targetPubkey &&
+      isFinitePosition(node.x) &&
+      isFinitePosition(node.y),
+  )
+
+  if (positionedNodes.length === 0) {
+    return { x: 0, y: 0 }
+  }
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let maxNodeSize = Math.max(targetSize, 0)
+
+  for (const node of positionedNodes) {
+    minX = Math.min(minX, node.x)
+    minY = Math.min(minY, node.y)
+    maxX = Math.max(maxX, node.x)
+    maxY = Math.max(maxY, node.y)
+    maxNodeSize = Math.max(maxNodeSize, node.size)
+  }
+
+  const width = Math.max(1, maxX - minX)
+  const height = Math.max(1, maxY - minY)
+  const centerX = (minX + maxX) / 2
+  const centerY = (minY + maxY) / 2
+  const baseMargin = Math.max(8, maxNodeSize * 2.5, Math.min(width, height) * 0.25)
+  let bestCandidate: NodePosition = {
+    x: maxX + baseMargin,
+    y: centerY,
+  }
+  let bestScore = -Infinity
+
+  for (let ringIndex = 0; ringIndex < DETACHED_NODE_RING_COUNT; ringIndex += 1) {
+    const ringOffset = baseMargin + ringIndex * Math.max(baseMargin * 0.6, 6)
+    const radiusX = width / 2 + ringOffset
+    const radiusY = height / 2 + ringOffset
+
+    for (
+      let candidateIndex = 0;
+      candidateIndex < DETACHED_NODE_CANDIDATE_COUNT;
+      candidateIndex += 1
+    ) {
+      const angle = (candidateIndex / DETACHED_NODE_CANDIDATE_COUNT) * Math.PI * 2
+      const candidate = {
+        x: centerX + Math.cos(angle) * radiusX,
+        y: centerY + Math.sin(angle) * radiusY,
+      }
+      const score = Math.min(
+        ...positionedNodes.map((node) =>
+          Math.hypot(candidate.x - node.x, candidate.y - node.y),
+        ),
+      )
+
+      if (score > bestScore) {
+        bestScore = score
+        bestCandidate = candidate
+      }
+    }
+
+    if (bestScore >= baseMargin) {
+      return bestCandidate
+    }
+  }
+
+  return bestCandidate
 }
 
 const createDirectedPairKey = (source: string, target: string) =>

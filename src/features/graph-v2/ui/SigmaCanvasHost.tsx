@@ -63,6 +63,7 @@ export interface SigmaCanvasHostHandle {
   fitCameraToGraphWhilePhysicsSettles: () => void
   zoomIn: () => void
   zoomOut: () => void
+  placeDetachedNode: (pubkey: string) => boolean
   setNodePinned: (pubkey: string, pinned: boolean) => void
   setPhysicsSuspended: (suspended: boolean) => void
   getMinimapSnapshot: () => MinimapSnapshot | null
@@ -347,6 +348,8 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
         adapterRef.current?.fitCameraToGraphWhilePhysicsSettles(),
       zoomIn: () => adapterRef.current?.zoomIn(),
       zoomOut: () => adapterRef.current?.zoomOut(),
+      placeDetachedNode: (pubkey) =>
+        adapterRef.current?.placeDetachedNode(pubkey) ?? false,
       setNodePinned: (pubkey, pinned) => adapterRef.current?.setNodePinned(pubkey, pinned),
       setPhysicsSuspended: (suspended) => adapterRef.current?.setPhysicsSuspended(suspended),
       getMinimapSnapshot: () => adapterRef.current?.getMinimapSnapshot() ?? null,
