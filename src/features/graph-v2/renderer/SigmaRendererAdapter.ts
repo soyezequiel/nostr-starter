@@ -586,6 +586,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
   private touchGestureActive = false
 
+  private gestureStartListenerCleanup: (() => void) | null = null
+
   private readonly MOTION_RESUME_MS = 140
 
   private hideAvatarsOnMove = false
@@ -2820,6 +2822,67 @@ export class SigmaRendererAdapter implements RendererAdapter {
     touchCaptor.on('touchmove', this.handleTouchMove)
     touchCaptor.on('touchdown', this.handleTouchGestureStart)
     touchCaptor.on('touchup', this.handleTouchGestureEnd)
+    this.installGestureStartCancellation()
+  }
+
+  /**
+   * Cancel any in-flight camera inertia animation when a new pan/pinch gesture
+   * starts. Sigma's TouchCaptor.handleLeave kicks off a `camera.animate(...)`
+   * for inertia (220ms). That animation keeps calling `setState` every rAF
+   * tick from its initialState + tween, so if the user starts another gesture
+   * within the inertia window, every animation tick OVERWRITES the position
+   * the new touchmove just wrote. The result is one-frame "jumps" back toward
+   * the inertia trajectory before the next touchmove corrects them — which is
+   * what shows up as juddery panning on mobile.
+   *
+   * Capture-phase listeners on the container fire before Sigma's TouchCaptor
+   * runs `handleStart`, so we can null out `camera.nextFrame` *before*
+   * `startCameraState` is captured from a still-animating position.
+   */
+  private installGestureStartCancellation() {
+    this.gestureStartListenerCleanup?.()
+
+    const container = this.container
+    if (!container) {
+      this.gestureStartListenerCleanup = null
+      return
+    }
+
+    const cancel = () => {
+      this.cancelCameraInertiaAnimation()
+    }
+
+    const options: AddEventListenerOptions = { capture: true, passive: true }
+    container.addEventListener('touchstart', cancel, options)
+    container.addEventListener('mousedown', cancel, options)
+
+    this.gestureStartListenerCleanup = () => {
+      container.removeEventListener('touchstart', cancel, options)
+      container.removeEventListener('mousedown', cancel, options)
+    }
+  }
+
+  private cancelCameraInertiaAnimation() {
+    const sigma = this.sigma
+    if (!sigma) return
+    const camera = sigma.getCamera() as unknown as {
+      nextFrame?: number | null
+      animationCallback?: (() => void) | undefined
+    }
+    if (camera.nextFrame == null) {
+      return
+    }
+    cancelAnimationFrame(camera.nextFrame)
+    camera.nextFrame = null
+    if (typeof camera.animationCallback === 'function') {
+      try {
+        camera.animationCallback()
+      } catch {
+        // Swallow: animation callbacks are user-supplied (e.g. for tap-to-zoom)
+        // and a throw here must not block the new gesture.
+      }
+      camera.animationCallback = undefined
+    }
   }
 
   private readonly handleTouchGestureStart = () => {
@@ -3051,6 +3114,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.pendingContainerRefresh = false
+    this.gestureStartListenerCleanup?.()
+    this.gestureStartListenerCleanup = null
     window.removeEventListener('keydown', this.handleKeyDown)
     this.setCameraLocked(false)
     this.setGraphBoundsLocked(false)
