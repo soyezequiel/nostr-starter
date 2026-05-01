@@ -86,7 +86,7 @@ export const createDexieAvatarDiskCache = (): AvatarDiskCache => {
         return null
       }
 
-      await repository.touch(sourceUrl, bucket, now)
+      void repository.touch(sourceUrl, bucket, now).catch(() => {})
       traceAvatarFlow('renderer.avatarDiskCache.hit', () => ({
         sourceUrl: summarizeAvatarUrl(sourceUrl),
         bucket,
