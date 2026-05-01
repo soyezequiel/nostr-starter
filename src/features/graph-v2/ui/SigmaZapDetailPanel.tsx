@@ -1,25 +1,26 @@
 'use client'
 
+import { useLocale, useTranslations } from 'next-intl'
 import { nip19 } from 'nostr-tools'
 
 import {
   useReferencedNote,
   type ReferencedNoteState,
 } from '@/features/graph-v2/events/referencedNoteCache'
+import { buildActivityPostExternalLinks } from '@/features/graph-v2/ui/activityPostLinks'
 
 const HEX_64_RE = /^[0-9a-f]{64}$/i
 
-const TIME_FORMATTER = new Intl.DateTimeFormat('es-AR', {
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-})
-
-const formatTimestamp = (createdAtSeconds: number) =>
-  TIME_FORMATTER.format(new Date(createdAtSeconds * 1_000))
+const formatTimestamp = (createdAtSeconds: number, locale: string) =>
+  new Intl.DateTimeFormat(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour12: false,
+  }).format(new Date(createdAtSeconds * 1_000))
 
 const encodeNpub = (pubkey: string) => {
   if (!HEX_64_RE.test(pubkey)) return null
@@ -38,8 +39,6 @@ const encodeNoteId = (eventId: string) => {
     return null
   }
 }
-
-const integerFormatter = new Intl.NumberFormat('es-AR')
 
 export interface SigmaZapDetailEntry {
   id: string
@@ -97,12 +96,15 @@ export function SigmaZapDetailPanel({
   onReplay,
   sourceLabel,
 }: SigmaZapDetailPanelProps): React.JSX.Element {
+  const locale = useLocale()
+  const t = useTranslations('sigma.zaps.detail')
   const zappedEventId = entry.zappedEventId ?? null
   const post: ZapPostState = useReferencedNote(zappedEventId)
   const fromNpub = encodeNpub(entry.fromPubkey)
   const toNpub = encodeNpub(entry.toPubkey)
   const noteId = encodeNoteId(zappedEventId ?? '') ?? null
   const receiptId = entry.eventId ?? null
+  const externalPostLinks = buildActivityPostExternalLinks(zappedEventId)
   const readyPostEvent = post.phase === 'ready' ? post.event : null
   const postAuthorLabel = readyPostEvent
     ? resolveActorLabel(readyPostEvent.pubkey)
@@ -116,65 +118,65 @@ export function SigmaZapDetailPanel({
           onClick={onBack}
           type="button"
         >
-          {'<- Volver al panel de zaps'}
+          {t('backToZaps')}
         </button>
       </div>
 
       <div className="sg-zap-detail__hero">
-        <span className="sg-section-label">Detalle del zap</span>
+        <span className="sg-section-label">{t('zapDetail')}</span>
         <strong className="sg-zap-detail__amount">
-          {integerFormatter.format(entry.sats)} sats
+          {new Intl.NumberFormat(locale).format(entry.sats)} sats
         </strong>
         <p className="sg-zap-detail__hero-meta">
           <span>{sourceLabel}</span>
           <span aria-hidden="true">{' - '}</span>
           <time dateTime={new Date(entry.zapCreatedAt * 1_000).toISOString()}>
-            {formatTimestamp(entry.zapCreatedAt)}
+            {formatTimestamp(entry.zapCreatedAt, locale)}
           </time>
         </p>
         <p className="sg-zap-detail__hero-status">
           {entry.played
-            ? 'Reproducido en el grafo actual.'
-            : 'Quedo fuera de la vista actual.'}
+            ? t('played')
+            : t('outsideView')}
         </p>
       </div>
 
       <div className="sg-zap-detail__grid">
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Quien envio</span>
+          <span className="sg-zap-detail__row-label">{t('sentBy')}</span>
           {renderActorButton(entry.fromPubkey, resolveActorLabel, onOpenIdentity)}
         </section>
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Quien recibio</span>
+          <span className="sg-zap-detail__row-label">{t('receivedBy')}</span>
           {renderActorButton(entry.toPubkey, resolveActorLabel, onOpenIdentity)}
         </section>
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Monto</span>
+          <span className="sg-zap-detail__row-label">{t('amount')}</span>
           <span className="sg-zap-detail__row-value">
-            {integerFormatter.format(entry.sats)} sats
+            {new Intl.NumberFormat(locale).format(entry.sats)} sats
           </span>
         </section>
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Hora</span>
+          <span className="sg-zap-detail__row-label">{t('time')}</span>
           <span className="sg-zap-detail__row-value">
-            {formatTimestamp(entry.zapCreatedAt)}
+            {formatTimestamp(entry.zapCreatedAt, locale)}
           </span>
         </section>
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Identidad emisora (npub)</span>
+          <span className="sg-zap-detail__row-label">{t('senderIdentity')}</span>
           <span className="sg-zap-detail__row-value sg-zap-detail__row-value--mono">
             {fromNpub ?? entry.fromPubkey}
           </span>
         </section>
         <section className="sg-zap-detail__row">
-          <span className="sg-zap-detail__row-label">Identidad receptora (npub)</span>
+          <span className="sg-zap-detail__row-label">{t('receiverIdentity')}</span>
           <span className="sg-zap-detail__row-value sg-zap-detail__row-value--mono">
             {toNpub ?? entry.toPubkey}
           </span>
         </section>
         {receiptId ? (
           <section className="sg-zap-detail__row">
-            <span className="sg-zap-detail__row-label">Recibo (id)</span>
+            <span className="sg-zap-detail__row-label">{t('receipt')}</span>
             <span className="sg-zap-detail__row-value sg-zap-detail__row-value--mono">
               {receiptId}
             </span>
@@ -182,7 +184,7 @@ export function SigmaZapDetailPanel({
         ) : null}
         {entry.comment ? (
           <section className="sg-zap-detail__row">
-            <span className="sg-zap-detail__row-label">Comentario</span>
+            <span className="sg-zap-detail__row-label">{t('comment')}</span>
             <p className="sg-zap-detail__comment">{entry.comment}</p>
           </section>
         ) : null}
@@ -190,17 +192,17 @@ export function SigmaZapDetailPanel({
 
       <section className="sg-zap-detail__post">
         <header className="sg-zap-detail__post-head">
-          <span className="sg-section-label">Post zapeado</span>
+          <span className="sg-section-label">{t('zappedPost')}</span>
           {noteId ? (
             <code className="sg-zap-detail__post-id">{`${noteId.slice(0, 18)}...`}</code>
           ) : null}
         </header>
         {!zappedEventId ? (
           <p className="sg-zap-detail__post-empty">
-            Este zap no apunta a una nota concreta (parece un zap a perfil).
+            {t('profileZap')}
           </p>
         ) : post.phase === 'loading' ? (
-          <p className="sg-zap-detail__post-empty">Cargando post original...</p>
+          <p className="sg-zap-detail__post-empty">{t('loadingOriginalPost')}</p>
         ) : readyPostEvent ? (
           <article className="sg-zap-detail__post-body">
             <div className="sg-zap-detail__post-meta">
@@ -215,21 +217,21 @@ export function SigmaZapDetailPanel({
                 dateTime={new Date((readyPostEvent.created_at ?? 0) * 1_000).toISOString()}
               >
                 {readyPostEvent.created_at
-                  ? formatTimestamp(readyPostEvent.created_at)
+                  ? formatTimestamp(readyPostEvent.created_at, locale)
                   : ''}
               </time>
             </div>
             <p className="sg-zap-detail__post-content">
-              {readyPostEvent.content?.trim() || '(sin contenido textual)'}
+              {readyPostEvent.content?.trim() || t('noTextContent')}
             </p>
           </article>
         ) : post.phase === 'error' ? (
           <p className="sg-zap-detail__post-empty sg-zap-detail__post-empty--error">
-            {post.message ?? 'No se pudo cargar el post original.'}
+            {post.message ?? t('originalPostError')}
           </p>
         ) : (
           <p className="sg-zap-detail__post-empty">
-            {post.message ?? 'No se encontro el post original en los relays.'}
+            {post.message ?? t('originalPostMissing')}
           </p>
         )}
       </section>
@@ -240,8 +242,28 @@ export function SigmaZapDetailPanel({
           onClick={onReplay}
           type="button"
         >
-          Reproducir zap
+          {t('replayZap')}
         </button>
+        {externalPostLinks ? (
+          <>
+            <a
+              className="sg-btn"
+              href={externalPostLinks.primalUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              {t('openPrimal')}
+            </a>
+            <a
+              className="sg-btn"
+              href={externalPostLinks.jumbleUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              {t('openJumble')}
+            </a>
+          </>
+        ) : null}
       </div>
     </div>
   )

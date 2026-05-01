@@ -2174,6 +2174,7 @@
 
 [data-graph-v2] .sg-zap-detail__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
 }
@@ -2196,6 +2197,7 @@
 
 [data-graph-v2] .sg-btn {
   flex: 1;
+  min-width: 0;
   padding: 9px 12px;
   border-radius: 9px;
   border: 1px solid var(--sg-stroke);

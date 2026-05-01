@@ -36,6 +36,7 @@ export interface SigmaActivityPanelV3Entry {
   toLabel: string
   played: boolean
   receivedAt: number
+  occurredAt: number
   sats: number
   text: string
 }
@@ -136,6 +137,16 @@ export interface SigmaActivityPanelV3Props {
     isolateHint: string
     liveLabel: string
     replayLabel: string
+    timeLocale: string
+    buckets: {
+      now: string
+      last5m: string
+      last30m: string
+      lastHour: string
+      todayEarlier: string
+      today: string
+      before: string
+    }
   }
 }
 
@@ -156,26 +167,31 @@ function compactSats(n: number): string {
   return String(n)
 }
 
-function formatRelative(ms: number): string {
-  const diff = Date.now() - ms
-  const s = Math.floor(diff / 1000)
-  if (s < 60) return `${Math.max(0, s)}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h`
-  return `${Math.floor(h / 24)}d`
+function formatActivityClockTime(ms: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(ms))
 }
 
-function bucketName(ms: number): string {
+function formatActivityFullTime(ms: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    hour12: false,
+  }).format(new Date(ms))
+}
+
+function bucketName(ms: number, labels: SigmaActivityPanelV3Props['labels']['buckets']): string {
   const m = (Date.now() - ms) / 60000
-  if (m < 1) return 'Ahora'
-  if (m < 5) return 'Últimos 5 min'
-  if (m < 30) return 'Últimos 30 min'
-  if (m < 60) return 'Última hora'
-  if (m < 60 * 6) return 'Hoy · más temprano'
-  if (m < 60 * 24) return 'Hoy'
-  return 'Antes'
+  if (m < 1) return labels.now
+  if (m < 5) return labels.last5m
+  if (m < 30) return labels.last30m
+  if (m < 60) return labels.lastHour
+  if (m < 60 * 6) return labels.todayEarlier
+  if (m < 60 * 24) return labels.today
+  return labels.before
 }
 
 interface Bucket {
@@ -183,11 +199,14 @@ interface Bucket {
   entries: SigmaActivityPanelV3Entry[]
 }
 
-function groupByBucket(items: SigmaActivityPanelV3Entry[]): Bucket[] {
+function groupByBucket(
+  items: SigmaActivityPanelV3Entry[],
+  labels: SigmaActivityPanelV3Props['labels']['buckets'],
+): Bucket[] {
   const out: Bucket[] = []
   let cur: Bucket | null = null
   for (const it of items) {
-    const b = bucketName(it.receivedAt)
+    const b = bucketName(it.occurredAt, labels)
     if (!cur || cur.bucket !== b) {
       cur = { bucket: b, entries: [] }
       out.push(cur)
@@ -243,6 +262,7 @@ const headerStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
+  gap: 10,
   padding: '10px 12px',
   background: 'var(--sg-bg-panel-solid)',
   borderBottom: '1px solid var(--sg-stroke)',
@@ -601,12 +621,14 @@ function Row({
   onOpenDetail,
   outsideViewLabel,
   detailsLabel,
+  timeLocale,
 }: {
   entry: SigmaActivityPanelV3Entry
   onReplay: () => void
   onOpenDetail: () => void
   outsideViewLabel: string
   detailsLabel: string
+  timeLocale: string
 }) {
   const color = GRAPH_EVENT_KIND_COLORS[entry.kind]
   const isZap = entry.kind === 'zap'
@@ -772,9 +794,13 @@ function Row({
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 11, color: 'var(--sg-fg-faint)' }}>
-          {formatRelative(entry.receivedAt)}
-        </span>
+        <time
+          dateTime={new Date(entry.occurredAt).toISOString()}
+          title={formatActivityFullTime(entry.occurredAt, timeLocale)}
+          style={{ fontSize: 11, color: 'var(--sg-fg-faint)' }}
+        >
+          {formatActivityClockTime(entry.occurredAt, timeLocale)}
+        </time>
         <button
           type="button"
           onClick={(event) => {
@@ -1393,11 +1419,13 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
     }
     if (sort === 'value') {
       out = [...out].sort((a, b) => (b.sats || 0) - (a.sats || 0))
+    } else {
+      out = [...out].sort((a, b) => b.occurredAt - a.occurredAt)
     }
     return out
   }, [entries, toggles, query, sort])
 
-  const grouped = useMemo(() => groupByBucket(filtered), [filtered])
+  const grouped = useMemo(() => groupByBucket(filtered, labels.buckets), [filtered, labels.buckets])
 
   const someFiltered =
     ALL_KINDS.some((k) => !toggles[k]) || query.trim().length > 0
@@ -1420,6 +1448,10 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
 
   const isReplayMode = mode === 'recent'
   const playing = !replayPlaybackPaused
+  const countLabel =
+    filtered.length === totalEntryCount
+      ? String(filtered.length)
+      : `${filtered.length} / ${totalEntryCount}`
 
   return (
     <div
@@ -1435,22 +1467,29 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
       }}
     >
       <div style={headerStyle}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            minWidth: 0,
+            overflow: 'hidden',
+          }}
+        >
           <span style={eyebrow}>{labels.eyebrow}</span>
           <span
             style={{
               fontSize: 13,
               color: 'var(--sg-fg-muted)',
               fontFamily: 'var(--ne-font-mono)',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}
           >
             <strong style={{ color: 'var(--sg-fg)', fontWeight: 600 }}>
-              {filtered.length}
+              {countLabel}
             </strong>
-            <span style={{ color: 'var(--sg-fg-faint)' }}> / {totalEntryCount}</span>
           </span>
-        </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span
             title={liveStatusLabel}
             style={{
@@ -1464,7 +1503,8 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
               textTransform: 'uppercase',
               letterSpacing: 0,
               fontWeight: 600,
-              maxWidth: 100,
+              flex: 1,
+              minWidth: 0,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -1472,6 +1512,8 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
           >
             {liveStatusLabel}
           </span>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
           <IconBtn
             active={searchOpen}
             onClick={() => {
@@ -1637,6 +1679,7 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
                   onOpenDetail={() => onOpenEntryDetail(entry)}
                   outsideViewLabel={labels.outsideView}
                   detailsLabel={labels.detailsLabel}
+                  timeLocale={labels.timeLocale}
                 />
               ))}
             </div>

@@ -5650,6 +5650,9 @@ export default function GraphAppV2() {
         toLabel: getZapActorLabel(entry.toPubkey),
         played: entry.played,
         receivedAt: entry.receivedAt,
+        occurredAt: isZap
+          ? entry.zap.zapCreatedAt * 1_000
+          : entry.graphEvent!.createdAt * 1_000,
         sats,
         text,
       }
@@ -5760,29 +5763,39 @@ export default function GraphAppV2() {
           }
         }}
         labels={{
-          eyebrow: 'Actividad',
-          searchPlaceholder: '@actor, palabra clave…',
-          searchTitle: 'Buscar',
-          sortByTime: 'Tiempo',
-          sortByValue: 'Valor',
-          sortAriaLabel: 'Ordenar',
+          eyebrow: tSigma('zaps.panel.activityEyebrow'),
+          searchPlaceholder: tSigma('zaps.panel.activitySearchPlaceholder'),
+          searchTitle: tSigma('zaps.panel.activitySearchTitle'),
+          sortByTime: tSigma('zaps.panel.activitySortByTime'),
+          sortByValue: tSigma('zaps.panel.activitySortByValue'),
+          sortAriaLabel: tSigma('zaps.panel.activitySortAria'),
           historicalWindow: tSigma('zaps.panel.historicalWindow'),
           collection: tSigma('zaps.panel.collection'),
-          collectionComplete: 'completa ✓',
+          collectionComplete: tSigma('zaps.panel.activityCollectionComplete'),
           playback: tSigma('zaps.panel.playback'),
           playLabel: tSigma('zaps.panel.play'),
           pauseLabel: tSigma('zaps.panel.pause'),
           cacheLabel: tSigma('zaps.panel.replayCache'),
           refreshLabel: tSigma('zaps.panel.refresh'),
           advancedToggle: tSigma('zaps.panel.advancedDetails'),
-          emptyFiltered: 'Sin actividad para estos filtros',
-          clearFilters: 'Limpiar filtros',
+          emptyFiltered: tSigma('zaps.panel.activityEmptyFiltered'),
+          clearFilters: tSigma('zaps.panel.activityClearFilters'),
           outsideView: tSigma('zaps.panel.outsideView'),
-          detailsLabel: 'Detalles',
+          detailsLabel: tSigma('zaps.panel.activityDetails'),
           moveReplay: tSigma('zaps.panel.moveReplay', { window: appliedZapReplayWindowText }),
-          isolateHint: 'shift-click para aislar',
+          isolateHint: tSigma('zaps.panel.activityIsolateHint'),
           liveLabel: 'Live',
           replayLabel: 'Replay',
+          timeLocale: locale === 'en' ? 'en-US' : 'es-AR',
+          buckets: {
+            now: tSigma('zaps.panel.activityBucketNow'),
+            last5m: tSigma('zaps.panel.activityBucketLast5m'),
+            last30m: tSigma('zaps.panel.activityBucketLast30m'),
+            lastHour: tSigma('zaps.panel.activityBucketLastHour'),
+            todayEarlier: tSigma('zaps.panel.activityBucketTodayEarlier'),
+            today: tSigma('zaps.panel.activityBucketToday'),
+            before: tSigma('zaps.panel.activityBucketBefore'),
+          },
         }}
       />
     )
@@ -6319,7 +6332,7 @@ export default function GraphAppV2() {
                 ? (detail.node || selectedZapOffGraphIdentity)
                   ? tSigma('panelEyebrow.identity')
                   : selectedZapDetail || selectedGraphEventDetail
-                    ? 'DETALLE DE ACTIVIDAD'
+                    ? tSigma('panelEyebrow.activityDetail')
                     : tSigma('panelEyebrow.zaps')
                 : isNotificationsOpen
                   ? tSigma('panelEyebrow.notifications')
@@ -6368,7 +6381,11 @@ export default function GraphAppV2() {
               onOpenIdentity={handleOpenIdentityFromZap}
               onReplay={() => handleReplayZapActivity(selectedZapDetail)}
               resolveActorLabel={getZapActorLabel}
-              sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedZapDetail.source]}
+              sourceLabel={
+                selectedZapDetail.source === 'simulated'
+                  ? tSigma('zaps.detail.simulated')
+                  : ZAP_ACTIVITY_SOURCE_LABELS[selectedZapDetail.source]
+              }
             />
           ) : isActivitiesPanelOpen && selectedGraphEventDetail ? (
             <SigmaGraphEventDetailPanel
@@ -6377,7 +6394,11 @@ export default function GraphAppV2() {
               onOpenIdentity={handleOpenIdentityFromZap}
               onReplay={() => handleReplayGraphEventActivity(selectedGraphEventDetail)}
               resolveActorLabel={getZapActorLabel}
-              sourceLabel={ZAP_ACTIVITY_SOURCE_LABELS[selectedGraphEventDetail.source]}
+              sourceLabel={
+                selectedGraphEventDetail.source === 'simulated'
+                  ? tSigma('zaps.detail.simulated')
+                  : ZAP_ACTIVITY_SOURCE_LABELS[selectedGraphEventDetail.source]
+              }
             />
           ) : isActivitiesPanelOpen ? (
             renderActivitiesContent()
