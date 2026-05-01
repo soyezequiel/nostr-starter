@@ -36,6 +36,7 @@ export interface GraphRenderEdge {
   hidden: boolean
   relation: string
   weight: number
+  opacityScale: number
   isDimmed: boolean
   touchesFocus: boolean
 }

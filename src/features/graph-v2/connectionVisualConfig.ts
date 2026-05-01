@@ -10,16 +10,16 @@ export type ConnectionVisualConfig = {
 }
 
 export const DEFAULT_CONNECTION_VISUAL_CONFIG: ConnectionVisualConfig = {
-  opacity: 0.75,
-  thicknessScale: 0.75,
-  colorMode: 'semantic',
-  focusStyle: 'dramatic',
+  opacity: 0.58,
+  thicknessScale: 0.55,
+  colorMode: 'calm',
+  focusStyle: 'balanced',
 }
 
 export const MIN_CONNECTION_OPACITY = 0.1
 export const MAX_CONNECTION_OPACITY = 1
 export const CONNECTION_OPACITY_STEP = 0.05
-export const MIN_CONNECTION_THICKNESS_SCALE = 0.75
+export const MIN_CONNECTION_THICKNESS_SCALE = 0.35
 export const MAX_CONNECTION_THICKNESS_SCALE = 1.75
 export const CONNECTION_THICKNESS_SCALE_STEP = 0.05
 

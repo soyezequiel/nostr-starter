@@ -49,6 +49,7 @@ export interface RenderEdgeAttributes {
   hidden: boolean
   label: string | null
   weight: number
+  opacityScale: number
   isDimmed: boolean
   touchesFocus: boolean
   zIndex: number
@@ -108,6 +109,7 @@ const hasRenderEdgeAttributeChanges = (
   current.hidden !== next.hidden ||
   current.label !== next.label ||
   current.weight !== next.weight ||
+  current.opacityScale !== next.opacityScale ||
   current.isDimmed !== next.isDimmed ||
   current.touchesFocus !== next.touchesFocus ||
   current.zIndex !== next.zIndex
@@ -437,6 +439,7 @@ export class RenderGraphStore {
         hidden: edge.hidden,
         label: null,
         weight: edge.weight,
+        opacityScale: edge.opacityScale,
         isDimmed: edge.isDimmed,
         touchesFocus: edge.touchesFocus,
         zIndex: edge.isDimmed ? -2 : 1,

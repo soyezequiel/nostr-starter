@@ -4,7 +4,6 @@ import type { Coordinates, TouchCoords } from 'sigma/types'
 import {
   DEFAULT_CONNECTION_VISUAL_CONFIG,
   MAX_CONNECTION_OPACITY,
-  MIN_CONNECTION_OPACITY,
   normalizeConnectionVisualConfig,
   type ConnectionFocusStyle,
   type ConnectionVisualConfig,
@@ -291,7 +290,7 @@ const applyColorOpacity = (color: string, opacity: number) => {
 
   const normalizedOpacity = clampNumber(
     opacity,
-    MIN_CONNECTION_OPACITY,
+    0,
     MAX_CONNECTION_OPACITY,
   )
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${normalizedOpacity})`
@@ -1824,11 +1823,17 @@ export class SigmaRendererAdapter implements RendererAdapter {
   }
 
   // P1: Cached opacity application — avoids hex-parse + rgba template on every edge per frame.
-  private resolveColorWithOpacity(hexColor: string): string {
-    let cached = this.colorWithOpacityCache.get(hexColor)
+  private resolveColorWithOpacity(hexColor: string, opacityScale: number): string {
+    const normalizedOpacityScale = Number.isFinite(opacityScale)
+      ? clampNumber(opacityScale, 0, 1)
+      : 1
+    const effectiveOpacity =
+      this.connectionVisualConfig.opacity * normalizedOpacityScale
+    const cacheKey = `${hexColor}|${effectiveOpacity.toFixed(4)}`
+    let cached = this.colorWithOpacityCache.get(cacheKey)
     if (cached === undefined) {
-      cached = applyColorOpacity(hexColor, this.connectionVisualConfig.opacity)
-      this.colorWithOpacityCache.set(hexColor, cached)
+      cached = applyColorOpacity(hexColor, effectiveOpacity)
+      this.colorWithOpacityCache.set(cacheKey, cached)
     }
     return cached
   }
@@ -4340,7 +4345,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
     // P1: Use cached rgba conversion to avoid hex-parse on every edge every frame.
     return {
       ...target,
-      color: this.resolveColorWithOpacity(target.color),
+      color: this.resolveColorWithOpacity(target.color, target.opacityScale),
     }
   }
 

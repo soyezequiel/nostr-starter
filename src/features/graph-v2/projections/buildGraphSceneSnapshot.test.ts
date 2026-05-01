@@ -178,6 +178,59 @@ test('builds connections layer without reintroducing the root node', () => {
   )
 })
 
+test('assigns deterministic radial opacity scales to root and distant edges', () => {
+  const rootScene = buildGraphSceneSnapshot(createState({ activeLayer: 'graph' }))
+  const repeatedRootScene = buildGraphSceneSnapshot(
+    createState({ activeLayer: 'graph' }),
+  )
+  const connectionsScene = buildGraphSceneSnapshot(
+    createState({ activeLayer: 'connections' }),
+  )
+
+  const rootEdge = rootScene.render.visibleEdges.find(
+    (edge) => edge.id === 'root->alice:follow',
+  )
+  const repeatedRootEdge = repeatedRootScene.render.visibleEdges.find(
+    (edge) => edge.id === 'root->alice:follow',
+  )
+  const distantEdge = connectionsScene.render.visibleEdges.find(
+    (edge) => edge.id === 'alice->bob:follow',
+  )
+
+  assert.ok(rootEdge)
+  assert.ok(repeatedRootEdge)
+  assert.ok(distantEdge)
+  assert.equal(rootEdge.opacityScale, repeatedRootEdge.opacityScale)
+  assert.ok(rootEdge.opacityScale >= 0.78)
+  assert.ok(rootEdge.opacityScale <= 1)
+  assert.ok(distantEdge.opacityScale >= 0.32)
+  assert.ok(distantEdge.opacityScale <= 0.58)
+  assert.ok(rootEdge.opacityScale > distantEdge.opacityScale)
+})
+
+test('keeps mutual non-root edge opacity in the medium intensity band', () => {
+  const state = createState({
+    activeLayer: 'connections',
+  })
+  state.edgesById['bob->alice:follow'] = {
+    id: 'bob->alice:follow',
+    source: 'bob',
+    target: 'alice',
+    relation: 'follow',
+    origin: 'connections',
+    weight: 1,
+  }
+
+  const scene = buildGraphSceneSnapshot(state)
+  const mutualEdge = scene.render.visibleEdges.find(
+    (edge) => edge.id === 'alice->bob:follow',
+  )
+
+  assert.ok(mutualEdge)
+  assert.ok(mutualEdge.opacityScale >= 0.56)
+  assert.ok(mutualEdge.opacityScale <= 0.72)
+})
+
 test('reuses structural edges across visual-only updates while refreshing node metadata', () => {
   const firstState = createState()
   const firstScene = buildGraphSceneSnapshot(firstState)
@@ -525,8 +578,14 @@ test('renders expanded nodes with the same base size as the root by default', ()
     scene.render.nodes.map((node) => [node.pubkey, node]),
   )
 
-  assert.equal(nodesByPubkey.root?.size, 18)
-  assert.equal(nodesByPubkey.alice?.size, 18)
+  assert.equal(
+    nodesByPubkey.root?.size,
+    DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG.rootSize,
+  )
+  assert.equal(
+    nodesByPubkey.alice?.size,
+    DEFAULT_GRAPH_SCENE_NODE_SIZE_CONFIG.expandedSize,
+  )
 })
 
 test('keeps selection semantic while the renderer owns visual focus', () => {

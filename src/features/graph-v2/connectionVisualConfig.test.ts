@@ -8,10 +8,10 @@ import {
 
 test('connection visual config defaults match the curated starting look', () => {
   assert.deepEqual(DEFAULT_CONNECTION_VISUAL_CONFIG, {
-    opacity: 0.75,
-    thicknessScale: 0.75,
-    colorMode: 'semantic',
-    focusStyle: 'dramatic',
+    opacity: 0.58,
+    thicknessScale: 0.55,
+    colorMode: 'calm',
+    focusStyle: 'balanced',
   })
 })
 
@@ -39,6 +39,14 @@ test('connection visual config clamps opacity and thickness scale', () => {
 
   assert.equal(config.opacity, 0.1)
   assert.equal(config.thicknessScale, 1.75)
+})
+
+test('connection visual config allows very fine resting edges', () => {
+  const config = normalizeConnectionVisualConfig({
+    thicknessScale: 0.1,
+  })
+
+  assert.equal(config.thicknessScale, 0.35)
 })
 
 test('connection visual config survives JSON roundtrip with stable normalized values', () => {

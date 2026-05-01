@@ -71,6 +71,13 @@ const MAX_NODE_EXPANSION_PROGRESS = 0.94
 const baseEdgeSize = (relation: CanonicalEdge['relation']) =>
   relation === 'follow' ? 1.1 : 0.9
 
+const EDGE_OPACITY_ROOT_MIN = 0.78
+const EDGE_OPACITY_ROOT_MAX = 1
+const EDGE_OPACITY_MUTUAL_MIN = 0.56
+const EDGE_OPACITY_MUTUAL_MAX = 0.72
+const EDGE_OPACITY_DISTANT_MIN = 0.32
+const EDGE_OPACITY_DISTANT_MAX = 0.58
+
 const hashPubkey = (pubkey: string) => {
   let hash = 2166136261
 
@@ -80,6 +87,23 @@ const hashPubkey = (pubkey: string) => {
   }
 
   return hash >>> 0
+}
+
+const resolveEdgeOpacityScale = (
+  edge: CanonicalEdge,
+  options: {
+    isMutual: boolean
+    touchesRoot: boolean
+  },
+) => {
+  const variation = (hashPubkey(edge.id) % 1000) / 999
+  const [min, max] = options.touchesRoot
+    ? [EDGE_OPACITY_ROOT_MIN, EDGE_OPACITY_ROOT_MAX]
+    : options.isMutual
+      ? [EDGE_OPACITY_MUTUAL_MIN, EDGE_OPACITY_MUTUAL_MAX]
+      : [EDGE_OPACITY_DISTANT_MIN, EDGE_OPACITY_DISTANT_MAX]
+
+  return min + (max - min) * variation
 }
 
 const getCommonNodeColor = (pubkey: string) => {
@@ -238,6 +262,7 @@ const mapRenderEdge = (
   hidden: boolean,
   options: {
     isMutual: boolean
+    touchesRoot: boolean
   },
 ): GraphRenderEdge => {
   const baseColor = options.isMutual
@@ -254,6 +279,7 @@ const mapRenderEdge = (
     hidden,
     relation: edge.relation,
     weight: edge.weight,
+    opacityScale: resolveEdgeOpacityScale(edge, options),
     isDimmed: false,
     touchesFocus: false,
   }
@@ -751,6 +777,8 @@ const computeGraphSceneStructure = (
   const visibleEdges = layerProjection.visibleEdges.map((edge) =>
     mapRenderEdge(edge, false, {
       isMutual: reciprocalVisibleEdgeIds.has(edge.id),
+      touchesRoot:
+        edge.source === state.rootPubkey || edge.target === state.rootPubkey,
     }),
   )
   const renderForceEdges = forceEdges.map((edge) => {
@@ -759,6 +787,8 @@ const computeGraphSceneStructure = (
       !visibleEdgeIds.has(edge.id),
       {
         isMutual: reciprocalForceEdgeIds.has(edge.id),
+        touchesRoot:
+          edge.source === state.rootPubkey || edge.target === state.rootPubkey,
       },
     )
   })

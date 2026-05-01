@@ -56,6 +56,7 @@ const createScene = (
         hidden: false,
         relation: 'follow',
         weight: 1,
+        opacityScale: 1,
         isDimmed: false,
         touchesFocus: false,
       },
@@ -252,6 +253,28 @@ test('render store preserves node attribute object identity when scene attribute
 
   assert.equal(graph.getNodeAttributes('A'), firstNodeAttributes)
   assert.equal(graph.getEdgeAttributes('follow:A:B'), firstEdgeAttributes)
+})
+
+test('render store refreshes edge attributes when opacity scale changes', () => {
+  const { renderStore } = createStores()
+  const scene = createScene('follow:A:B')
+
+  renderStore.applyScene(scene.render)
+  const graph = renderStore.getGraph()
+  const firstEdgeAttributes = graph.getEdgeAttributes('follow:A:B')
+
+  renderStore.applyScene({
+    ...scene.render,
+    visibleEdges: scene.render.visibleEdges.map((edge) => ({
+      ...edge,
+      opacityScale: 0.42,
+    })),
+  })
+  const nextEdgeAttributes = graph.getEdgeAttributes('follow:A:B')
+
+  assert.equal(firstEdgeAttributes.opacityScale, 1)
+  assert.equal(nextEdgeAttributes.opacityScale, 0.42)
+  assert.notEqual(nextEdgeAttributes, firstEdgeAttributes)
 })
 
 test('physics store translates node positions without changing their fixed state', () => {

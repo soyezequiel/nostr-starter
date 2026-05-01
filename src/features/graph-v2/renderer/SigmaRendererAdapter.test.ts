@@ -209,6 +209,9 @@ test('avatar expansion rings do not force Sigma refresh while the camera is movi
       }
     },
     off: () => {},
+    scheduleRender: () => {
+      refreshCalls += 1
+    },
     refresh: () => {
       refreshCalls += 1
     },
@@ -1437,6 +1440,7 @@ type EdgeReducerHarness = {
       hidden: boolean
       label: string | null
       weight: number
+      opacityScale?: number
       isDimmed: boolean
       touchesFocus: boolean
       zIndex: number
@@ -1727,6 +1731,8 @@ test('scene updates rebuild root drag influence from the restored drag position'
             color: '#fff',
             size: 1,
             hidden: false,
+            relation: 'follow',
+            opacityScale: 1,
             isDimmed: false,
             touchesFocus: true,
           },
@@ -2655,6 +2661,8 @@ test('node drag temporarily keeps Sigma edge rendering enabled for first-order c
       setSetting: (key: 'hideEdgesOnMove', value: boolean) => void
       getBBox: () => { x: [number, number]; y: [number, number] }
       setCustomBBox: (_bbox: { x: [number, number]; y: [number, number] } | null) => void
+      refresh: () => void
+      graphToViewport: (_point: { x: number; y: number }) => { x: number; y: number }
       getCamera: () => { disable: () => void; enable: () => void }
     }
     container: Pick<HTMLElement, 'offsetWidth' | 'offsetHeight'>
@@ -2688,6 +2696,8 @@ test('node drag temporarily keeps Sigma edge rendering enabled for first-order c
     setCustomBBox: () => {
       customBBoxUpdates += 1
     },
+    refresh: () => {},
+    graphToViewport: (point) => point,
     getCamera: () => ({
       disable: () => {},
       enable: () => {},
@@ -2739,7 +2749,7 @@ test('node drag temporarily keeps Sigma edge rendering enabled for first-order c
   adapter.releaseDrag()
   assert.equal(hideEdgesOnMove, true)
   assert.deepEqual(hideEdgesOnMoveUpdates, [false, true])
-  assert.equal(customBBoxUpdates, 1)
+  assert.equal(customBBoxUpdates, 2)
   assert.equal(dragEnds.length, 1)
 })
 
@@ -2891,6 +2901,8 @@ test('forced hover refresh rebuilds neighbors when drag starts on the current ho
         color: '#fff',
         size: 1,
         hidden: false,
+        relation: 'follow',
+        opacityScale: 1,
         isDimmed: false,
         touchesFocus: true,
       },
@@ -2955,6 +2967,7 @@ test('selected node uses the same renderer focus style when no hover is active',
     hidden: false,
     label: null,
     weight: 1,
+    opacityScale: 1,
     isDimmed: false,
     touchesFocus: false,
     zIndex: 1,
@@ -3861,6 +3874,7 @@ test('edge reducer hides non first-order edges while preserving dragged edges', 
     hidden: false,
     label: null,
     weight: 1,
+    opacityScale: 0.5,
     isDimmed: false,
     touchesFocus: false,
     zIndex: 1,
@@ -4270,6 +4284,7 @@ test('edge reducer applies curated base visuals to idle connections', async () =
     hidden: false,
     label: null,
     weight: 1,
+    opacityScale: 0.5,
     isDimmed: false,
     touchesFocus: false,
     zIndex: 1,
@@ -4305,7 +4320,7 @@ test('edge reducer applies curated base visuals to idle connections', async () =
 
   const idleEdge = adapter.edgeReducer('A->B', baseEdge)
 
-  assert.equal(idleEdge.color, 'rgba(103, 156, 207, 0.35)')
+  assert.equal(idleEdge.color, 'rgba(103, 156, 207, 0.175)')
   assert.equal(idleEdge.hidden, false)
   assert.equal(idleEdge.size, 1.5)
 })
@@ -5069,6 +5084,7 @@ test('small pointer movement before click does not consume node clicks', async (
         listeners.set(eventName, listener)
       },
       scheduleRender: () => {},
+      getBBox: () => ({ x: [0, 1], y: [0, 1] }),
       viewportToGraph: (point) => point,
       getCamera: () => ({
         on: () => {},
