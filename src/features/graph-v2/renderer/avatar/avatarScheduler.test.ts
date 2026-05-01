@@ -96,7 +96,7 @@ test('scheduler starts up to the effective load concurrency', () => {
   }
 })
 
-test('scheduler expands concurrency for avatars already cached on disk', async () => {
+test('scheduler uses bulk drain for avatars beyond regular concurrency', async () => {
   const restoreDocument = installDocumentStub()
   const candidates = Array.from({ length: 5 }, (_, index) => ({
     pubkey: `node-${index}`,
@@ -110,22 +110,24 @@ test('scheduler expands concurrency for avatars already cached on disk', async (
     candidates.slice(1).map((candidate) => candidate.url),
   )
   const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
-  const diskCacheLoadCalls: Array<{ url: string; signal: AbortSignal }> = []
-  const diskCacheProbes: Array<{ url: string; bucket: number }> = []
+  const bulkDrainRequests: Array<Array<{ url: string; bucket: number }>> = []
+  const fakeBitmap = { close: () => undefined } as unknown as ImageBitmap
   const loader = {
     isBlocked: () => false,
     block: () => undefined,
-    hasDiskCached: async (url: string, bucket: number) => {
-      diskCacheProbes.push({ url, bucket })
-      return diskCachedUrls.has(url)
-    },
     load: (url: string, _bucket: number, signal: AbortSignal) => {
       loadCalls.push({ url, signal })
       return new Promise(() => undefined)
     },
-    loadDiskCached: (url: string, _bucket: number, signal: AbortSignal) => {
-      diskCacheLoadCalls.push({ url, signal })
-      return new Promise(() => undefined)
+    loadManyDiskCached: async (
+      requests: Array<{ url: string; bucket: number }>,
+    ) => {
+      bulkDrainRequests.push(requests)
+      return requests.map((r) =>
+        diskCachedUrls.has(r.url)
+          ? { bitmap: fakeBitmap, bytes: 64 * 64 * 4 }
+          : null,
+      )
     },
   }
 
@@ -138,28 +140,24 @@ test('scheduler expands concurrency for avatars already cached on disk', async (
     scheduler.reconcile(candidates, budget)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    // Regular path handles the first candidate (budget.concurrency = 1)
     assert.equal(loadCalls.length, 1)
-    assert.equal(diskCacheLoadCalls.length, candidates.length - 1)
-    assert.equal(scheduler.inflightSize(), candidates.length)
+    assert.equal(loadCalls[0]?.url, candidates[0]?.url)
+    // Bulk drain called once for the remaining candidates
+    assert.equal(bulkDrainRequests.length, 1)
     assert.deepEqual(
-      loadCalls.map((call) => call.url),
-      candidates.slice(0, 1).map((candidate) => candidate.url),
+      bulkDrainRequests[0]?.map((r) => r.url),
+      candidates.slice(1).map((c) => c.url),
     )
-    assert.deepEqual(
-      diskCacheLoadCalls.map((call) => call.url),
-      candidates.slice(1).map((candidate) => candidate.url),
-    )
-    assert.deepEqual(
-      diskCacheProbes.map((probe) => probe.url),
-      candidates.slice(1).map((candidate) => candidate.url),
-    )
+    // Disk cache hits are marked ready without occupying inflight slots
+    assert.equal(scheduler.inflightSize(), 1)
     scheduler.dispose()
   } finally {
     restoreDocument()
   }
 })
 
-test('scheduler does not use the disk cache lane for network fallback when the disk entry disappears', async () => {
+test('scheduler bulk drain miss leaves candidate for the regular network path', async () => {
   const restoreDocument = installDocumentStub()
   const candidates = Array.from({ length: 5 }, (_, index) => ({
     pubkey: `node-${index}`,
@@ -170,14 +168,14 @@ test('scheduler does not use the disk cache lane for network fallback when the d
     monogram: { label: `Node ${index}`, color: '#7dd3a7' },
   }))
   const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
-  const diskCacheLoadCalls: string[] = []
+  const bulkDrainCalls: number[] = []
   const loader = {
     isBlocked: () => false,
     block: () => undefined,
-    hasDiskCached: async () => true,
-    loadDiskCached: async (url: string) => {
-      diskCacheLoadCalls.push(url)
-      return null
+    // bulk drain returns all misses
+    loadManyDiskCached: async (requests: Array<{ url: string }>) => {
+      bulkDrainCalls.push(requests.length)
+      return requests.map(() => null)
     },
     load: (url: string, _bucket: number, signal: AbortSignal) => {
       loadCalls.push({ url, signal })
@@ -194,12 +192,12 @@ test('scheduler does not use the disk cache lane for network fallback when the d
     scheduler.reconcile(candidates, budget)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    // Only the first candidate goes through the regular path
     assert.equal(loadCalls.length, 1)
     assert.equal(loadCalls[0]?.url, candidates[0]?.url)
-    assert.deepEqual(
-      diskCacheLoadCalls,
-      candidates.slice(1).map((candidate) => candidate.url),
-    )
+    // Bulk drain was called for the remaining candidates (all misses)
+    assert.equal(bulkDrainCalls.length, 1)
+    assert.equal(bulkDrainCalls[0], candidates.length - 1)
     assert.equal(scheduler.inflightSize(), 1)
     scheduler.dispose()
   } finally {
@@ -221,7 +219,9 @@ test('scheduler keeps normal concurrency for avatars missing from disk cache', a
   const loader = {
     isBlocked: () => false,
     block: () => undefined,
-    hasDiskCached: async () => false,
+    // all misses
+    loadManyDiskCached: async (requests: Array<{ url: string }>) =>
+      requests.map(() => null),
     load: (url: string, _bucket: number, signal: AbortSignal) => {
       loadCalls.push({ url, signal })
       return new Promise(() => undefined)
@@ -246,7 +246,7 @@ test('scheduler keeps normal concurrency for avatars missing from disk cache', a
   }
 })
 
-test('scheduler caps disk cache miss probes so IndexedDB cannot starve loading', async () => {
+test('scheduler caps bulk drain batch size so IDB cannot starve regular loading', async () => {
   const restoreDocument = installDocumentStub()
   const candidates = Array.from({ length: 100 }, (_, index) => ({
     pubkey: `node-${index}`,
@@ -256,14 +256,14 @@ test('scheduler caps disk cache miss probes so IndexedDB cannot starve loading',
     priority: index,
     monogram: { label: `Node ${index}`, color: '#7dd3a7' },
   }))
-  const probedUrls: string[] = []
+  const bulkDrainBatches: Array<Array<{ url: string }>> = []
   const loadCalls: Array<{ url: string; signal: AbortSignal }> = []
   const loader = {
     isBlocked: () => false,
     block: () => undefined,
-    hasDiskCached: async (url: string) => {
-      probedUrls.push(url)
-      return false
+    loadManyDiskCached: async (requests: Array<{ url: string }>) => {
+      bulkDrainBatches.push(requests)
+      return requests.map(() => null)
     },
     load: (url: string, _bucket: number, signal: AbortSignal) => {
       loadCalls.push({ url, signal })
@@ -282,11 +282,21 @@ test('scheduler caps disk cache miss probes so IndexedDB cannot starve loading',
     scheduler.reconcile(candidates, budget)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    // Regular path handles concurrency = 1
     assert.equal(loadCalls.length, 1)
-    assert.equal(probedUrls.length, 14)
+    // Each batch is capped at DISK_CACHE_PROBE_BATCH_SIZE = 64
+    for (const batch of bulkDrainBatches) {
+      assert.ok(
+        batch.length <= 64,
+        `batch size ${batch.length} must not exceed DISK_CACHE_PROBE_BATCH_SIZE`,
+      )
+    }
+    // Together the two reconcile calls cover all 99 remaining candidates (1 per regular slot)
+    const allDrainedUrls = bulkDrainBatches.flat().map((r) => r.url)
+    assert.equal(allDrainedUrls.length, candidates.length - 1)
     assert.deepEqual(
-      probedUrls,
-      candidates.slice(1, 15).map((candidate) => candidate.url),
+      allDrainedUrls,
+      candidates.slice(1).map((c) => c.url),
     )
     scheduler.dispose()
   } finally {

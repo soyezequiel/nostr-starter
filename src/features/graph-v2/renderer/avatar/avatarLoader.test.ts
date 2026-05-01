@@ -759,3 +759,131 @@ test('AvatarLoader.load stores successful fetched avatar blobs in IndexedDB disk
     })
   }
 })
+
+// ── loadManyDiskCached ────────────────────────────────────────────────────────
+
+const makeFakeBitmap = () =>
+  ({
+    width: 64,
+    height: 64,
+    close: () => undefined,
+  }) as unknown as ImageBitmap
+
+const makeBulkLoader = ({
+  bulkGetFreshResults,
+  decodeResult,
+}: {
+  bulkGetFreshResults: Array<{ blob: Blob; mimeType: string; byteSize: number } | null>
+  decodeResult?: ImageBitmap
+}) => {
+  const bitmap = decodeResult ?? makeFakeBitmap()
+  return new AvatarLoader({
+    fetchImpl: (async () => {
+      throw new Error('not used')
+    }) as unknown as typeof fetch,
+    createImageBitmapImpl: async () => bitmap,
+    now: () => 0,
+    diskCache: {
+      has: async () => false,
+      get: async () => null,
+      bulkGetFresh: async () => bulkGetFreshResults,
+      put: async () => undefined,
+      delete: async () => undefined,
+    } as AvatarDiskCache,
+  })
+}
+
+test('loadManyDiskCached returns decoded bitmaps for all hits', async () => {
+  const blob = new Blob(['img'], { type: 'image/png' })
+  const loader = makeBulkLoader({
+    bulkGetFreshResults: [
+      { blob, mimeType: 'image/png', byteSize: 4 },
+      null,
+      { blob, mimeType: 'image/png', byteSize: 4 },
+    ],
+  })
+
+  const requests = [
+    { url: 'https://example.com/a.png', bucket: 64 as const },
+    { url: 'https://example.com/b.png', bucket: 64 as const },
+    { url: 'https://example.com/c.png', bucket: 64 as const },
+  ]
+
+  const results = await loader.loadManyDiskCached(requests, new AbortController().signal)
+
+  assert.equal(results.length, 3)
+  assert.ok(results[0] !== null)
+  assert.equal(results[1], null)
+  assert.ok(results[2] !== null)
+})
+
+test('loadManyDiskCached returns all nulls when disk cache is absent', async () => {
+  const loader = new AvatarLoader({
+    fetchImpl: (async () => { throw new Error('not used') }) as unknown as typeof fetch,
+    createImageBitmapImpl: (async () => { throw new Error('not used') }) as unknown as typeof createImageBitmap,
+    now: () => 0,
+    diskCache: null,
+  })
+
+  const results = await loader.loadManyDiskCached(
+    [{ url: 'https://example.com/a.png', bucket: 64 as const }],
+    new AbortController().signal,
+  )
+
+  assert.deepEqual(results, [null])
+})
+
+test('loadManyDiskCached skips unsafe URLs', async () => {
+  const blob = new Blob(['img'], { type: 'image/png' })
+  const bulkGetFreshCalls: number[] = []
+  const loader = new AvatarLoader({
+    fetchImpl: (async () => { throw new Error('not used') }) as unknown as typeof fetch,
+    createImageBitmapImpl: async () => makeFakeBitmap(),
+    now: () => 0,
+    diskCache: {
+      has: async () => false,
+      get: async () => null,
+      bulkGetFresh: async (requests) => {
+        bulkGetFreshCalls.push(requests.length)
+        return requests.map(() => ({ blob, mimeType: 'image/png', byteSize: 4 }))
+      },
+      put: async () => undefined,
+      delete: async () => undefined,
+    } as AvatarDiskCache,
+  })
+
+  const results = await loader.loadManyDiskCached(
+    [
+      { url: 'javascript:alert(1)', bucket: 64 as const },
+      { url: 'https://example.com/safe.png', bucket: 64 as const },
+    ],
+    new AbortController().signal,
+  )
+
+  // Only the safe URL is passed to bulkGetFresh
+  assert.equal(bulkGetFreshCalls[0], 1)
+  assert.equal(results[0], null) // unsafe → null
+  assert.ok(results[1] !== null) // safe → decoded
+})
+
+test('loadManyDiskCached respects abort signal', async () => {
+  const ctrl = new AbortController()
+  ctrl.abort()
+
+  const loader = makeBulkLoader({
+    bulkGetFreshResults: [{ blob: new Blob(['img']), mimeType: 'image/png', byteSize: 4 }],
+  })
+
+  const results = await loader.loadManyDiskCached(
+    [{ url: 'https://example.com/a.png', bucket: 64 as const }],
+    ctrl.signal,
+  )
+
+  assert.deepEqual(results, [null])
+})
+
+test('loadManyDiskCached returns empty array for empty request list', async () => {
+  const loader = makeBulkLoader({ bulkGetFreshResults: [] })
+  const results = await loader.loadManyDiskCached([], new AbortController().signal)
+  assert.deepEqual(results, [])
+})

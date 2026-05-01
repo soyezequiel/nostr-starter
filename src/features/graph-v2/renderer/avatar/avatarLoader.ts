@@ -18,6 +18,7 @@ import {
 import { buildSocialAvatarProxyUrl } from '@/features/graph-v2/renderer/socialAvatarProxy'
 
 const FETCH_TIMEOUT_MS = 8000
+const BULK_DECODE_CONCURRENCY = 16
 const AVATAR_PROXY_FIRST_HOSTS = new Set([
   'cdn.nostr.build',
   'nostr.build',
@@ -276,6 +277,96 @@ export class AvatarLoader {
     }
 
     return this.loadFromDiskCache(url, bucket, signal)
+  }
+
+  public async loadManyDiskCached(
+    requests: Array<{ url: string; bucket: ImageLodBucket }>,
+    signal: AbortSignal,
+  ): Promise<Array<LoadedAvatar | null>> {
+    if (!this.diskCache || requests.length === 0 || signal.aborted) {
+      return requests.map(() => null)
+    }
+
+    const safeRequests = requests.map((r) => ({
+      ...r,
+      safe: isSafeAvatarUrl(r.url),
+    }))
+
+    const diskRequests = safeRequests
+      .filter((r) => r.safe)
+      .map((r) => ({ sourceUrl: r.url, bucket: r.bucket }))
+
+    let records: Array<import('@/features/graph-v2/renderer/avatar/avatarDiskCache').AvatarDiskCacheHit | null>
+    try {
+      records = await this.diskCache.bulkGetFresh(diskRequests, this.now())
+    } catch (err) {
+      traceAvatarFlow('renderer.avatarLoader.bulkDiskCache.fetchFailed', () => ({
+        count: diskRequests.length,
+        reason: extractAvatarLoadFailureReason(err),
+      }))
+      return requests.map(() => null)
+    }
+
+    if (signal.aborted) {
+      return requests.map(() => null)
+    }
+
+    // Map records back to original request indices
+    const hitsByIndex = new Map<number, { blob: Blob; safeIdx: number }>()
+    let safeIdx = 0
+    for (let i = 0; i < safeRequests.length; i++) {
+      if (!safeRequests[i]!.safe) {
+        continue
+      }
+      const record = records[safeIdx]
+      if (record) {
+        hitsByIndex.set(i, { blob: record.blob, safeIdx })
+      }
+      safeIdx++
+    }
+
+    // Decode hits in parallel with a concurrency cap
+    const results: Array<LoadedAvatar | null> = requests.map(() => null)
+    const decodeQueue: Array<{ origIndex: number; blob: Blob; bucket: ImageLodBucket }> = []
+    for (const [origIndex, hit] of hitsByIndex) {
+      decodeQueue.push({
+        origIndex,
+        blob: hit.blob,
+        bucket: requests[origIndex]!.bucket,
+      })
+    }
+
+    await runWithConcurrency(
+      decodeQueue.map(({ origIndex, blob, bucket }) => async () => {
+        if (signal.aborted) {
+          return
+        }
+        try {
+          const loaded = await this.loadViaBlob(blob, bucket, signal, {
+            skipCircularCompose: true,
+          })
+          traceAvatarFlow('renderer.avatarLoader.bulkDiskCache.ready', () => ({
+            url: summarizeAvatarUrl(requests[origIndex]!.url),
+            bucket,
+            bytes: loaded.bytes,
+          }))
+          results[origIndex] = loaded
+        } catch (err) {
+          if (signal.aborted || isAbortError(err)) {
+            return
+          }
+          traceAvatarFlow('renderer.avatarLoader.bulkDiskCache.decodeFailed', () => ({
+            url: summarizeAvatarUrl(requests[origIndex]!.url),
+            bucket,
+            reason: extractAvatarLoadFailureReason(err),
+          }))
+          // Leave null for this entry; caller handles miss
+        }
+      }),
+      BULK_DECODE_CONCURRENCY,
+    )
+
+    return results
   }
 
   public async load(
@@ -589,7 +680,7 @@ export class AvatarLoader {
         return null
       }
 
-      const loaded = await this.loadViaBlob(cached.blob, bucket, signal)
+      const loaded = await this.loadViaBlob(cached.blob, bucket, signal, { skipCircularCompose: true })
       traceAvatarFlow('renderer.avatarLoader.diskCache.ready', () => ({
         url: summarizeAvatarUrl(url),
         bucket,
@@ -669,6 +760,7 @@ export class AvatarLoader {
     blob: Blob,
     bucket: ImageLodBucket,
     signal: AbortSignal,
+    options: { skipCircularCompose?: boolean } = {},
   ): Promise<LoadedAvatar> {
     let raw: ImageBitmap
     try {
@@ -693,6 +785,9 @@ export class AvatarLoader {
         // ignore
       }
       throw new DOMException('aborted', 'AbortError')
+    }
+    if (options.skipCircularCompose) {
+      return { bitmap: raw, bytes: bucket * bucket * 4 }
     }
     const bitmap = await composeCircularBitmap(raw, bucket)
     return { bitmap, bytes: bucket * bucket * 4 }
@@ -821,6 +916,40 @@ const readAvatarHostname = (sourceUrl: string) => {
   } catch {
     return null
   }
+}
+
+const runWithConcurrency = (
+  tasks: Array<() => Promise<void>>,
+  concurrency: number,
+): Promise<void> => {
+  if (tasks.length === 0) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve) => {
+    let next = 0
+    let done = 0
+
+    const run = () => {
+      if (next >= tasks.length) {
+        return
+      }
+      const index = next++
+      void tasks[index]!().then(() => {
+        done++
+        if (done === tasks.length) {
+          resolve()
+        } else {
+          run()
+        }
+      })
+    }
+
+    const initial = Math.min(concurrency, tasks.length)
+    for (let i = 0; i < initial; i++) {
+      run()
+    }
+  })
 }
 
 const loadHtmlImage = (

@@ -29,6 +29,10 @@ export interface AvatarDiskCache {
     bucket: ImageLodBucket,
     now: number,
   ) => Promise<AvatarDiskCacheHit | null>
+  bulkGetFresh: (
+    requests: Array<{ sourceUrl: string; bucket: ImageLodBucket }>,
+    now: number,
+  ) => Promise<Array<AvatarDiskCacheHit | null>>
   put: (input: {
     sourceUrl: string
     bucket: ImageLodBucket
@@ -99,6 +103,44 @@ export const createDexieAvatarDiskCache = (): AvatarDiskCache => {
         mimeType: record.mimeType,
         byteSize: record.byteSize,
       }
+    },
+
+    async bulkGetFresh(requests, now) {
+      if (requests.length === 0) {
+        return []
+      }
+
+      const records = await repository.getManyFresh(requests, now)
+
+      const hits: Array<{ sourceUrl: string; bucket: ImageLodBucket }> = []
+      const results: Array<AvatarDiskCacheHit | null> = records.map(
+        (record, index) => {
+          if (!record) {
+            return null
+          }
+          const req = requests[index]
+          if (req) {
+            hits.push({ sourceUrl: req.sourceUrl, bucket: req.bucket })
+          }
+          traceAvatarFlow('renderer.avatarDiskCache.hit', () => ({
+            sourceUrl: summarizeAvatarUrl(record.sourceUrl),
+            bucket: record.bucket,
+            byteSize: record.byteSize,
+            mimeType: record.mimeType,
+          }))
+          return {
+            blob: record.blob,
+            mimeType: record.mimeType,
+            byteSize: record.byteSize,
+          }
+        },
+      )
+
+      if (hits.length > 0) {
+        void repository.bulkTouch(hits, now).catch(() => {})
+      }
+
+      return results
     },
 
     async put({ sourceUrl, bucket, blob, mimeType, now }) {
