@@ -25,7 +25,10 @@ import type {
   AvatarCandidate,
   AvatarScheduler,
 } from '@/features/graph-v2/renderer/avatar/avatarScheduler'
-import type { PerfBudget } from '@/features/graph-v2/renderer/avatar/perfBudget'
+import {
+  PERF_BUDGET_DOWNGRADE_MS,
+  type PerfBudget,
+} from '@/features/graph-v2/renderer/avatar/perfBudget'
 import {
   DEFAULT_AVATAR_RUNTIME_OPTIONS,
   type AvatarBudget,
@@ -413,6 +416,19 @@ export const resolveAvatarFrameDrawCap = ({
   showAllVisibleImages
     ? Math.max(Math.max(0, Math.floor(baseCap)), Math.max(0, Math.floor(visibleCount)))
     : Math.max(0, Math.floor(baseCap))
+
+export const resolveEffectiveShowAllVisibleImages = ({
+  requestedShowAllVisibleImages,
+  isDegraded,
+  emaFrameMs,
+}: {
+  requestedShowAllVisibleImages: boolean
+  isDegraded: boolean
+  emaFrameMs: number
+}) =>
+  requestedShowAllVisibleImages &&
+  !isDegraded &&
+  (!Number.isFinite(emaFrameMs) || emaFrameMs < PERF_BUDGET_DOWNGRADE_MS)
 
 export const resolveAvatarCacheCap = ({
   baseCap,
@@ -1423,6 +1439,11 @@ export class AvatarOverlayRenderer {
       }
     }
     const adaptiveVisualsActive = snapshot.isDegraded || budget.maxBucket <= 64
+    const showAllVisibleImages = resolveEffectiveShowAllVisibleImages({
+      requestedShowAllVisibleImages: runtimeOptions.showAllVisibleImages,
+      isDegraded: snapshot.isDegraded,
+      emaFrameMs: snapshot.emaFrameMs,
+    })
     return {
       ...budget,
       sizeThreshold: adaptiveVisualsActive
@@ -1442,7 +1463,7 @@ export class AvatarOverlayRenderer {
         ? Math.min(runtimeOptions.fastNodeVelocityThreshold, 180)
         : runtimeOptions.fastNodeVelocityThreshold,
       allowZoomedOutImages: runtimeOptions.allowZoomedOutImages,
-      showAllVisibleImages: runtimeOptions.showAllVisibleImages,
+      showAllVisibleImages,
       maxInteractiveBucket: runtimeOptions.maxInteractiveBucket,
     }
   }

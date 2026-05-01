@@ -9,7 +9,6 @@ import {
   GRAPH_EVENT_KIND_SINGULAR_LABELS,
   type GraphEventActivityLogEntry,
 } from '@/features/graph-v2/events/types'
-import { useReferencedNote } from '@/features/graph-v2/events/referencedNoteCache'
 import { buildActivityPostExternalLinks } from '@/features/graph-v2/ui/activityPostLinks'
 
 const HEX_64_RE = /^[0-9a-f]{64}$/i
@@ -130,19 +129,10 @@ export function SigmaGraphEventDetailPanel({
 }: SigmaGraphEventDetailPanelProps): React.JSX.Element {
   const locale = useLocale()
   const t = useTranslations('sigma.zaps.detail')
-  const shouldFetchReferencedNote =
-    entry.kind === 'quote' || entry.kind === 'comment'
-  const referencedEventId = shouldFetchReferencedNote ? entry.refEventId : null
-  const referencedNote = useReferencedNote(referencedEventId)
   const fromNpub = encodeNpub(entry.fromPubkey)
   const toNpub = encodeNpub(entry.toPubkey)
   const encodedRef = encodeNoteId(entry.refEventId)
   const externalPostLinks = buildActivityPostExternalLinks(entry.refEventId)
-  const readyReferencedEvent =
-    referencedNote.phase === 'ready' ? referencedNote.event : null
-  const referencedAuthorLabel = readyReferencedEvent
-    ? resolveActorLabel(readyReferencedEvent.pubkey)
-    : null
   const inlineText = getInlineText(entry)
   const color = GRAPH_EVENT_KIND_COLORS[entry.kind]
   const summaryText: GraphEventDetailText = {
@@ -250,63 +240,6 @@ export function SigmaGraphEventDetailPanel({
           </section>
         ) : null}
       </div>
-
-      {shouldFetchReferencedNote ? (
-        <section className="sg-zap-detail__post">
-          <header className="sg-zap-detail__post-head">
-            <span className="sg-section-label">
-              {entry.kind === 'quote' ? t('quotedNote') : t('parentNote')}
-            </span>
-            {encodedRef ? (
-              <code className="sg-zap-detail__post-id">{`${encodedRef.slice(0, 18)}...`}</code>
-            ) : null}
-          </header>
-          {!referencedEventId ? (
-            <p className="sg-zap-detail__post-empty">
-              {t('missingReference')}
-            </p>
-          ) : referencedNote.phase === 'loading' ? (
-            <p className="sg-zap-detail__post-empty">{t('loadingReferencedNote')}</p>
-          ) : readyReferencedEvent ? (
-            <article className="sg-zap-detail__post-body">
-              <div className="sg-zap-detail__post-meta">
-                <button
-                  className="sg-zap-detail__post-author"
-                  onClick={() =>
-                    onOpenIdentity(
-                      readyReferencedEvent.pubkey,
-                      referencedAuthorLabel ?? readyReferencedEvent.pubkey,
-                    )
-                  }
-                  type="button"
-                >
-                  {referencedAuthorLabel}
-                </button>
-                <time
-                  dateTime={new Date(
-                    (readyReferencedEvent.created_at ?? 0) * 1_000,
-                  ).toISOString()}
-                >
-                  {readyReferencedEvent.created_at
-                    ? formatTimestamp(readyReferencedEvent.created_at, locale)
-                    : ''}
-                </time>
-              </div>
-              <p className="sg-zap-detail__post-content">
-                {readyReferencedEvent.content?.trim() || t('noTextContent')}
-              </p>
-            </article>
-          ) : referencedNote.phase === 'error' ? (
-            <p className="sg-zap-detail__post-empty sg-zap-detail__post-empty--error">
-              {referencedNote.message ?? t('referencedNoteError')}
-            </p>
-          ) : (
-            <p className="sg-zap-detail__post-empty">
-              {referencedNote.message ?? t('referencedNoteMissing')}
-            </p>
-          )}
-        </section>
-      ) : null}
 
       <div className="sg-zap-detail__actions">
         <button

@@ -1,7 +1,7 @@
 // Lightweight parsers for non-zap graph events. Each parser takes a raw
 // Nostr event and returns a ParsedGraphEvent or null. Parsers are pure: they
-// only read tag metadata. Note bodies for quotes/comments are fetched lazily
-// in the detail panels via referencedNoteCache.
+// only read tag metadata for referenced notes. Detail panels keep references
+// as ids/external links and do not fetch the referenced note body.
 
 import type { ParsedGraphEvent } from '@/features/graph-v2/events/types'
 

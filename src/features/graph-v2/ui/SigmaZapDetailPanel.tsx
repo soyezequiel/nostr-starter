@@ -3,10 +3,6 @@
 import { useLocale, useTranslations } from 'next-intl'
 import { nip19 } from 'nostr-tools'
 
-import {
-  useReferencedNote,
-  type ReferencedNoteState,
-} from '@/features/graph-v2/events/referencedNoteCache'
 import { buildActivityPostExternalLinks } from '@/features/graph-v2/ui/activityPostLinks'
 
 const HEX_64_RE = /^[0-9a-f]{64}$/i
@@ -26,15 +22,6 @@ const encodeNpub = (pubkey: string) => {
   if (!HEX_64_RE.test(pubkey)) return null
   try {
     return nip19.npubEncode(pubkey)
-  } catch {
-    return null
-  }
-}
-
-const encodeNoteId = (eventId: string) => {
-  if (!HEX_64_RE.test(eventId)) return null
-  try {
-    return nip19.noteEncode(eventId)
   } catch {
     return null
   }
@@ -64,8 +51,6 @@ export interface SigmaZapDetailPanelProps {
   onReplay: () => void
   sourceLabel: string
 }
-
-type ZapPostState = ReferencedNoteState
 
 const renderActorButton = (
   pubkey: string,
@@ -99,16 +84,10 @@ export function SigmaZapDetailPanel({
   const locale = useLocale()
   const t = useTranslations('sigma.zaps.detail')
   const zappedEventId = entry.zappedEventId ?? null
-  const post: ZapPostState = useReferencedNote(zappedEventId)
   const fromNpub = encodeNpub(entry.fromPubkey)
   const toNpub = encodeNpub(entry.toPubkey)
-  const noteId = encodeNoteId(zappedEventId ?? '') ?? null
   const receiptId = entry.eventId ?? null
   const externalPostLinks = buildActivityPostExternalLinks(zappedEventId)
-  const readyPostEvent = post.phase === 'ready' ? post.event : null
-  const postAuthorLabel = readyPostEvent
-    ? resolveActorLabel(readyPostEvent.pubkey)
-    : null
 
   return (
     <div className="sg-zap-detail">
@@ -189,52 +168,6 @@ export function SigmaZapDetailPanel({
           </section>
         ) : null}
       </div>
-
-      <section className="sg-zap-detail__post">
-        <header className="sg-zap-detail__post-head">
-          <span className="sg-section-label">{t('zappedPost')}</span>
-          {noteId ? (
-            <code className="sg-zap-detail__post-id">{`${noteId.slice(0, 18)}...`}</code>
-          ) : null}
-        </header>
-        {!zappedEventId ? (
-          <p className="sg-zap-detail__post-empty">
-            {t('profileZap')}
-          </p>
-        ) : post.phase === 'loading' ? (
-          <p className="sg-zap-detail__post-empty">{t('loadingOriginalPost')}</p>
-        ) : readyPostEvent ? (
-          <article className="sg-zap-detail__post-body">
-            <div className="sg-zap-detail__post-meta">
-              <button
-                className="sg-zap-detail__post-author"
-                onClick={() => onOpenIdentity(readyPostEvent.pubkey, postAuthorLabel ?? readyPostEvent.pubkey)}
-                type="button"
-              >
-                {postAuthorLabel}
-              </button>
-              <time
-                dateTime={new Date((readyPostEvent.created_at ?? 0) * 1_000).toISOString()}
-              >
-                {readyPostEvent.created_at
-                  ? formatTimestamp(readyPostEvent.created_at, locale)
-                  : ''}
-              </time>
-            </div>
-            <p className="sg-zap-detail__post-content">
-              {readyPostEvent.content?.trim() || t('noTextContent')}
-            </p>
-          </article>
-        ) : post.phase === 'error' ? (
-          <p className="sg-zap-detail__post-empty sg-zap-detail__post-empty--error">
-            {post.message ?? t('originalPostError')}
-          </p>
-        ) : (
-          <p className="sg-zap-detail__post-empty">
-            {post.message ?? t('originalPostMissing')}
-          </p>
-        )}
-      </section>
 
       <div className="sg-zap-detail__actions">
         <button

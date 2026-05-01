@@ -82,8 +82,8 @@ export interface ParsedGraphEvent {
   toPubkey: string
   createdAt: number
   // Referenced note id, when the activity targets a note (likes, reposts,
-  // quotes, comments, sometimes saves). Used as the lookup key for the lazy
-  // referenced-note cache.
+  // quotes, comments, sometimes saves). The UI keeps this as an id/external
+  // link target and does not fetch the referenced note body.
   refEventId: string | null
   payload: GraphEventPayload
 }

@@ -15,6 +15,7 @@ import {
   resolveAvatarCandidateMaxBucket,
   resolveAvatarLoadConcurrency,
   resolveAvatarRequestedPixels,
+  resolveEffectiveShowAllVisibleImages,
   resolveFastNodeVelocityThresholdPx,
   retainInflightAvatarPubkeys,
   selectAvatarDrawContext,
@@ -470,6 +471,86 @@ test('all visible photos mode lifts frame draw caps to the visible count', () =>
       showAllVisibleImages: false,
     }),
     120,
+  )
+})
+
+test('all visible photos mode stays effective while the performance budget is healthy', () => {
+  assert.equal(
+    resolveEffectiveShowAllVisibleImages({
+      requestedShowAllVisibleImages: true,
+      isDegraded: false,
+      emaFrameMs: 18,
+    }),
+    true,
+  )
+})
+
+test('all visible photos mode is disabled while the performance budget is constrained', () => {
+  assert.equal(
+    resolveEffectiveShowAllVisibleImages({
+      requestedShowAllVisibleImages: true,
+      isDegraded: true,
+      emaFrameMs: 18,
+    }),
+    false,
+  )
+  assert.equal(
+    resolveEffectiveShowAllVisibleImages({
+      requestedShowAllVisibleImages: true,
+      isDegraded: false,
+      emaFrameMs: 40,
+    }),
+    false,
+  )
+  assert.equal(
+    resolveEffectiveShowAllVisibleImages({
+      requestedShowAllVisibleImages: false,
+      isDegraded: false,
+      emaFrameMs: 18,
+    }),
+    false,
+  )
+})
+
+test('degraded effective mode respects the base frame draw cap', () => {
+  const effectiveShowAllVisibleImages = resolveEffectiveShowAllVisibleImages({
+    requestedShowAllVisibleImages: true,
+    isDegraded: true,
+    emaFrameMs: 18,
+  })
+
+  assert.equal(
+    resolveAvatarFrameDrawCap({
+      baseCap: 32,
+      visibleCount: 94,
+      showAllVisibleImages: effectiveShowAllVisibleImages,
+    }),
+    32,
+  )
+})
+
+test('degraded effective mode keeps load and cache on the base budget', () => {
+  const effectiveShowAllVisibleImages = resolveEffectiveShowAllVisibleImages({
+    requestedShowAllVisibleImages: true,
+    isDegraded: false,
+    emaFrameMs: 58.6,
+  })
+
+  assert.equal(
+    resolveAvatarLoadConcurrency({
+      baseConcurrency: 1,
+      visiblePhotoCount: 94,
+      showAllVisibleImages: effectiveShowAllVisibleImages,
+    }),
+    1,
+  )
+  assert.equal(
+    resolveAvatarCacheCap({
+      baseCap: 96,
+      visiblePhotoCount: 94,
+      showAllVisibleImages: effectiveShowAllVisibleImages,
+    }),
+    96,
   )
 })
 
