@@ -25,7 +25,8 @@ import type {
   DebugViewportPosition,
   SigmaLabDebugApi,
 } from '@/features/graph-v2/testing/browserDebug'
-import { GraphEventOverlay } from '@/features/graph-v2/events/graphEventOverlay'
+import type { ActivityOverlayController } from '@/features/graph-v2/events/activityOverlayFactory'
+import { createActivityOverlay } from '@/features/graph-v2/events/activityOverlayFactory'
 import type { ParsedGraphEvent } from '@/features/graph-v2/events/types'
 import type { ParsedZap } from '@/features/graph-v2/zaps/zapParser'
 import { resolveActivityOverlayCssPosition } from '@/features/graph-v2/ui/activityOverlayPosition'
@@ -180,7 +181,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
   const containerRef = useRef<HTMLDivElement | null>(null)
   const backdropCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const adapterRef = useRef<SigmaRendererAdapter | null>(null)
-  const overlayRef = useRef<GraphEventOverlay | null>(null)
+  const overlayRef = useRef<ActivityOverlayController | null>(null)
   const sceneRef = useRef(scene)
   const dragInfluenceTuningRef = useRef(dragInfluenceTuning)
   const physicsTuningRef = useRef(physicsTuning)
@@ -239,7 +240,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
     }
 
     let adapter: SigmaRendererAdapter | null = null
-    let overlay: GraphEventOverlay | null = null
+    let overlay: ActivityOverlayController | null = null
     let pendingMountFrame: number | null = null
     let detachOverlayRenderTicks = () => {}
     let disposed = false
@@ -280,7 +281,7 @@ export const SigmaCanvasHost = forwardRef<SigmaCanvasHostHandle, SigmaCanvasHost
       adapter = nextAdapter
       adapterRef.current = nextAdapter
 
-      const nextOverlay = new GraphEventOverlay(container, (pubkey) => {
+      const nextOverlay = createActivityOverlay(container, (pubkey) => {
         return resolveActivityOverlayCssPosition(adapter, pubkey)
       })
       overlay = nextOverlay

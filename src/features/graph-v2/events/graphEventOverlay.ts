@@ -11,6 +11,8 @@ const TAIL_COUNT = 9
 const ROUTE_WIDTH_PX = 1.15
 const ZAP_HOT_COLOR = '#fff4bf'
 const ZAP_SHADOW_COLOR = '#ff5da2'
+// Cap DPR so 4K screens don't quadruple fill cost
+const MAX_DPR = 2
 
 export interface ViewportPositionResolver {
   (pubkey: string): { x: number; y: number } | null
@@ -30,6 +32,12 @@ interface ActiveGraphEvent {
   arrivalOnly: boolean
 }
 
+export interface OverlayPerfSnapshot {
+  frameMsEma: number
+  peakAnimCount: number
+  activeAnimCount: number
+}
+
 export function satsToRadiusPx(sats: number): number {
   if (!Number.isFinite(sats) || sats <= 0) return MIN_RADIUS_PX
   const raw = 2.4 + Math.log10(sats + 1) * 0.72
@@ -46,6 +54,16 @@ export class GraphEventOverlay {
   private paused = false
   private pausedAtMs: number | null = null
   private devicePixelRatio = 1
+
+  // Phase 0: perf instrumentation
+  private lastTickMs = 0
+  private frameMsEma = 0
+  private peakAnimCount = 0
+  static perfEnabled = false
+
+  // Phase 1: gradient cache (keyed by rounded glowRadius, cleared on resize)
+  private radialGradientCache = new Map<string, CanvasGradient>()
+  private linearGradientCache = new Map<string, CanvasGradient>()
 
   constructor(
     private readonly container: HTMLElement,
@@ -173,6 +191,17 @@ export class GraphEventOverlay {
     if (this.canvas.parentElement === this.container) {
       this.container.removeChild(this.canvas)
     }
+    this.radialGradientCache.clear()
+    this.linearGradientCache.clear()
+  }
+
+  // Phase 0: expose perf snapshot for instrumentation
+  public getPerfSnapshot(): OverlayPerfSnapshot {
+    return {
+      frameMsEma: this.frameMsEma,
+      peakAnimCount: this.peakAnimCount,
+      activeAnimCount: this.animations.length,
+    }
   }
 
   private enqueue(input: {
@@ -282,11 +311,15 @@ export class GraphEventOverlay {
 
   private resize(): void {
     const rect = this.container.getBoundingClientRect()
-    const dpr = Math.max(window.devicePixelRatio || 1, 1)
+    // Phase 1: cap DPR at MAX_DPR to avoid quadrupling fill cost on 4K screens
+    const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), MAX_DPR)
     this.devicePixelRatio = dpr
     this.canvas.width = Math.max(1, Math.floor(rect.width * dpr))
     this.canvas.height = Math.max(1, Math.floor(rect.height * dpr))
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // Gradient objects are tied to canvas coordinates — must be invalidated on resize
+    this.radialGradientCache.clear()
+    this.linearGradientCache.clear()
   }
 
   private ensureTicking(): void {
@@ -297,6 +330,16 @@ export class GraphEventOverlay {
   private readonly tick = (timestamp: number) => {
     this.rafId = null
     if (this.disposed || this.paused) return
+
+    // Phase 0: frame time EMA (only when perf tracking enabled)
+    if (GraphEventOverlay.perfEnabled && this.lastTickMs > 0) {
+      const frameMs = timestamp - this.lastTickMs
+      this.frameMsEma = this.frameMsEma * 0.9 + frameMs * 0.1
+    }
+    this.lastTickMs = timestamp
+    if (GraphEventOverlay.perfEnabled) {
+      this.peakAnimCount = Math.max(this.peakAnimCount, this.animations.length)
+    }
 
     this.renderFrame(timestamp)
     if (this.animations.length > 0) {
@@ -482,6 +525,7 @@ export class GraphEventOverlay {
     drawLabel(ctx, anim.label, to.x, to.y, 0, -1, progress, lifeAlpha, color)
   }
 
+  // Phase 1: batch tail sparks into 2 fill calls (by color) instead of 9 individual fills
   private drawZapTail(
     ctx: CanvasRenderingContext2D,
     from: { x: number; y: number },
@@ -498,15 +542,22 @@ export class GraphEventOverlay {
     const tailEndY = from.y + dy * eased
     const tailStartX = from.x + dx * tailStart
     const tailStartY = from.y + dy * tailStart
-    const gradient = ctx.createLinearGradient(
-      tailStartX,
-      tailStartY,
-      tailEndX,
-      tailEndY,
-    )
-    gradient.addColorStop(0, 'rgba(242, 153, 74, 0)')
-    gradient.addColorStop(0.68, 'rgba(255, 216, 107, 0.42)')
-    gradient.addColorStop(1, 'rgba(255, 246, 207, 0.98)')
+
+    // Phase 1: cache linear gradient by bucketed endpoints (1px granularity)
+    const gKey = `${Math.round(tailStartX)}:${Math.round(tailStartY)}:${Math.round(tailEndX)}:${Math.round(tailEndY)}`
+    let gradient = this.linearGradientCache.get(gKey)
+    if (!gradient) {
+      gradient = ctx.createLinearGradient(tailStartX, tailStartY, tailEndX, tailEndY)
+      gradient.addColorStop(0, 'rgba(242, 153, 74, 0)')
+      gradient.addColorStop(0.68, 'rgba(255, 216, 107, 0.42)')
+      gradient.addColorStop(1, 'rgba(255, 246, 207, 0.98)')
+      // Bounded cache: keep at most 64 entries
+      if (this.linearGradientCache.size >= 64) {
+        const firstKey = this.linearGradientCache.keys().next().value
+        if (firstKey !== undefined) this.linearGradientCache.delete(firstKey)
+      }
+      this.linearGradientCache.set(gKey, gradient)
+    }
 
     ctx.globalAlpha = lifeAlpha
     ctx.strokeStyle = gradient
@@ -517,27 +568,38 @@ export class GraphEventOverlay {
     ctx.lineTo(tailEndX, tailEndY)
     ctx.stroke()
 
+    // Phase 1: batch sparks into 2 fill calls grouped by color
+    const baseAlpha = 0.28 * lifeAlpha * (1 - progress * 0.28)
+
+    // Even-indexed sparks — zap color
+    ctx.fillStyle = GRAPH_EVENT_KIND_COLORS.zap
+    ctx.beginPath()
     for (let index = TAIL_COUNT; index >= 1; index -= 1) {
+      if (index % 2 !== 0) continue
       const t = Math.max(0, eased - index * 0.018)
       const sparkX = from.x + dx * t
       const sparkY = from.y + dy * t
-      const alpha =
-        ((TAIL_COUNT - index + 1) / TAIL_COUNT) *
-        0.28 *
-        lifeAlpha *
-        (1 - progress * 0.28)
-      const radius = Math.max(
-        0.85,
-        anim.radiusPx * (0.2 + (TAIL_COUNT - index) * 0.035),
-      )
-
-      ctx.globalAlpha = alpha
-      ctx.fillStyle =
-        index % 2 === 0 ? GRAPH_EVENT_KIND_COLORS.zap : ZAP_SHADOW_COLOR
-      ctx.beginPath()
+      const radius = Math.max(0.85, anim.radiusPx * (0.2 + (TAIL_COUNT - index) * 0.035))
+      ctx.globalAlpha = ((TAIL_COUNT - index + 1) / TAIL_COUNT) * baseAlpha
+      ctx.moveTo(sparkX + radius, sparkY)
       ctx.arc(sparkX, sparkY, radius, 0, Math.PI * 2)
-      ctx.fill()
     }
+    ctx.fill()
+
+    // Odd-indexed sparks — shadow color
+    ctx.fillStyle = ZAP_SHADOW_COLOR
+    ctx.beginPath()
+    for (let index = TAIL_COUNT; index >= 1; index -= 1) {
+      if (index % 2 === 0) continue
+      const t = Math.max(0, eased - index * 0.018)
+      const sparkX = from.x + dx * t
+      const sparkY = from.y + dy * t
+      const radius = Math.max(0.85, anim.radiusPx * (0.2 + (TAIL_COUNT - index) * 0.035))
+      ctx.globalAlpha = ((TAIL_COUNT - index + 1) / TAIL_COUNT) * baseAlpha
+      ctx.moveTo(sparkX + radius, sparkY)
+      ctx.arc(sparkX, sparkY, radius, 0, Math.PI * 2)
+    }
+    ctx.fill()
   }
 
   private drawEnergyCore(
@@ -549,10 +611,21 @@ export class GraphEventOverlay {
     flicker: number,
   ): void {
     const glowRadius = radiusPx * (3.3 + flicker * 0.55)
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius)
-    glow.addColorStop(0, 'rgba(255, 246, 207, 0.95)')
-    glow.addColorStop(0.32, 'rgba(255, 216, 107, 0.58)')
-    glow.addColorStop(1, 'rgba(242, 153, 74, 0)')
+
+    // Phase 1: cache radial gradient by bucketed position+radius (avoids GC per frame)
+    const rKey = `${Math.round(x)}:${Math.round(y)}:${Math.round(glowRadius * 2)}`
+    let glow = this.radialGradientCache.get(rKey)
+    if (!glow) {
+      glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius)
+      glow.addColorStop(0, 'rgba(255, 246, 207, 0.95)')
+      glow.addColorStop(0.32, 'rgba(255, 216, 107, 0.58)')
+      glow.addColorStop(1, 'rgba(242, 153, 74, 0)')
+      if (this.radialGradientCache.size >= 64) {
+        const firstKey = this.radialGradientCache.keys().next().value
+        if (firstKey !== undefined) this.radialGradientCache.delete(firstKey)
+      }
+      this.radialGradientCache.set(rKey, glow)
+    }
 
     ctx.globalAlpha = 0.88 * lifeAlpha
     ctx.beginPath()
@@ -655,6 +728,9 @@ function drawPulse(
   ctx.restore()
 }
 
+// Phase 1: removed ctx.shadowBlur — replaced with double-fill glow technique.
+// shadowBlur forces CPU rasterisation; two fills with different scales is cheaper.
+
 function drawHeart(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -665,17 +741,33 @@ function drawHeart(
 ): void {
   ctx.save()
   ctx.translate(x, y)
-  ctx.scale(size / 16, size / 16)
-  ctx.globalAlpha = alpha
   ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 10
+
+  // Outer glow via larger semi-transparent copy
+  ctx.save()
+  const glowScale = (size + 5) / 16
+  ctx.scale(glowScale, glowScale)
+  ctx.globalAlpha = alpha * 0.22
   ctx.beginPath()
   ctx.moveTo(0, 6)
   ctx.bezierCurveTo(-13, -4, -7, -14, 0, -7)
   ctx.bezierCurveTo(7, -14, 13, -4, 0, 6)
   ctx.closePath()
   ctx.fill()
+  ctx.restore()
+
+  // Main shape
+  ctx.save()
+  ctx.scale(size / 16, size / 16)
+  ctx.globalAlpha = alpha
+  ctx.beginPath()
+  ctx.moveTo(0, 6)
+  ctx.bezierCurveTo(-13, -4, -7, -14, 0, -7)
+  ctx.bezierCurveTo(7, -14, 13, -4, 0, 6)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+
   ctx.restore()
 }
 
@@ -694,12 +786,17 @@ function drawRepostRing(
   ctx.rotate(rotation)
   ctx.globalAlpha = alpha
   ctx.strokeStyle = color
-  ctx.lineWidth = 1.6
-  ctx.shadowColor = color
-  ctx.shadowBlur = 8
+  ctx.lineWidth = 2.8 // Phase 1: thicker stroke instead of shadowBlur glow
   ctx.beginPath()
   ctx.arc(0, 0, size, Math.PI * 0.12, Math.PI * 1.42)
   ctx.stroke()
+  // Inner stroke for depth (replaces shadowBlur)
+  ctx.globalAlpha = alpha * 0.35
+  ctx.lineWidth = 5.5
+  ctx.stroke()
+  // Arrow head
+  ctx.globalAlpha = alpha
+  ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(size + 1, -1)
   ctx.lineTo(size + 5, -5)
@@ -720,10 +817,24 @@ function drawBookmark(
 ): void {
   ctx.save()
   ctx.translate(x, y)
+
+  // Glow via wider stroke outline
+  ctx.strokeStyle = color
+  ctx.lineWidth = 5
+  ctx.globalAlpha = alpha * 0.2
+  bookmarkPath(ctx, size)
+  ctx.stroke()
+
+  // Main fill
   ctx.globalAlpha = alpha
   ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 8
+  bookmarkPath(ctx, size)
+  ctx.fill()
+
+  ctx.restore()
+}
+
+function bookmarkPath(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.beginPath()
   ctx.moveTo(-size * 0.55, -size)
   ctx.lineTo(size * 0.55, -size)
@@ -731,8 +842,6 @@ function drawBookmark(
   ctx.lineTo(0, size * 0.46)
   ctx.lineTo(-size * 0.55, size)
   ctx.closePath()
-  ctx.fill()
-  ctx.restore()
 }
 
 function drawQuoteMark(
@@ -747,9 +856,16 @@ function drawQuoteMark(
   ctx.font = '700 18px Georgia, serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.shadowColor = color
-  ctx.shadowBlur = 8
   ctx.fillStyle = color
+
+  // Glow via second draw with larger blur-like offset
+  ctx.globalAlpha = alpha * 0.25
+  ctx.font = '700 24px Georgia, serif'
+  ctx.fillText('"', x, y + 1)
+
+  // Main draw
+  ctx.globalAlpha = alpha
+  ctx.font = '700 18px Georgia, serif'
   ctx.fillText('"', x, y + 1)
   ctx.restore()
 }
@@ -769,10 +885,23 @@ function drawCommentBubble(
   const top = y - height / 2
 
   ctx.save()
+
+  // Glow via wider stroke outline (replaces shadowBlur)
+  ctx.strokeStyle = color
+  ctx.lineWidth = 5
+  ctx.globalAlpha = alpha * 0.2
+  roundedRectPath(ctx, left, top, width, height, radius)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(x - 2, y + height / 2 - 1)
+  ctx.lineTo(x + 4, y + height / 2 + 5)
+  ctx.lineTo(x + 5, y + height / 2 - 1)
+  ctx.closePath()
+  ctx.stroke()
+
+  // Main fill
   ctx.globalAlpha = alpha
   ctx.fillStyle = color
-  ctx.shadowColor = color
-  ctx.shadowBlur = 8
   roundedRectPath(ctx, left, top, width, height, radius)
   ctx.fill()
   ctx.beginPath()
@@ -781,6 +910,7 @@ function drawCommentBubble(
   ctx.lineTo(x + 5, y + height / 2 - 1)
   ctx.closePath()
   ctx.fill()
+
   ctx.restore()
 }
 
@@ -822,15 +952,24 @@ function drawLabel(
   if (labelAlpha <= 0.02 || !label) return
 
   const offset = 12
+  const lx = x + nx * offset
+  const ly = y + ny * offset - 4
+
   ctx.save()
-  ctx.globalAlpha = labelAlpha
   ctx.font = '600 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.75)'
-  ctx.shadowBlur = 5
+
+  // Phase 1: replace shadowBlur with dark stroke outline for readability
+  ctx.globalAlpha = labelAlpha * 0.7
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)'
+  ctx.lineWidth = 3
+  ctx.lineJoin = 'round'
+  ctx.strokeText(label, lx, ly)
+
+  ctx.globalAlpha = labelAlpha
   ctx.fillStyle = color
-  ctx.fillText(label, x + nx * offset, y + ny * offset - 4)
+  ctx.fillText(label, lx, ly)
   ctx.restore()
 }
 
