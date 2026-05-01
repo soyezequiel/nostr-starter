@@ -41,6 +41,11 @@ interface RecentZapReplayCoverage {
   updatedAt: number
 }
 
+export interface RecentZapReplayFetchRange {
+  since: number
+  until: number
+}
+
 export interface RecentZapReplaySnapshot {
   phase: RecentZapReplayPhase
   stage: RecentZapReplayStage
@@ -366,6 +371,100 @@ function writeReplayCoverage({
   } catch {
     // Cache metadata is an optimization. Replay still works from fresh relay data.
   }
+}
+
+function appendReplayFetchRange(
+  ranges: RecentZapReplayFetchRange[],
+  since: number,
+  until: number,
+): void {
+  if (since <= until) {
+    ranges.push({ since, until })
+  }
+}
+
+export function buildRecentZapReplayFetchRanges({
+  requestedSince,
+  requestedUntil,
+  coverage,
+  includeFreshTail,
+}: {
+  requestedSince: number
+  requestedUntil: number
+  coverage: Pick<RecentZapReplayCoverage, 'coveredFrom' | 'coveredUntil'> | null
+  includeFreshTail: boolean
+}): RecentZapReplayFetchRange[] {
+  if (requestedSince > requestedUntil) {
+    return []
+  }
+
+  if (!coverage) {
+    return [{ since: requestedSince, until: requestedUntil }]
+  }
+
+  const overlapsRequestedWindow =
+    coverage.coveredUntil >= requestedSince &&
+    coverage.coveredFrom <= requestedUntil
+
+  if (!overlapsRequestedWindow) {
+    return [{ since: requestedSince, until: requestedUntil }]
+  }
+
+  const ranges: RecentZapReplayFetchRange[] = []
+
+  appendReplayFetchRange(
+    ranges,
+    requestedSince,
+    Math.min(requestedUntil, coverage.coveredFrom - 1),
+  )
+
+  if (includeFreshTail) {
+    appendReplayFetchRange(
+      ranges,
+      Math.max(requestedSince, coverage.coveredUntil + 1),
+      requestedUntil,
+    )
+  }
+
+  return ranges
+}
+
+function mergeReplayCoverageAfterFetch({
+  coverage,
+  fetchRanges,
+}: {
+  coverage: Pick<RecentZapReplayCoverage, 'coveredFrom' | 'coveredUntil'> | null
+  fetchRanges: readonly RecentZapReplayFetchRange[]
+}): Pick<RecentZapReplayCoverage, 'coveredFrom' | 'coveredUntil'> | null {
+  if (fetchRanges.length === 0) {
+    return coverage
+      ? {
+          coveredFrom: coverage.coveredFrom,
+          coveredUntil: coverage.coveredUntil,
+        }
+      : null
+  }
+
+  let coveredFrom = coverage?.coveredFrom ?? fetchRanges[0].since
+  let coveredUntil = coverage?.coveredUntil ?? fetchRanges[0].until
+
+  for (const range of fetchRanges) {
+    coveredFrom = Math.min(coveredFrom, range.since)
+    coveredUntil = Math.max(coveredUntil, range.until)
+  }
+
+  return { coveredFrom, coveredUntil }
+}
+
+function isTimestampInFetchRanges(
+  timestamp: number,
+  ranges: readonly RecentZapReplayFetchRange[],
+  clockDriftSeconds: number,
+): boolean {
+  return ranges.some(
+    (range) =>
+      timestamp >= range.since && timestamp <= range.until + clockDriftSeconds,
+  )
 }
 
 async function runWithConcurrencyLimit<T>(
@@ -846,7 +945,9 @@ export function useRecentZapReplay({
         const repositories = await getZapReplayRepositories()
         const storedCoverage = readReplayCoverage(targetSignature, targets)
         const reusableCoverage =
-          storedCoverage && storedCoverage.coveredUntil >= requestedSince
+          storedCoverage &&
+          storedCoverage.coveredUntil >= requestedSince &&
+          storedCoverage.coveredFrom <= requestedUntil
             ? storedCoverage
             : null
         const replayUntil =
@@ -855,11 +956,17 @@ export function useRecentZapReplay({
             : requestedUntil
         const replaySince =
           reusableCoverage && !forceRefresh
-            ? Math.max(
-                reusableCoverage.coveredFrom,
-                replayUntil - lookbackSeconds,
-              )
+            ? Math.max(reusableCoverage.coveredFrom, requestedSince)
             : requestedSince
+        const fetchRanges =
+          cacheOnlyReplay && !forceRefresh
+            ? []
+            : buildRecentZapReplayFetchRanges({
+                requestedSince,
+                requestedUntil,
+                coverage: reusableCoverage,
+                includeFreshTail: forceRefresh,
+              })
 
         const cachedBeforeFetch = await findCachedReplayZaps({
           repositories,
@@ -907,16 +1014,16 @@ export function useRecentZapReplay({
           return
         }
 
-
-
-        const fetchSince =
-          reusableCoverage &&
-          reusableCoverage.coveredFrom <= requestedSince &&
-          reusableCoverage.coveredUntil >= requestedSince
-            ? reusableCoverage.coveredUntil + 1
-            : requestedSince
-        const shouldFetch = fetchSince <= requestedUntil
-        const batches = shouldFetch ? chunk(targets, RECENT_ZAP_REPLAY_BATCH_SIZE) : []
+        const batches =
+          fetchRanges.length > 0
+            ? chunk(targets, RECENT_ZAP_REPLAY_BATCH_SIZE)
+            : []
+        const fetchJobs = fetchRanges.flatMap((range) =>
+          batches.map((batch) => ({ range, batch })),
+        )
+        const shouldFetch = fetchJobs.length > 0
+        const cacheHasFreshTail =
+          !reusableCoverage || reusableCoverage.coveredUntil >= requestedUntil
         const eventsById = new Map<string, NDKEvent>()
         let timedOutBatchCount = 0
 
@@ -925,13 +1032,15 @@ export function useRecentZapReplay({
           stage: shouldFetch ? 'collecting' : 'done',
           playbackPaused: playbackPausedRef.current,
           message: shouldFetch
-            ? forceRefresh && reusableCoverage
-              ? `Actualizando zaps desde cache: descargando lo faltante desde el ultimo corte.`
+            ? reusableCoverage
+              ? `Reutilizando cache: descargando solo el rango faltante para ${replayWindowText}.`
               : `Buscando zaps de ${replayWindowText} para ${targets.length} nodos visibles...`
-            : `Cache al dia: reproduciendo ${cachedBeforeFetch.length} zaps guardados.`,
+            : cacheHasFreshTail
+              ? `Cache al dia: reproduciendo ${cachedBeforeFetch.length} zaps guardados.`
+              : `Cache reutilizado: reproduciendo ${cachedBeforeFetch.length} zaps guardados. Usa Actualizar para buscar zaps nuevos.`,
           targetCount: targets.length,
           truncatedTargetCount: targetInfo.truncatedTargetCount,
-          batchCount: batches.length,
+          batchCount: fetchJobs.length,
           completedBatchCount: 0,
           timedOutBatchCount: 0,
           cachedCount: cachedBeforeFetch.length,
@@ -955,24 +1064,23 @@ export function useRecentZapReplay({
           targetCount: targets.length,
           truncatedTargetCount: targetInfo.truncatedTargetCount,
           cachedCount: cachedBeforeFetch.length,
-          batchCount: batches.length,
-          since: fetchSince,
-          until: requestedUntil,
+          batchCount: fetchJobs.length,
+          fetchRanges,
           requestedSince,
           requestedUntil,
         })
 
         const ndk = await connectNDK()
         await runWithConcurrencyLimit(
-          batches,
+          fetchJobs,
           RECENT_ZAP_REPLAY_MAX_CONCURRENCY,
-          async (batch) => {
+          async ({ range, batch }) => {
             if (disposed) return
             const batchResult = await collectZapReplayBatch({
               ndk,
               batch,
-              since: fetchSince,
-              until: requestedUntil + 60,
+              since: range.since,
+              until: range.until + 60,
             })
             if (disposed) return
             if (batchResult.timedOut) {
@@ -984,7 +1092,7 @@ export function useRecentZapReplay({
             setSnapshot((current) => ({
               ...current,
               completedBatchCount: Math.min(
-                batches.length,
+                fetchJobs.length,
                 current.completedBatchCount + 1,
               ),
               timedOutBatchCount,
@@ -1002,7 +1110,7 @@ export function useRecentZapReplay({
         setSnapshot((current) => ({
           ...current,
           stage: 'decoding',
-          completedBatchCount: batches.length,
+          completedBatchCount: fetchJobs.length,
           timedOutBatchCount,
           message: `Guardando ${eventsById.size} recibos nuevos de zap en cache...`,
         }))
@@ -1012,7 +1120,7 @@ export function useRecentZapReplay({
           .map((event) => parseZapReceiptEvent(toRawZapReceiptEvent(event)))
           .filter((zap): zap is ParsedZap => zap !== null)
           // Use the clock drift buffer here too
-          .filter((zap) => zap.createdAt >= fetchSince && zap.createdAt <= requestedUntil + 60)
+          .filter((zap) => isTimestampInFetchRanges(zap.createdAt, fetchRanges, 60))
           .sort((left, right) => {
             if (left.createdAt !== right.createdAt) {
               return left.createdAt - right.createdAt
@@ -1027,13 +1135,20 @@ export function useRecentZapReplay({
           fetchedAt: Date.now(),
         })
 
+        const mergedCoverage = mergeReplayCoverageAfterFetch({
+          coverage: reusableCoverage,
+          fetchRanges,
+        })
+
         if (timedOutBatchCount === 0) {
-          writeReplayCoverage({
-            targetSignature,
-            targets,
-            coveredFrom: requestedSince,
-            coveredUntil: requestedUntil,
-          })
+          if (mergedCoverage) {
+            writeReplayCoverage({
+              targetSignature,
+              targets,
+              coveredFrom: mergedCoverage.coveredFrom,
+              coveredUntil: mergedCoverage.coveredUntil,
+            })
+          }
         }
 
         if (disposed) return

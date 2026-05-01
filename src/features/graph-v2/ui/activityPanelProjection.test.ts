@@ -111,3 +111,33 @@ test('projectActivityPanelEntries does not keep stale removed entries', () => {
   assert.equal(next[0].id, 'graph-event:1')
   assert.equal(next[0], first[1])
 })
+
+test('projectActivityPanelEntries hides quote and comment previews when disabled', () => {
+  const entries = projectActivityPanelEntries(
+    baseEntries,
+    resolveActorLabel,
+    [],
+    { showTextPreviews: false },
+  )
+
+  assert.equal(entries[0].text, 'zap note')
+  assert.equal(entries[1].text, '')
+})
+
+test('projectActivityPanelEntries updates entries when text previews are enabled again', () => {
+  const hidden = projectActivityPanelEntries(
+    baseEntries,
+    resolveActorLabel,
+    [],
+    { showTextPreviews: false },
+  )
+  const visible = projectActivityPanelEntries(
+    baseEntries,
+    resolveActorLabel,
+    hidden,
+    { showTextPreviews: true },
+  )
+
+  assert.notEqual(visible[1], hidden[1])
+  assert.equal(visible[1].text, 'quoted text')
+})

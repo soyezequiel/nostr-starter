@@ -1414,6 +1414,8 @@ type EdgeReducerHarness = {
     }
   }
   draggedNodePubkey: string | null
+  draggedNodeEdgeIds: Set<string> | null
+  refreshDraggedNodeEdgeIds: (_pubkey: string) => void
   draggedNodeFocus: { pubkey: string | null; neighbors: Set<string> }
   currentHoverFocus: { pubkey: string | null; neighbors: Set<string> }
   selectedSceneFocus: { pubkey: string | null; neighbors: Set<string> }
@@ -3389,6 +3391,54 @@ test('highlight transitions cannot start while node drag is active', async () =>
   assert.equal(scheduleCalls, 0)
 })
 
+test('renderer focus transition is skipped for dense scenes', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  let scheduleCalls = 0
+  const adapter = new SigmaRendererAdapter() as unknown as {
+    renderStore: {
+      getGraph: () => {
+        order: number
+        size: number
+      }
+    }
+    highlightTransition: unknown
+    startRendererFocusTransition: (
+      from: { pubkey: string | null; neighbors: Set<string> },
+      to: { pubkey: string | null; neighbors: Set<string> },
+    ) => void
+  }
+
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    scheduleCalls += 1
+    void callback
+    return scheduleCalls
+  }) as typeof requestAnimationFrame
+
+  try {
+    adapter.renderStore = {
+      getGraph: () => ({
+        order: 1600,
+        size: 1000,
+      }),
+    }
+    adapter.highlightTransition = null
+
+    adapter.startRendererFocusTransition(
+      { pubkey: null, neighbors: new Set() },
+      { pubkey: 'alice', neighbors: new Set(['bob']) },
+    )
+
+    assert.equal(adapter.highlightTransition, null)
+    assert.equal(scheduleCalls, 0)
+  } finally {
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+  }
+})
+
 test('motion settle timers use render-only scheduling', async () => {
   const { SigmaRendererAdapter } = await import(
     '@/features/graph-v2/renderer/SigmaRendererAdapter'
@@ -3839,6 +3889,130 @@ test('edge reducer hides non first-order edges while preserving dragged edges', 
   assert.equal(firstOrder.size, baseEdge.size)
   assert.equal(firstOrder.zIndex, baseEdge.zIndex)
   assert.equal(unrelated.hidden, true)
+})
+
+test('edge reducer uses cached dragged-node edge ids instead of endpoint lookups', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness & {
+    renderStore: {
+      getGraph: () => {
+        hasNode: (_pubkey: string) => boolean
+        edges: (_pubkey: string) => string[]
+      }
+    }
+  }
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+  let endpointLookupCount = 0
+
+  adapter.renderStore = {
+    getGraph: () => ({
+      hasNode: (pubkey) => pubkey === 'A',
+      edges: (pubkey) => (pubkey === 'A' ? ['A->B'] : []),
+    }),
+  }
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: () => {
+        endpointLookupCount += 1
+        return true
+      },
+      source: () => {
+        endpointLookupCount += 1
+        throw new Error('drag edge reducer should not read source endpoints')
+      },
+      target: () => {
+        endpointLookupCount += 1
+        throw new Error('drag edge reducer should not read target endpoints')
+      },
+    }),
+  }
+  adapter.draggedNodePubkey = 'A'
+  adapter.refreshDraggedNodeEdgeIds('A')
+
+  const firstOrder = adapter.edgeReducer('A->B', baseEdge)
+  const unrelated = adapter.edgeReducer('C->D', baseEdge)
+
+  assert.equal(firstOrder.hidden, false)
+  assert.equal(unrelated.hidden, true)
+  assert.equal(endpointLookupCount, 0)
+})
+
+test('edge reducer uses cached renderer focus edge ids instead of endpoint lookups', async () => {
+  const { SigmaRendererAdapter } = await import(
+    '@/features/graph-v2/renderer/SigmaRendererAdapter'
+  )
+
+  const adapter = new SigmaRendererAdapter() as unknown as EdgeReducerHarness & {
+    renderStore: {
+      getGraph: () => {
+        hasNode: (_pubkey: string) => boolean
+        edges: (_pubkey: string) => string[]
+      }
+    }
+  }
+  const baseEdge = {
+    size: 1,
+    color: '#64b5ff',
+    hidden: false,
+    label: null,
+    weight: 1,
+    isDimmed: false,
+    touchesFocus: false,
+    zIndex: 1,
+  }
+  let endpointLookupCount = 0
+
+  adapter.renderStore = {
+    getGraph: () => ({
+      hasNode: (pubkey) => pubkey === 'A',
+      edges: (pubkey) => (pubkey === 'A' ? ['A->B'] : []),
+    }),
+  }
+  adapter.sigma = {
+    getGraph: () => ({
+      hasEdge: () => {
+        endpointLookupCount += 1
+        return true
+      },
+      source: () => {
+        endpointLookupCount += 1
+        throw new Error('focus edge reducer should not read source endpoints')
+      },
+      target: () => {
+        endpointLookupCount += 1
+        throw new Error('focus edge reducer should not read target endpoints')
+      },
+    }),
+  }
+  adapter.draggedNodePubkey = null
+  adapter.currentHoverFocus = {
+    pubkey: 'A',
+    neighbors: new Set(['B']),
+  }
+  adapter.selectedSceneFocus = {
+    pubkey: null,
+    neighbors: new Set(),
+  }
+
+  const firstOrder = adapter.edgeReducer('A->B', baseEdge)
+  const unrelated = adapter.edgeReducer('C->D', baseEdge)
+
+  assert.equal(firstOrder.hidden, false)
+  assert.ok(firstOrder.size > baseEdge.size)
+  assert.ok(unrelated.size < firstOrder.size)
+  assert.equal(endpointLookupCount, 0)
 })
 
 test('edge reducer preserves dragged-node incident edges outside stale focus neighbors', async () => {

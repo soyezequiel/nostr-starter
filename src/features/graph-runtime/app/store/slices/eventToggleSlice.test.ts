@@ -20,3 +20,17 @@ test('activity external node auto-add is disabled by default and can be toggled'
   store.getState().setAutoAddExternalActivityNodes(false)
   assert.equal(store.getState().autoAddExternalActivityNodes, false)
 })
+
+test('activity text previews are disabled by default and can be toggled', () => {
+  const store = createStore<EventToggleSlice>()((...args) => ({
+    ...createEventToggleSlice(...args),
+  }))
+
+  assert.equal(store.getState().showActivityTextPreviews, false)
+
+  store.getState().setShowActivityTextPreviews(true)
+  assert.equal(store.getState().showActivityTextPreviews, true)
+
+  store.getState().setShowActivityTextPreviews(false)
+  assert.equal(store.getState().showActivityTextPreviews, false)
+})

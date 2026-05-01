@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS,
   RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS,
+  buildRecentZapReplayFetchRanges,
   buildRecentZapReplayCollectionViewModel,
   clearRecentZapReplayCoverageStorage,
   clampRecentZapReplayLookbackHours,
@@ -74,6 +75,51 @@ test('clears only recent zap replay coverage metadata', () => {
     'sigma.recentZapReplayCoverage.v1:abc',
     'sigma.recentZapReplayCoverage.v1:def',
   ])
+})
+
+test('reuses a wider replay cache when shrinking the recent zap window', () => {
+  assert.deepEqual(
+    buildRecentZapReplayFetchRanges({
+      requestedSince: 18_000,
+      requestedUntil: 20_000,
+      coverage: {
+        coveredFrom: 10_000,
+        coveredUntil: 19_990,
+      },
+      includeFreshTail: false,
+    }),
+    [],
+  )
+})
+
+test('fetches only the older missing range when expanding the recent zap window', () => {
+  assert.deepEqual(
+    buildRecentZapReplayFetchRanges({
+      requestedSince: 10_000,
+      requestedUntil: 20_000,
+      coverage: {
+        coveredFrom: 17_500,
+        coveredUntil: 19_990,
+      },
+      includeFreshTail: false,
+    }),
+    [{ since: 10_000, until: 17_499 }],
+  )
+})
+
+test('refresh fetches the fresh tail without re-fetching covered replay history', () => {
+  assert.deepEqual(
+    buildRecentZapReplayFetchRanges({
+      requestedSince: 18_000,
+      requestedUntil: 20_000,
+      coverage: {
+        coveredFrom: 10_000,
+        coveredUntil: 19_990,
+      },
+      includeFreshTail: true,
+    }),
+    [{ since: 19_991, until: 20_000 }],
+  )
 })
 
 test('tracks the applied lookback hours in the replay effect dependencies', () => {

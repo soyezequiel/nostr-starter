@@ -96,6 +96,7 @@ const HOVER_DIM_NODE_COLOR = '#121a22'
 const HOVER_EDGE_BRIGHT_COLOR = '#f4fbff'
 const HOVER_DIM_EDGE_COLOR = '#10171f'
 const HIGHLIGHT_TRANSITION_MS = 180
+const FOCUS_TRANSITION_RENDER_ITEM_LIMIT = 2500
 const HOVER_FOCUS_DWELL_MS = 500
 const TOUCH_TAP_MOVE_TOLERANCE_PX = 16
 const TOUCH_MOUSE_COMPATIBILITY_SUPPRESSION_MS = 400
@@ -544,6 +545,10 @@ export class SigmaRendererAdapter implements RendererAdapter {
     pubkey: null,
     neighbors: EMPTY_HOVER_NEIGHBORS,
   }
+
+  private draggedNodeEdgeIds: Set<string> | null = null
+
+  private rendererFocusEdgeIdsByPubkey = new Map<string, Set<string>>()
 
   private hideEdgesOnMoveBeforeDrag: boolean | null = null
 
@@ -2560,6 +2565,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       requireNode: true,
     })
     this.draggedNodePubkey = pubkey
+    this.refreshDraggedNodeEdgeIds(pubkey)
     this.cancelHighlightTransition()
     this.setNodeDragEdgeRendering(true)
     this.lockGraphBoundsPreservingViewport(graphBoundsBBox)
@@ -2624,6 +2630,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.lastScheduledGraphPosition = null
       this.dragAnchorOffset = { dx: 0, dy: 0 }
       this.draggedNodeFocus = this.createEmptyFocusSnapshot()
+      this.draggedNodeEdgeIds = null
       this.shouldPinDraggedNodeOnRelease = false
       return
     }
@@ -2676,6 +2683,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     this.draggedNodePubkey = null
     this.draggedNodeFocus = this.createEmptyFocusSnapshot()
+    this.draggedNodeEdgeIds = null
     this.setNodeDragEdgeRendering(false)
     this.shouldPinDraggedNodeOnRelease = false
     this.lastDragFlushTimestamp = null
@@ -3108,6 +3116,7 @@ export class SigmaRendererAdapter implements RendererAdapter {
       draggedNodePubkey !== null ? this.resolveCurrentDragGraphPosition() : null
     this.scene = scene
     this.renderStore.applyScene(scene.render)
+    this.invalidateRendererFocusEdgeIds()
     this.syncSelectedSceneFocus()
     const physicsApplyResult = this.physicsStore.applyScene(scene.physics)
     this.nodeHitTester?.markDirty()
@@ -3147,9 +3156,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
       this.draggedNodeFocus = this.createFocusSnapshot(draggedNodePubkey, {
         requireNode: true,
       })
+      this.refreshDraggedNodeEdgeIds(draggedNodePubkey)
     } else {
       this.dragHopDistances = new Map()
       this.dragInfluenceState = null
+      this.draggedNodeEdgeIds = null
     }
 
     this.forceRuntime.sync(this.createPhysicsSceneWithManualDragFixes(scene.physics), {
@@ -3483,6 +3494,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
     this.clearSelectedRendererFocus()
     this.draggedNodeFocus = this.createEmptyFocusSnapshot()
+    this.draggedNodeEdgeIds = null
+    this.invalidateRendererFocusEdgeIds()
   }
 
   private syncSelectedSceneFocus() {
@@ -3519,6 +3532,52 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
   }
 
+  private refreshDraggedNodeEdgeIds(pubkey: string) {
+    const graph = this.renderStore?.getGraph()
+    if (!graph || !graph.hasNode(pubkey)) {
+      this.draggedNodeEdgeIds = null
+      return
+    }
+
+    this.draggedNodeEdgeIds = new Set(graph.edges(pubkey))
+  }
+
+  private invalidateRendererFocusEdgeIds() {
+    this.rendererFocusEdgeIdsByPubkey.clear()
+  }
+
+  private retainRendererFocusEdgeIds(pubkeys: Array<string | null>) {
+    const retained = new Set(
+      pubkeys.filter((pubkey): pubkey is string => Boolean(pubkey)),
+    )
+    for (const pubkey of this.rendererFocusEdgeIdsByPubkey.keys()) {
+      if (!retained.has(pubkey)) {
+        this.rendererFocusEdgeIdsByPubkey.delete(pubkey)
+      }
+    }
+  }
+
+  private getRendererFocusEdgeIds(focus: HoverFocusSnapshot): Set<string> | null {
+    const pubkey = focus.pubkey
+    if (!pubkey) {
+      return null
+    }
+
+    const cached = this.rendererFocusEdgeIdsByPubkey.get(pubkey)
+    if (cached) {
+      return cached
+    }
+
+    const graph = this.renderStore?.getGraph()
+    if (!graph || !graph.hasNode(pubkey)) {
+      return null
+    }
+
+    const edgeIds = new Set(graph.edges(pubkey))
+    this.rendererFocusEdgeIdsByPubkey.set(pubkey, edgeIds)
+    return edgeIds
+  }
+
   private resolveDragFocus(): HoverFocusSnapshot | null {
     if (!this.draggedNodePubkey) {
       return null
@@ -3547,6 +3606,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
     now = performance.now(),
   ) {
     return easeInOut((now - transition.startedAt) / transition.durationMs)
+  }
+
+  private shouldSkipRendererFocusTransition() {
+    const graph = this.renderStore?.getGraph()
+    if (!graph) {
+      return false
+    }
+
+    return graph.order + graph.size >= FOCUS_TRANSITION_RENDER_ITEM_LIMIT
   }
 
   private scheduleHighlightTransitionFrame() {
@@ -3588,6 +3656,8 @@ export class SigmaRendererAdapter implements RendererAdapter {
 
     if (this.highlightTransition) {
       this.scheduleHighlightTransitionFrame()
+    } else {
+      this.retainRendererFocusEdgeIds([this.resolveRendererFocus().pubkey])
     }
   }
 
@@ -3625,6 +3695,12 @@ export class SigmaRendererAdapter implements RendererAdapter {
         this.cancelHighlightTransition()
         return
       }
+    }
+
+    this.retainRendererFocusEdgeIds([from.pubkey, to.pubkey])
+    if (this.shouldSkipRendererFocusTransition()) {
+      this.cancelHighlightTransition()
+      return
     }
 
     this.startHighlightTransition(from, to)
@@ -3885,15 +3961,15 @@ export class SigmaRendererAdapter implements RendererAdapter {
       return baseData
     }
 
-    const endpoints = this.getEdgeEndpoints(edge)
-    if (!endpoints) {
+    const touchesFocus = this.edgeTouchesFocus(edge, focus)
+    if (touchesFocus === null) {
       return baseData
     }
 
     const focusPreset =
       EDGE_FOCUS_VISUAL_PRESETS[this.connectionVisualConfig.focusStyle]
 
-    if (!this.edgeEndpointsTouchFocus(endpoints, focus)) {
+    if (!touchesFocus) {
       return {
         ...baseData,
         color: focusPreset.dimColor,
@@ -3950,6 +4026,27 @@ export class SigmaRendererAdapter implements RendererAdapter {
     )
   }
 
+  private edgeTouchesFocus(
+    edge: string,
+    focus: HoverFocusSnapshot,
+  ): boolean | null {
+    if (!focus.pubkey) {
+      return false
+    }
+
+    const edgeIds = this.getRendererFocusEdgeIds(focus)
+    if (edgeIds) {
+      return edgeIds.has(edge)
+    }
+
+    const endpoints = this.getEdgeEndpoints(edge)
+    if (!endpoints) {
+      return null
+    }
+
+    return this.edgeEndpointsTouchFocus(endpoints, focus)
+  }
+
   private resolveEdgeLodAttributes(
     edge: string,
     data: RenderEdgeAttributes,
@@ -3960,11 +4057,11 @@ export class SigmaRendererAdapter implements RendererAdapter {
     }
 
     if (focus.pubkey) {
-      const endpoints = this.getEdgeEndpoints(edge)
-      if (!endpoints) {
+      const touchesFocus = this.edgeTouchesFocus(edge, focus)
+      if (touchesFocus === null) {
         return data
       }
-      if (this.edgeEndpointsTouchFocus(endpoints, focus)) {
+      if (touchesFocus) {
         return this.resolveEdgeHoverAttributes(edge, data, focus)
       }
     }
@@ -3983,6 +4080,13 @@ export class SigmaRendererAdapter implements RendererAdapter {
     const draggedNodePubkey = this.draggedNodePubkey
     if (!draggedNodePubkey) {
       return data
+    }
+
+    if (this.draggedNodeEdgeIds !== null) {
+      if (this.draggedNodeEdgeIds.has(edge) || data.hidden) {
+        return data
+      }
+      return { ...data, hidden: true }
     }
 
     const endpoints = this.getEdgeEndpoints(edge)

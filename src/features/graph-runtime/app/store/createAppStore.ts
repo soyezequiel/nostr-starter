@@ -28,7 +28,7 @@ import type {
   GraphEventToggleState,
 } from '@/features/graph-v2/events/types'
 
-const PERSIST_VERSION = 4
+const PERSIST_VERSION = 5
 
 interface PersistedAppState {
   savedRoots?: SavedRootEntry[]
@@ -36,6 +36,7 @@ interface PersistedAppState {
   eventFeedMode?: GraphEventFeedMode
   pauseLiveEventsWhenSceneIsLarge?: boolean
   autoAddExternalActivityNodes?: boolean
+  showActivityTextPreviews?: boolean
 }
 
 const getPersistedSavedRoots = (
@@ -87,6 +88,7 @@ export const createAppStore = (): AppStoreApi =>
             eventFeedMode: state.eventFeedMode,
             pauseLiveEventsWhenSceneIsLarge: state.pauseLiveEventsWhenSceneIsLarge,
             autoAddExternalActivityNodes: state.autoAddExternalActivityNodes,
+            showActivityTextPreviews: state.showActivityTextPreviews,
           }),
           migrate: (persistedState, version): PersistedAppState => {
             const savedRoots = getPersistedSavedRoots(persistedState)
@@ -123,6 +125,12 @@ export const createAppStore = (): AppStoreApi =>
                 getPersistedRecord(
                   persistedState,
                   'autoAddExternalActivityNodes',
+                ),
+              ),
+              showActivityTextPreviews: Boolean(
+                getPersistedRecord(
+                  persistedState,
+                  'showActivityTextPreviews',
                 ),
               ),
             }

@@ -45,7 +45,15 @@ export type ActivityPanelProjectionEntry =
 
 export type ActivityActorLabelResolver = (pubkey: string) => string
 
-function getGraphEventText(entry: ActivityPanelProjectionGraphEventEntry): string {
+interface ActivityPanelProjectionOptions {
+  showTextPreviews?: boolean
+}
+
+function getGraphEventText(
+  entry: ActivityPanelProjectionGraphEventEntry,
+  showTextPreviews: boolean,
+): string {
+  if (!showTextPreviews) return ''
   const payload = entry.graphEvent.payload
   switch (payload.kind) {
     case 'quote':
@@ -88,8 +96,10 @@ export function projectActivityPanelEntries(
   entries: readonly ActivityPanelProjectionEntry[],
   resolveActorLabel: ActivityActorLabelResolver,
   previousEntries: readonly SigmaActivityPanelV3Entry[] = [],
+  options: ActivityPanelProjectionOptions = {},
 ): SigmaActivityPanelV3Entry[] {
   const previousById = new Map(previousEntries.map((entry) => [entry.id, entry]))
+  const showTextPreviews = options.showTextPreviews ?? true
 
   return entries.map((entry) => {
     const isZap = entry.type === 'zap'
@@ -107,7 +117,9 @@ export function projectActivityPanelEntries(
         ? entry.zap.zapCreatedAt * 1_000
         : entry.graphEvent.createdAt * 1_000,
       sats: isZap ? entry.zap.sats : getGraphEventSats(entry),
-      text: isZap ? entry.zap.comment?.trim() || '' : getGraphEventText(entry),
+      text: isZap
+        ? entry.zap.comment?.trim() || ''
+        : getGraphEventText(entry, showTextPreviews),
     }
     const previous = previousById.get(next.id)
     return previous && areActivityPanelEntriesEqual(previous, next)

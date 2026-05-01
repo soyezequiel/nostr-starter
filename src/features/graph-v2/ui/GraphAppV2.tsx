@@ -2833,6 +2833,12 @@ export default function GraphAppV2() {
   )
   const eventToggles = useAppStore((state) => state.eventToggles)
   const setEventToggle = useAppStore((state) => state.setEventToggle)
+  const showActivityTextPreviews = useAppStore(
+    (state) => state.showActivityTextPreviews,
+  )
+  const setShowActivityTextPreviews = useAppStore(
+    (state) => state.setShowActivityTextPreviews,
+  )
   const persistedEventFeedMode = useAppStore((state) => state.eventFeedMode)
   const setPersistedEventFeedMode = useAppStore(
     (state) => state.setEventFeedMode,
@@ -5965,6 +5971,38 @@ export default function GraphAppV2() {
       </div>
 
       <div className="sg-settings-section">
+        <h4>{tSigma('zaps.settings.activityCards')}</h4>
+        <div className="sg-setting-row">
+          <div>
+            <div className="sg-setting-row__lbl">
+              {tSigma('zaps.settings.showTextPreviews')}
+            </div>
+            <div className="sg-setting-row__desc">
+              {tSigma('zaps.settings.showTextPreviewsDesc')}
+            </div>
+          </div>
+          <button
+            aria-label={
+              showActivityTextPreviews
+                ? tSigma('zaps.settings.disableTextPreviews')
+                : tSigma('zaps.settings.enableTextPreviews')
+            }
+            aria-pressed={showActivityTextPreviews}
+            className={`sg-toggle${showActivityTextPreviews ? ' sg-toggle--on' : ''}`}
+            onClick={() => {
+              setShowActivityTextPreviews(!showActivityTextPreviews)
+            }}
+            title={
+              showActivityTextPreviews
+                ? tSigma('zaps.settings.disableTextPreviews')
+                : tSigma('zaps.settings.enableTextPreviews')
+            }
+            type="button"
+          />
+        </div>
+      </div>
+
+      <div className="sg-settings-section">
         <h4>{tSigma('zaps.settings.operationalProtection')}</h4>
         <div className="sg-setting-row">
           <div>
@@ -6036,10 +6074,11 @@ export default function GraphAppV2() {
       activityPanelEntries as readonly ActivityPanelProjectionEntry[],
       getZapActorLabel,
       previousActivityPanelV3EntriesRef.current,
+      { showTextPreviews: showActivityTextPreviews },
     )
     previousActivityPanelV3EntriesRef.current = nextEntries
     return nextEntries
-  }, [activityPanelEntries, getZapActorLabel])
+  }, [activityPanelEntries, getZapActorLabel, showActivityTextPreviews])
 
   const activityEntryById = useMemo(
     () => new Map(activityPanelEntries.map((entry) => [entry.id, entry])),

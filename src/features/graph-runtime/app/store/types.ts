@@ -342,11 +342,13 @@ export interface EventToggleSlice {
   eventFeedMode: GraphEventFeedMode
   pauseLiveEventsWhenSceneIsLarge: boolean
   autoAddExternalActivityNodes: boolean
+  showActivityTextPreviews: boolean
   setEventToggle: (kind: GraphEventKind, enabled: boolean) => void
   setEventToggles: (toggles: Partial<GraphEventToggleState>) => void
   setEventFeedMode: (mode: GraphEventFeedMode) => void
   setPauseLiveEventsWhenSceneIsLarge: (paused: boolean) => void
   setAutoAddExternalActivityNodes: (enabled: boolean) => void
+  setShowActivityTextPreviews: (enabled: boolean) => void
 }
 
 export interface KeywordSlice {
