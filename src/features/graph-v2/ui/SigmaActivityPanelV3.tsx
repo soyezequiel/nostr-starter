@@ -7,6 +7,7 @@ import {
   type PointerEvent,
   type ReactNode,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -109,8 +110,8 @@ export interface SigmaActivityPanelV3Props {
   advancedMetrics: SigmaActivityPanelReplayMetric[]
 
   // Acciones por entrada
-  onReplayEntry: (entry: SigmaActivityPanelV3Entry) => void
-  onOpenEntryDetail: (entry: SigmaActivityPanelV3Entry) => void
+  onReplayEntry: (entryId: string) => void
+  onOpenEntryDetail: (entryId: string) => void
 
   // Etiquetas i18n
   labels: {
@@ -167,20 +168,39 @@ function compactSats(n: number): string {
   return String(n)
 }
 
-function formatActivityClockTime(ms: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+const ACTIVITY_CLOCK_FORMATTERS = new Map<string, Intl.DateTimeFormat>()
+const ACTIVITY_FULL_TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>()
+
+function getActivityClockFormatter(locale: string): Intl.DateTimeFormat {
+  const cached = ACTIVITY_CLOCK_FORMATTERS.get(locale)
+  if (cached) return cached
+  const formatter = new Intl.DateTimeFormat(locale, {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date(ms))
+  })
+  ACTIVITY_CLOCK_FORMATTERS.set(locale, formatter)
+  return formatter
 }
 
-function formatActivityFullTime(ms: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
+function getActivityFullTimeFormatter(locale: string): Intl.DateTimeFormat {
+  const cached = ACTIVITY_FULL_TIME_FORMATTERS.get(locale)
+  if (cached) return cached
+  const formatter = new Intl.DateTimeFormat(locale, {
     dateStyle: 'short',
     timeStyle: 'medium',
     hour12: false,
-  }).format(new Date(ms))
+  })
+  ACTIVITY_FULL_TIME_FORMATTERS.set(locale, formatter)
+  return formatter
+}
+
+function formatActivityClockTime(ms: number, locale: string): string {
+  return getActivityClockFormatter(locale).format(new Date(ms))
+}
+
+function formatActivityFullTime(ms: number, locale: string): string {
+  return getActivityFullTimeFormatter(locale).format(new Date(ms))
 }
 
 function bucketName(ms: number, labels: SigmaActivityPanelV3Props['labels']['buckets']): string {
@@ -225,7 +245,15 @@ function hueFromPubkey(pubkey: string): number {
   return ((h % 360) + 360) % 360
 }
 
-function ActorAvatar({ pubkey, label, size = 18 }: { pubkey: string; label: string; size?: number }) {
+const ActorAvatar = memo(function ActorAvatar({
+  pubkey,
+  label,
+  size = 18,
+}: {
+  pubkey: string
+  label: string
+  size?: number
+}) {
   const hue = hueFromPubkey(pubkey || label)
   const initial = (label || '?').replace(/^[@#]/, '').charAt(0).toUpperCase() || '?'
   return (
@@ -248,7 +276,11 @@ function ActorAvatar({ pubkey, label, size = 18 }: { pubkey: string; label: stri
       {initial}
     </span>
   )
-}
+}, (prev, next) =>
+  prev.pubkey === next.pubkey &&
+  prev.label === next.label &&
+  (prev.size ?? 18) === (next.size ?? 18),
+)
 
 const eyebrow: CSSProperties = {
   fontSize: 10.5,
@@ -617,15 +649,15 @@ function FilterPill({
 
 function Row({
   entry,
-  onReplay,
-  onOpenDetail,
+  onReplayEntry,
+  onOpenEntryDetail,
   outsideViewLabel,
   detailsLabel,
   timeLocale,
 }: {
   entry: SigmaActivityPanelV3Entry
-  onReplay: () => void
-  onOpenDetail: () => void
+  onReplayEntry: (entryId: string) => void
+  onOpenEntryDetail: (entryId: string) => void
   outsideViewLabel: string
   detailsLabel: string
   timeLocale: string
@@ -645,14 +677,14 @@ function Row({
   const handleKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
-    onReplay()
+    onReplayEntry(entry.id)
   }
 
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={onReplay}
+      onClick={() => onReplayEntry(entry.id)}
       onKeyDown={handleKey}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -805,7 +837,7 @@ function Row({
           type="button"
           onClick={(event) => {
             event.stopPropagation()
-            onOpenDetail()
+            onOpenEntryDetail(entry.id)
           }}
           onKeyDown={(event) => event.stopPropagation()}
           aria-label={`${detailsLabel} ${GRAPH_EVENT_KIND_SINGULAR_LABELS[entry.kind]} ${entry.fromLabel}`}
@@ -829,6 +861,92 @@ function Row({
     </div>
   )
 }
+
+function areActivityEntriesEqual(
+  left: SigmaActivityPanelV3Entry,
+  right: SigmaActivityPanelV3Entry,
+): boolean {
+  return (
+    left === right ||
+    (left.id === right.id &&
+      left.kind === right.kind &&
+      left.source === right.source &&
+      left.fromPubkey === right.fromPubkey &&
+      left.toPubkey === right.toPubkey &&
+      left.fromLabel === right.fromLabel &&
+      left.toLabel === right.toLabel &&
+      left.played === right.played &&
+      left.receivedAt === right.receivedAt &&
+      left.occurredAt === right.occurredAt &&
+      left.sats === right.sats &&
+      left.text === right.text)
+  )
+}
+
+const MemoRow = memo(Row, (prev, next) =>
+  areActivityEntriesEqual(prev.entry, next.entry) &&
+  prev.onReplayEntry === next.onReplayEntry &&
+  prev.onOpenEntryDetail === next.onOpenEntryDetail &&
+  prev.outsideViewLabel === next.outsideViewLabel &&
+  prev.detailsLabel === next.detailsLabel &&
+  prev.timeLocale === next.timeLocale,
+)
+
+const ActivityRowsList = memo(function ActivityRowsList({
+  grouped,
+  onReplayEntry,
+  onOpenEntryDetail,
+  outsideViewLabel,
+  detailsLabel,
+  timeLocale,
+}: {
+  grouped: Bucket[]
+  onReplayEntry: (entryId: string) => void
+  onOpenEntryDetail: (entryId: string) => void
+  outsideViewLabel: string
+  detailsLabel: string
+  timeLocale: string
+}) {
+  return (
+    <>
+      {grouped.map((g) => (
+        <div key={g.bucket}>
+          <div style={bucketHeaderStyle}>
+            <span>{g.bucket}</span>
+            <span
+              style={{
+                color: 'var(--sg-fg-faint)',
+                fontWeight: 400,
+                marginLeft: 6,
+              }}
+            >
+              {g.entries.length}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                height: 1,
+                background: 'var(--border-hair, rgba(255,255,255,0.09))',
+                marginLeft: 8,
+              }}
+            />
+          </div>
+          {g.entries.map((entry) => (
+            <MemoRow
+              key={entry.id}
+              entry={entry}
+              onReplayEntry={onReplayEntry}
+              onOpenEntryDetail={onOpenEntryDetail}
+              outsideViewLabel={outsideViewLabel}
+              detailsLabel={detailsLabel}
+              timeLocale={timeLocale}
+            />
+          ))}
+        </div>
+      ))}
+    </>
+  )
+})
 
 function ProgressBar({
   pct,
@@ -1430,7 +1548,7 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
   const someFiltered =
     ALL_KINDS.some((k) => !toggles[k]) || query.trim().length > 0
 
-  const handleFilterClick = (
+  const handleFilterClick = useCallback((
     k: GraphEventKind,
     event: MouseEvent<HTMLButtonElement>,
   ) => {
@@ -1439,12 +1557,12 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
       return
     }
     onSetToggle(k, !toggles[k])
-  }
+  }, [onIsolateKind, onSetToggle, toggles])
 
-  const handleClearFilters = () => {
+  const handleClearFilters = useCallback(() => {
     onResetKinds()
     setQuery('')
-  }
+  }, [onResetKinds])
 
   const isReplayMode = mode === 'recent'
   const playing = !replayPlaybackPaused
@@ -1649,41 +1767,14 @@ function SigmaActivityPanelV3(props: SigmaActivityPanelV3Props) {
             clearLabel={labels.clearFilters}
           />
         ) : (
-          grouped.map((g) => (
-            <div key={g.bucket}>
-              <div style={bucketHeaderStyle}>
-                <span>{g.bucket}</span>
-                <span
-                  style={{
-                    color: 'var(--sg-fg-faint)',
-                    fontWeight: 400,
-                    marginLeft: 6,
-                  }}
-                >
-                  {g.entries.length}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    height: 1,
-                    background: 'var(--border-hair, rgba(255,255,255,0.09))',
-                    marginLeft: 8,
-                  }}
-                />
-              </div>
-              {g.entries.map((entry) => (
-                <Row
-                  key={entry.id}
-                  entry={entry}
-                  onReplay={() => onReplayEntry(entry)}
-                  onOpenDetail={() => onOpenEntryDetail(entry)}
-                  outsideViewLabel={labels.outsideView}
-                  detailsLabel={labels.detailsLabel}
-                  timeLocale={labels.timeLocale}
-                />
-              ))}
-            </div>
-          ))
+          <ActivityRowsList
+            grouped={grouped}
+            onReplayEntry={onReplayEntry}
+            onOpenEntryDetail={onOpenEntryDetail}
+            outsideViewLabel={labels.outsideView}
+            detailsLabel={labels.detailsLabel}
+            timeLocale={labels.timeLocale}
+          />
         )}
       </div>
     </div>

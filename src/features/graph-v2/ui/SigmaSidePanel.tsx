@@ -1,7 +1,12 @@
 'use client'
 
-import { memo, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, PointerEvent, ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent,
+  ReactNode,
+} from 'react'
 import { motion } from 'motion/react'
 import type { PanInfo } from 'motion/react'
 
@@ -26,6 +31,11 @@ const PANEL_CLOSE_THRESHOLD_PX = 120
 const PANEL_MIN_HEIGHT_PX = 180
 const PANEL_TOP_CLEARANCE_PX = 100
 const PANEL_SNAP_ORDER: readonly SigmaPanelSnap[] = ['peek', 'mid', 'full']
+const PANEL_TRANSITION = { duration: 0.22, ease: 'easeOut' } as const
+const MOBILE_PANEL_INITIAL = { opacity: 0, y: 30 } as const
+const MOBILE_PANEL_ANIMATE = { opacity: 1, y: 0 } as const
+const DESKTOP_PANEL_INITIAL = { opacity: 0, x: 14 } as const
+const DESKTOP_PANEL_ANIMATE = { opacity: 1, x: 0 } as const
 
 const clampPanelHeight = (height: number, viewportHeight: number) => {
   const maxHeight = Math.max(PANEL_MIN_HEIGHT_PX, viewportHeight - PANEL_TOP_CLEARANCE_PX)
@@ -79,6 +89,21 @@ const resolveNextPanelSnap = (
   return start.snap
 }
 
+const canUsePanelDrag = (
+  start: { bodyScrollTop: number | null },
+  deltaY: number,
+) => {
+  if (start.bodyScrollTop === null) return true
+  if (deltaY === 0) return false
+  return start.bodyScrollTop <= 0
+}
+
+const shouldClosePanelFromDrag = (start: { height: number }, deltaY: number) => {
+  if (deltaY <= PANEL_CLOSE_THRESHOLD_PX) return false
+  const proportionalThreshold = start.height * 0.35
+  return deltaY >= Math.min(proportionalThreshold, 220)
+}
+
 export const SigmaSidePanel = memo(function SigmaSidePanel({
   eyebrow,
   title,
@@ -121,45 +146,30 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
     return () => window.removeEventListener('resize', syncInitialHeight)
   }, [mobileSnap, mobileSnapResetKey])
 
-  const markPanelDragHandled = () => {
+  const markPanelDragHandled = useCallback(() => {
     suppressClickRef.current = true
     window.setTimeout(() => {
       suppressClickRef.current = false
     }, 250)
-  }
+  }, [])
 
-  const resolveBodyScrollTop = (target: EventTarget | null) => {
+  const resolveBodyScrollTop = useCallback((target: EventTarget | null) => {
     const node = target instanceof Node ? target : null
     return node && bodyRef.current?.contains(node)
       ? bodyRef.current.scrollTop
       : null
-  }
+  }, [])
 
-  const canUsePanelDrag = (
-    start: { bodyScrollTop: number | null },
-    deltaY: number,
-  ) => {
-    if (start.bodyScrollTop === null) return true
-    if (deltaY === 0) return false
-    return start.bodyScrollTop <= 0
-  }
-
-  const applyPanelDrag = (start: { height: number }, deltaY: number) => {
+  const applyPanelDrag = useCallback((start: { height: number }, deltaY: number) => {
     setMobileHeightPx(clampPanelHeight(start.height - deltaY, window.innerHeight))
-  }
+  }, [])
 
-  const snapPanelAfterDrag = (start: { height: number; snap: SigmaPanelSnap }, deltaY: number) => {
+  const snapPanelAfterDrag = useCallback((start: { height: number; snap: SigmaPanelSnap }, deltaY: number) => {
     const nextSnap = resolveNextPanelSnap(start, deltaY, window.innerHeight)
     setMobileHeightPx(resolveInitialPanelHeight(nextSnap, window.innerHeight))
-  }
+  }, [])
 
-  const shouldClosePanelFromDrag = (start: { height: number }, deltaY: number) => {
-    if (deltaY <= PANEL_CLOSE_THRESHOLD_PX) return false
-    const proportionalThreshold = start.height * 0.35
-    return deltaY >= Math.min(proportionalThreshold, 220)
-  }
-
-  const handlePanelPointerDown = (event: PointerEvent<HTMLElement>) => {
+  const handlePanelPointerDown = useCallback((event: PointerEvent<HTMLElement>) => {
     if (!event.isPrimary) return
     const target = event.target
     const targetElement = target instanceof Element ? target : null
@@ -186,9 +196,9 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
       snap: resolveClosestPanelSnap(height, window.innerHeight),
       bodyScrollTop: startedOnBodyDragHandle ? null : resolveBodyScrollTop(event.target),
     }
-  }
+  }, [mobileHeightPx, mobileSnap, resolveBodyScrollTop])
 
-  const handlePanelPan = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+  const handlePanelPan = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const start = dragStartRef.current
     if (!start) return
 
@@ -198,9 +208,9 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
 
     setIsPanelDragging(true)
     applyPanelDrag(start, deltaY)
-  }
+  }, [applyPanelDrag])
 
-  const handlePanelPanEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+  const handlePanelPanEnd = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const start = dragStartRef.current
     dragStartRef.current = null
     setIsPanelDragging(false)
@@ -226,31 +236,37 @@ export const SigmaSidePanel = memo(function SigmaSidePanel({
 
     markPanelDragHandled()
     snapPanelAfterDrag(start, deltaY)
-  }
+  }, [markPanelDragHandled, onClose, snapPanelAfterDrag])
 
-  const panelStyle = mobileHeightPx === null
-    ? undefined
-    : ({
-        '--sg-panel-mobile-height': `${mobileHeightPx}px`,
-      } as CSSProperties)
+  const handlePanelClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!suppressClickRef.current) return
+    suppressClickRef.current = false
+    event.preventDefault()
+    event.stopPropagation()
+  }, [])
 
-  const panelInitial = isMobile ? { opacity: 0, y: 30 } : { opacity: 0, x: 14 }
-  const panelAnimate = isMobile ? { opacity: 1, y: 0 } : { opacity: 1, x: 0 }
+  const panelStyle = useMemo(
+    () =>
+      mobileHeightPx === null
+        ? undefined
+        : ({
+            '--sg-panel-mobile-height': `${mobileHeightPx}px`,
+          } as CSSProperties),
+    [mobileHeightPx],
+  )
+
+  const panelInitial = isMobile ? MOBILE_PANEL_INITIAL : DESKTOP_PANEL_INITIAL
+  const panelAnimate = isMobile ? MOBILE_PANEL_ANIMATE : DESKTOP_PANEL_ANIMATE
 
   return (
     <motion.aside
       className="sg-panel"
       animate={panelAnimate}
       initial={panelInitial}
-      transition={{ duration: 0.22, ease: 'easeOut' }}
+      transition={PANEL_TRANSITION}
       data-mobile-dragging={isPanelDragging ? 'true' : undefined}
       data-mobile-snap={mobileSnap}
-      onClickCapture={(event) => {
-        if (!suppressClickRef.current) return
-        suppressClickRef.current = false
-        event.preventDefault()
-        event.stopPropagation()
-      }}
+      onClickCapture={handlePanelClickCapture}
       onPan={handlePanelPan}
       onPanEnd={handlePanelPanEnd}
       onPointerDown={handlePanelPointerDown}

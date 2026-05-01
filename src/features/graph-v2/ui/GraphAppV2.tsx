@@ -38,6 +38,7 @@ import {
   GRAPH_EVENT_KIND_SINGULAR_LABELS,
   type GraphEventActivityLogEntry,
   type GraphEventActivitySource,
+  type GraphEventFeedMode,
   type GraphEventKind,
   type ParsedGraphEvent,
 } from '@/features/graph-v2/events/types'
@@ -242,6 +243,10 @@ import SigmaActivityPanelV3, {
   type SigmaActivityPanelV3Entry,
   type SigmaActivityPanelReplayMetric,
 } from '@/features/graph-v2/ui/SigmaActivityPanelV3'
+import {
+  projectActivityPanelEntries,
+  type ActivityPanelProjectionEntry,
+} from '@/features/graph-v2/ui/activityPanelProjection'
 
 const RECENT_ZAP_REPLAY_WINDOW_PRESETS = [
   { hours: 6, label: '6 h' },
@@ -878,6 +883,469 @@ const getZapReplayStatusLabel = (replay: RecentZapReplaySnapshot) => {
       return 'Replay en espera'
   }
 }
+
+type SigmaTranslate = ReturnType<typeof useTranslations>
+
+interface ActivityReplayRailState {
+  working: boolean
+  playbackPaused: boolean
+  statusLabel: string
+}
+
+const INITIAL_ACTIVITY_REPLAY_RAIL_STATE: ActivityReplayRailState = {
+  working: false,
+  playbackPaused: false,
+  statusLabel: 'Replay en espera',
+}
+
+interface SigmaActivityReplayControllerProps {
+  visible: boolean
+  entries: SigmaActivityPanelV3Entry[]
+  totalEntryCount: number
+  emptyLabel: string
+  toggles: Record<GraphEventKind, boolean>
+  onSetToggle: (kind: GraphEventKind, value: boolean) => void
+  onIsolateKind: (kind: GraphEventKind) => void
+  onResetKinds: () => void
+  mode: GraphEventFeedMode
+  onChangeMode: (mode: GraphEventFeedMode) => void
+  isLiveActive: boolean
+  liveStatusLabel: string
+  liveFeedback: string | null
+  canControlReplay: boolean
+  lookbackHours: number
+  onChangeLookbackHours: (hours: number) => void
+  appliedLookbackLabel: string
+  labels: ComponentProps<typeof SigmaActivityPanelV3>['labels']
+  visiblePubkeys: readonly string[]
+  shouldEnableRecentZapReplay: boolean
+  shouldEnableRecentGraphEventReplay: boolean
+  replayableGraphEventKinds: readonly Exclude<GraphEventKind, 'zap'>[]
+  lookbackHoursApplied: number
+  replayKey: number
+  refreshKey: number
+  playbackPaused: boolean
+  onPlaybackPausedChange: (updater: boolean | ((current: boolean) => boolean)) => void
+  onReplayRequest: () => void
+  onRefreshRequest: () => void
+  onZapReplay: (zap: ParsedZap) => boolean
+  onGraphEventReplay: (event: ParsedGraphEvent) => boolean
+  onReplayEntry: (entryId: string) => void
+  onOpenEntryDetail: (entryId: string) => void
+  onRailStateChange: (state: ActivityReplayRailState) => void
+  onActivityOverlayPausedChange: (paused: boolean) => void
+  locale: string
+  tSigma: SigmaTranslate
+}
+
+const SigmaActivityReplayController = memo(function SigmaActivityReplayController({
+  visible,
+  entries,
+  totalEntryCount,
+  emptyLabel,
+  toggles,
+  onSetToggle,
+  onIsolateKind,
+  onResetKinds,
+  mode,
+  onChangeMode,
+  isLiveActive,
+  liveStatusLabel,
+  liveFeedback,
+  canControlReplay,
+  lookbackHours,
+  onChangeLookbackHours,
+  appliedLookbackLabel,
+  labels,
+  visiblePubkeys,
+  shouldEnableRecentZapReplay,
+  shouldEnableRecentGraphEventReplay,
+  replayableGraphEventKinds,
+  lookbackHoursApplied,
+  replayKey,
+  refreshKey,
+  playbackPaused,
+  onPlaybackPausedChange,
+  onReplayRequest,
+  onRefreshRequest,
+  onZapReplay,
+  onGraphEventReplay,
+  onReplayEntry,
+  onOpenEntryDetail,
+  onRailStateChange,
+  onActivityOverlayPausedChange,
+  locale,
+  tSigma,
+}: SigmaActivityReplayControllerProps) {
+  const replayResetToken = `${replayKey}:${refreshKey}`
+  const [seekRequest, setSeekRequest] = useState({ key: 0, progress: 0 })
+  const [scrubState, setScrubState] = useState<{
+    progress: number | null
+    token: string
+  }>({ progress: null, token: replayResetToken })
+  const scrubProgress =
+    scrubState.token === replayResetToken ? scrubState.progress : null
+
+  const playbackHeld = playbackPaused || scrubProgress !== null
+  const recentZapReplay = useRecentZapReplay({
+    visiblePubkeys,
+    enabled: shouldEnableRecentZapReplay,
+    lookbackHours: lookbackHoursApplied,
+    replayKey,
+    refreshKey,
+    playbackPaused: playbackHeld,
+    seekKey: seekRequest.key,
+    seekProgress: seekRequest.progress,
+    onZap: onZapReplay,
+  })
+  const recentGraphEventReplay = useRecentGraphEventReplay({
+    visiblePubkeys,
+    enabled: shouldEnableRecentGraphEventReplay,
+    kinds: replayableGraphEventKinds,
+    lookbackHours: lookbackHoursApplied,
+    replayKey,
+    refreshKey,
+    playbackPaused: playbackHeld,
+    onEvent: onGraphEventReplay,
+  })
+
+  const recentZapReplayCollection = useMemo(
+    () => buildRecentZapReplayCollectionViewModel(recentZapReplay),
+    [recentZapReplay],
+  )
+  const recentZapReplayWorking =
+    shouldEnableRecentZapReplay &&
+    (recentZapReplay.phase === 'loading' || recentZapReplay.phase === 'playing')
+  const recentGraphEventReplayWorking =
+    shouldEnableRecentGraphEventReplay &&
+    (recentGraphEventReplay.phase === 'loading' ||
+      recentGraphEventReplay.phase === 'playing')
+  const recentActivityReplayWorking =
+    recentZapReplayWorking || recentGraphEventReplayWorking
+  const recentZapReplayPlaybackIsPaused =
+    playbackPaused ||
+    recentZapReplay.playbackPaused ||
+    recentGraphEventReplay.playbackPaused
+
+  const recentZapReplayStatusLabel = useMemo(() => {
+    if (locale !== 'en') {
+      return getZapReplayStatusLabel(recentZapReplay)
+    }
+
+    if (recentZapReplay.playbackPaused) {
+      return recentZapReplay.stage === 'collecting' || recentZapReplay.stage === 'decoding'
+        ? 'Replay paused after collection'
+        : 'Replay paused'
+    }
+
+    switch (recentZapReplay.stage) {
+      case 'collecting':
+        return 'Querying relays'
+      case 'decoding':
+        return 'Closing collection'
+      case 'playing':
+        return 'Playing timeline'
+      case 'done':
+        return 'Replay ready'
+      case 'error':
+        return 'Replay error'
+      case 'idle':
+      default:
+        return 'Replay waiting'
+    }
+  }, [locale, recentZapReplay])
+
+  const activityReplayStatusLabel =
+    recentGraphEventReplayWorking && !recentZapReplayWorking
+      ? (locale === 'en' ? 'Activity replay' : 'Replay de actividad')
+      : recentZapReplayStatusLabel
+
+  useEffect(() => {
+    onRailStateChange({
+      working: recentActivityReplayWorking,
+      playbackPaused: recentZapReplayPlaybackIsPaused,
+      statusLabel: activityReplayStatusLabel,
+    })
+  }, [
+    activityReplayStatusLabel,
+    onRailStateChange,
+    recentActivityReplayWorking,
+    recentZapReplayPlaybackIsPaused,
+  ])
+
+  useEffect(() => {
+    onActivityOverlayPausedChange(
+      (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay) &&
+        playbackHeld,
+    )
+  }, [
+    onActivityOverlayPausedChange,
+    playbackHeld,
+    shouldEnableRecentGraphEventReplay,
+    shouldEnableRecentZapReplay,
+  ])
+
+  const recentZapReplayCollectionProgressValue = formatProgressValue(
+    recentZapReplayCollection.progress,
+  )
+  const recentZapReplayPlaybackProgress =
+    recentZapReplay.phase === 'done' ? 1 : recentZapReplay.timelineProgress
+  const recentZapReplayPlaybackProgressValue = formatProgressValue(
+    recentZapReplayPlaybackProgress,
+  )
+  const displayedZapReplayProgress =
+    scrubProgress ?? recentZapReplay.timelineProgress
+  const displayedZapReplayCreatedAt =
+    scrubProgress !== null &&
+    recentZapReplay.windowStartAt !== null &&
+    recentZapReplay.windowEndAt !== null
+      ? recentZapReplay.windowStartAt +
+        Math.round(
+          (recentZapReplay.windowEndAt - recentZapReplay.windowStartAt) *
+            scrubProgress,
+        )
+      : recentZapReplay.currentZapCreatedAt
+  const displayedZapReplayProgressValue = formatProgressValue(displayedZapReplayProgress)
+  const recentZapReplayCurrentTimeLabel = formatZapReplayTime(
+    displayedZapReplayCreatedAt,
+  )
+  const recentZapReplayWindowStartLabel = formatZapReplayTime(
+    recentZapReplay.windowStartAt,
+  )
+  const recentZapReplayWindowEndLabel = formatZapReplayTime(
+    recentZapReplay.windowEndAt,
+  )
+  const canSeekRecentZapReplay =
+    recentZapReplay.windowStartAt !== null &&
+    recentZapReplay.windowEndAt !== null &&
+    recentZapReplay.windowEndAt > recentZapReplay.windowStartAt &&
+    recentZapReplay.playableCount > 0
+
+  const resolveZapReplayPointerProgress = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const bounds = event.currentTarget.getBoundingClientRect()
+      if (bounds.width <= 0) {
+        return 0
+      }
+      return clampProgress((event.clientX - bounds.left) / bounds.width)
+    },
+    [],
+  )
+
+  const commitZapReplaySeek = useCallback((progress: number) => {
+    const nextProgress = clampProgress(progress)
+    setSeekRequest((current) => ({
+      key: current.key + 1,
+      progress: nextProgress,
+    }))
+    setScrubState({ progress: null, token: replayResetToken })
+  }, [replayResetToken])
+
+  const handleZapReplayTimelinePointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (!canSeekRecentZapReplay) {
+        return
+      }
+
+      event.preventDefault()
+      const progress = resolveZapReplayPointerProgress(event)
+      event.currentTarget.setPointerCapture(event.pointerId)
+      setScrubState({ progress, token: replayResetToken })
+    },
+    [canSeekRecentZapReplay, replayResetToken, resolveZapReplayPointerProgress],
+  )
+
+  const handleZapReplayTimelinePointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (
+        !canSeekRecentZapReplay ||
+        !event.currentTarget.hasPointerCapture(event.pointerId)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      setScrubState({
+        progress: resolveZapReplayPointerProgress(event),
+        token: replayResetToken,
+      })
+    },
+    [canSeekRecentZapReplay, replayResetToken, resolveZapReplayPointerProgress],
+  )
+
+  const handleZapReplayTimelinePointerUp = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (!canSeekRecentZapReplay) {
+        setScrubState({ progress: null, token: replayResetToken })
+        return
+      }
+
+      event.preventDefault()
+      const progress = resolveZapReplayPointerProgress(event)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      commitZapReplaySeek(progress)
+    },
+    [
+      canSeekRecentZapReplay,
+      commitZapReplaySeek,
+      replayResetToken,
+      resolveZapReplayPointerProgress,
+    ],
+  )
+
+  const handleZapReplayTimelinePointerCancel = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      setScrubState({ progress: null, token: replayResetToken })
+    },
+    [replayResetToken],
+  )
+
+  const handleZapReplayTimelineKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (!canSeekRecentZapReplay) {
+        return
+      }
+
+      let nextProgress: number | null = null
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+        nextProgress = displayedZapReplayProgress - ZAP_REPLAY_KEYBOARD_SEEK_STEP
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+        nextProgress = displayedZapReplayProgress + ZAP_REPLAY_KEYBOARD_SEEK_STEP
+      } else if (event.key === 'Home') {
+        nextProgress = 0
+      } else if (event.key === 'End') {
+        nextProgress = 1
+      }
+
+      if (nextProgress === null) {
+        return
+      }
+
+      event.preventDefault()
+      commitZapReplaySeek(nextProgress)
+    },
+    [canSeekRecentZapReplay, commitZapReplaySeek, displayedZapReplayProgress],
+  )
+
+  const timelineHandlers = useMemo(
+    () => ({
+      onPointerDown: handleZapReplayTimelinePointerDown,
+      onPointerMove: handleZapReplayTimelinePointerMove,
+      onPointerUp: handleZapReplayTimelinePointerUp,
+      onPointerCancel: handleZapReplayTimelinePointerCancel,
+      onLostPointerCapture: handleZapReplayTimelinePointerCancel,
+      onKeyDown: handleZapReplayTimelineKeyDown,
+    }),
+    [
+      handleZapReplayTimelineKeyDown,
+      handleZapReplayTimelinePointerCancel,
+      handleZapReplayTimelinePointerDown,
+      handleZapReplayTimelinePointerMove,
+      handleZapReplayTimelinePointerUp,
+    ],
+  )
+
+  const advancedMetrics = useMemo<SigmaActivityPanelReplayMetric[]>(
+    () => [
+      { label: tSigma('zaps.panel.targets'), value: formatInteger(recentZapReplay.targetCount) },
+      {
+        label: tSigma('zaps.panel.batches'),
+        value: `${formatInteger(recentZapReplay.completedBatchCount)}/${formatInteger(recentZapReplay.batchCount)}`,
+      },
+      { label: tSigma('zaps.panel.cache'), value: formatInteger(recentZapReplay.cachedCount) },
+      { label: tSigma('zaps.panel.new'), value: formatInteger(recentZapReplay.fetchedCount) },
+      {
+        label: tSigma('zaps.panel.timeouts'),
+        value: formatInteger(recentZapReplay.timedOutBatchCount),
+        tone: recentZapReplay.timedOutBatchCount > 0 ? 'warn' : undefined,
+      },
+      {
+        label: tSigma('zaps.panel.limit'),
+        value:
+          recentZapReplay.truncatedTargetCount > 0
+            ? tSigma('zaps.panel.omitted', {
+                count: formatInteger(recentZapReplay.truncatedTargetCount),
+              })
+            : tSigma('zaps.panel.ok'),
+        tone: recentZapReplay.truncatedTargetCount > 0 ? 'warn' : 'good',
+      },
+    ],
+    [
+      recentZapReplay.batchCount,
+      recentZapReplay.cachedCount,
+      recentZapReplay.completedBatchCount,
+      recentZapReplay.fetchedCount,
+      recentZapReplay.targetCount,
+      recentZapReplay.timedOutBatchCount,
+      recentZapReplay.truncatedTargetCount,
+      tSigma,
+    ],
+  )
+
+  const handleTogglePlay = useCallback(() => {
+    onPlaybackPausedChange((current) => !current)
+  }, [onPlaybackPausedChange])
+
+  if (!visible) {
+    return null
+  }
+
+  return (
+    <SigmaActivityPanelV3
+      entries={entries}
+      totalEntryCount={totalEntryCount}
+      emptyLabel={emptyLabel}
+      toggles={toggles}
+      onSetToggle={onSetToggle}
+      onIsolateKind={onIsolateKind}
+      onResetKinds={onResetKinds}
+      mode={mode}
+      onChangeMode={onChangeMode}
+      isLiveActive={isLiveActive}
+      isWorking={recentActivityReplayWorking}
+      liveStatusLabel={liveStatusLabel}
+      liveFeedback={liveFeedback}
+      replayCollectionPct={recentZapReplayCollectionProgressValue}
+      replayPlaybackPct={recentZapReplayPlaybackProgressValue}
+      replayPlaybackPaused={recentZapReplayPlaybackIsPaused}
+      onTogglePlay={handleTogglePlay}
+      onReplayCache={onReplayRequest}
+      onRefresh={onRefreshRequest}
+      canControlReplay={canControlReplay && recentZapReplay.phase !== 'loading'}
+      canTogglePlayback={
+        canControlReplay &&
+        (recentZapReplay.phase === 'loading' ||
+          recentZapReplay.phase === 'playing' ||
+          recentZapReplay.playableCount > 0 ||
+          recentGraphEventReplay.phase === 'loading' ||
+          recentGraphEventReplay.phase === 'playing' ||
+          recentGraphEventReplay.playableCount > 0)
+      }
+      lookbackHours={lookbackHours}
+      onChangeLookbackHours={onChangeLookbackHours}
+      lookbackMinHours={RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS}
+      lookbackMaxHours={RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS}
+      appliedLookbackLabel={appliedLookbackLabel}
+      windowPresets={RECENT_ZAP_REPLAY_WINDOW_PRESETS}
+      timelineProgressPct={displayedZapReplayProgressValue}
+      timelineCurrentLabel={recentZapReplayCurrentTimeLabel}
+      timelineStartLabel={recentZapReplayWindowStartLabel}
+      timelineEndLabel={recentZapReplayWindowEndLabel}
+      canSeekTimeline={canSeekRecentZapReplay}
+      timelineHandlers={timelineHandlers}
+      isScrubbing={scrubProgress !== null}
+      advancedMetrics={advancedMetrics}
+      onReplayEntry={onReplayEntry}
+      onOpenEntryDetail={onOpenEntryDetail}
+      labels={labels}
+    />
+  )
+})
 
 const getInitials = (value: string | null) => {
   if (!value) return 'N'
@@ -2338,12 +2806,10 @@ export default function GraphAppV2() {
   ] = useState(readStoredRecentZapReplayLookbackHours)
   const [recentZapReplayRequest, setRecentZapReplayRequest] = useState(0)
   const [recentZapReplayRefreshRequest, setRecentZapReplayRefreshRequest] = useState(0)
-  const [recentZapReplaySeekRequest, setRecentZapReplaySeekRequest] =
-    useState({ key: 0, progress: 0 })
-  const [recentZapReplayScrubProgress, setRecentZapReplayScrubProgress] =
-    useState<number | null>(null)
   const [recentZapReplayPlaybackPaused, setRecentZapReplayPlaybackPaused] =
     useState(false)
+  const [activityReplayRailState, setActivityReplayRailState] =
+    useState<ActivityReplayRailState>(INITIAL_ACTIVITY_REPLAY_RAIL_STATE)
   const pauseLiveZapsWhenSceneIsLarge = useAppStore(
     (state) => state.pauseLiveEventsWhenSceneIsLarge,
   )
@@ -2386,8 +2852,12 @@ export default function GraphAppV2() {
     useState<Record<string, string>>({})
   const zapActivitySequenceRef = useRef(0)
   const activityRootPubkeyRef = useRef<string | null>(null)
+  const previousActivityPanelV3EntriesRef = useRef<SigmaActivityPanelV3Entry[]>([])
   const zapActorProfileAttemptedRef = useRef(new Set<string>())
   const zapActorProfileInflightRef = useRef(new Set<string>())
+  const pendingRecentZapActivityEntriesRef = useRef<ZapActivityLogEntry[]>([])
+  const pendingRecentGraphEventActivityEntriesRef = useRef<GraphEventActivityLogEntry[]>([])
+  const pendingRecentActivityFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoActivityNodePendingRef = useRef(new Map<string, Set<string>>())
   const autoActivityNodeInflightRef = useRef(new Set<string>())
   const autoActivityPairAttemptedRef = useRef(new Set<string>())
@@ -3457,7 +3927,58 @@ export default function GraphAppV2() {
     isFixtureMode,
     sceneState.rootPubkey,
   ])
-  const appendZapActivity = useCallback((
+  const flushPendingRecentActivityEntries = useCallback(() => {
+    pendingRecentActivityFlushTimerRef.current = null
+
+    const zapEntries = pendingRecentZapActivityEntriesRef.current
+    pendingRecentZapActivityEntriesRef.current = []
+    if (zapEntries.length > 0) {
+      setZapActivityLog((current) => {
+        let next = current
+        for (const entry of zapEntries) {
+          if (entry.eventId && next.some((e) => e.eventId === entry.eventId)) {
+            continue
+          }
+          next = [entry, ...next]
+        }
+        return next.slice(0, ZAP_ACTIVITY_LIMIT)
+      })
+    }
+
+    const graphEventEntries = pendingRecentGraphEventActivityEntriesRef.current
+    pendingRecentGraphEventActivityEntriesRef.current = []
+    if (graphEventEntries.length > 0) {
+      setGraphEventActivityLog((current) => {
+        let next = current
+        for (const entry of graphEventEntries) {
+          if (next.some((item) => item.id === entry.id)) {
+            continue
+          }
+          next = [entry, ...next]
+        }
+        return next.slice(0, GRAPH_EVENT_ACTIVITY_LIMIT)
+      })
+    }
+  }, [])
+
+  const scheduleRecentActivityFlush = useCallback(() => {
+    if (pendingRecentActivityFlushTimerRef.current !== null) {
+      return
+    }
+    pendingRecentActivityFlushTimerRef.current = setTimeout(
+      flushPendingRecentActivityEntries,
+      120,
+    )
+  }, [flushPendingRecentActivityEntries])
+
+  useEffect(() => () => {
+    if (pendingRecentActivityFlushTimerRef.current !== null) {
+      clearTimeout(pendingRecentActivityFlushTimerRef.current)
+      pendingRecentActivityFlushTimerRef.current = null
+    }
+  }, [])
+
+  const createZapActivityEntry = useCallback((
     zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'> & {
       eventId?: string
       createdAt?: number
@@ -3468,7 +3989,7 @@ export default function GraphAppV2() {
     played: boolean,
   ) => {
     zapActivitySequenceRef.current += 1
-    const entry: ZapActivityLogEntry = {
+    return {
       id: `${Date.now()}-${zapActivitySequenceRef.current}`,
       source,
       fromPubkey: zap.fromPubkey,
@@ -3481,13 +4002,35 @@ export default function GraphAppV2() {
       zappedEventId: zap.zappedEventId ?? null,
       comment: zap.comment ?? null,
     }
+  }, [])
+
+  const appendZapActivity = useCallback((
+    zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'> & {
+      eventId?: string
+      createdAt?: number
+      zappedEventId?: string | null
+      comment?: string | null
+    },
+    source: ZapActivitySource,
+    played: boolean,
+  ) => {
+    const entry = createZapActivityEntry(zap, source, played)
     setZapActivityLog((current) => {
       if (entry.eventId && current.some((e) => e.eventId === entry.eventId)) {
         return current
       }
       return [entry, ...current].slice(0, ZAP_ACTIVITY_LIMIT)
     })
-  }, [])
+  }, [createZapActivityEntry])
+
+  const queueRecentZapActivity = useCallback((
+    zap: ParsedZap,
+    played: boolean,
+  ) => {
+    const entry = createZapActivityEntry(zap, 'recent', played)
+    pendingRecentZapActivityEntriesRef.current.push(entry)
+    scheduleRecentActivityFlush()
+  }, [createZapActivityEntry, scheduleRecentActivityFlush])
 
   const handleZap = useCallback((zap: Pick<ParsedZap, 'fromPubkey' | 'toPubkey' | 'sats'>) => {
     if (activityRootPubkeyRef.current !== sceneState.rootPubkey) {
@@ -3590,13 +4133,23 @@ export default function GraphAppV2() {
         played,
         receivedAt: Date.now(),
       })
+      if (source === 'recent') {
+        pendingRecentGraphEventActivityEntriesRef.current.push(entry)
+        scheduleRecentActivityFlush()
+        return played
+      }
       setGraphEventActivityLog((current) => {
         if (current.some((item) => item.id === entry.id)) return current
         return [entry, ...current].slice(0, GRAPH_EVENT_ACTIVITY_LIMIT)
       })
       return played
     },
-    [enqueueAutoActivityExternalNode, sceneState.rootPubkey, visibleNodeSet],
+    [
+      enqueueAutoActivityExternalNode,
+      sceneState.rootPubkey,
+      scheduleRecentActivityFlush,
+      visibleNodeSet,
+    ],
   )
 
   const handleReplayZapActivity = useCallback((entry: ZapActivityLogEntry) => {
@@ -3764,27 +4317,42 @@ export default function GraphAppV2() {
   }, [appendZapActivity, handleZap])
   const handleRecentZapReplay = useCallback((zap: ParsedZap) => {
     const played = handleZap(zap)
-    appendZapActivity(zap, 'recent', played)
+    queueRecentZapActivity(zap, played)
     return played
-  }, [appendZapActivity, handleZap])
+  }, [handleZap, queueRecentZapActivity])
   const handleQuickReplay = useCallback(() => {
     if (!canRunEventFeed) return
     setIsActivitiesPanelOpen(true)
     setZapFeedMode('recent')
     setRecentZapReplayPlaybackPaused(false)
-    setRecentZapReplayScrubProgress(null)
     setRecentZapReplayRequest((current) => current + 1)
     setRecentZapReplayRefreshRequest((current) => current + 1)
-    setRecentZapReplaySeekRequest((current) => ({
-      key: current.key + 1,
-      progress: 0,
-    }))
   }, [canRunEventFeed, setZapFeedMode])
   const handleQuickReplayPauseToggle = useCallback(() => {
     setRecentZapReplayPlaybackPaused((current) => !current)
   }, [])
-  const isRecentZapReplayPlaybackHeld =
-    recentZapReplayPlaybackPaused || recentZapReplayScrubProgress !== null
+  const handleRecentGraphEventReplay = useCallback(
+    (event: ParsedGraphEvent) => handleGraphEvent(event, 'recent'),
+    [handleGraphEvent],
+  )
+  const handleActivityReplayRailStateChange = useCallback(
+    (next: ActivityReplayRailState) => {
+      setActivityReplayRailState((current) =>
+        current.working === next.working &&
+        current.playbackPaused === next.playbackPaused &&
+        current.statusLabel === next.statusLabel
+          ? current
+          : next,
+      )
+    },
+    [],
+  )
+  const handleActivityOverlayPausedChange = useCallback((paused: boolean) => {
+    sigmaHostRef.current?.setActivityOverlayPaused(paused)
+  }, [])
+  const recentActivityReplayWorking = activityReplayRailState.working
+  const recentZapReplayPlaybackIsPaused = activityReplayRailState.playbackPaused
+  const activityReplayStatusLabel = activityReplayRailState.statusLabel
   useLiveZapFeed({
     visiblePubkeys,
     enabled: shouldEnableLiveZapFeed,
@@ -3834,224 +4402,6 @@ export default function GraphAppV2() {
     enforceVisiblePubkeyLimit: pauseLiveZapsWhenSceneIsLarge,
     onEvent: handleGraphEvent,
   })
-  const recentZapReplay = useRecentZapReplay({
-    visiblePubkeys,
-    enabled: shouldEnableRecentZapReplay,
-    lookbackHours: appliedRecentZapReplayLookbackHours,
-    replayKey: recentZapReplayRequest,
-    refreshKey: recentZapReplayRefreshRequest,
-    playbackPaused: isRecentZapReplayPlaybackHeld,
-    seekKey: recentZapReplaySeekRequest.key,
-    seekProgress: recentZapReplaySeekRequest.progress,
-    onZap: handleRecentZapReplay,
-  })
-  const recentGraphEventReplay = useRecentGraphEventReplay({
-    visiblePubkeys,
-    enabled: shouldEnableRecentGraphEventReplay,
-    kinds: enabledNonZapGraphEventKinds,
-    lookbackHours: appliedRecentZapReplayLookbackHours,
-    replayKey: recentZapReplayRequest,
-    refreshKey: recentZapReplayRefreshRequest,
-    playbackPaused: isRecentZapReplayPlaybackHeld,
-    onEvent: (event) => handleGraphEvent(event, 'recent'),
-  })
-  const recentZapReplayCollection = useMemo(
-    () => buildRecentZapReplayCollectionViewModel(recentZapReplay),
-    [recentZapReplay],
-  )
-  const recentZapReplayWorking =
-    shouldEnableRecentZapReplay &&
-    (recentZapReplay.phase === 'loading' || recentZapReplay.phase === 'playing')
-  const recentGraphEventReplayWorking =
-    shouldEnableRecentGraphEventReplay &&
-    (recentGraphEventReplay.phase === 'loading' ||
-      recentGraphEventReplay.phase === 'playing')
-  const recentActivityReplayWorking =
-    recentZapReplayWorking || recentGraphEventReplayWorking
-  const recentZapReplayPlaybackIsPaused =
-    recentZapReplayPlaybackPaused ||
-    recentZapReplay.playbackPaused ||
-    recentGraphEventReplay.playbackPaused
-  const recentZapReplayStatusLabel = useMemo(() => {
-    if (locale !== 'en') {
-      return getZapReplayStatusLabel(recentZapReplay)
-    }
-
-    if (recentZapReplay.playbackPaused) {
-      return recentZapReplay.stage === 'collecting' || recentZapReplay.stage === 'decoding'
-        ? 'Replay paused after collection'
-        : 'Replay paused'
-    }
-
-    switch (recentZapReplay.stage) {
-      case 'collecting':
-        return 'Querying relays'
-      case 'decoding':
-        return 'Closing collection'
-      case 'playing':
-        return 'Playing timeline'
-      case 'done':
-        return 'Replay ready'
-      case 'error':
-        return 'Replay error'
-      case 'idle':
-      default:
-        return 'Replay waiting'
-    }
-  }, [locale, recentZapReplay])
-  const activityReplayStatusLabel =
-    recentGraphEventReplayWorking && !recentZapReplayWorking
-      ? 'Replay de actividad'
-      : recentZapReplayStatusLabel
-  const recentZapReplayCollectionProgressValue = formatProgressValue(
-    recentZapReplayCollection.progress,
-  )
-  const recentZapReplayPlaybackProgress =
-    recentZapReplay.phase === 'done' ? 1 : recentZapReplay.timelineProgress
-  const recentZapReplayPlaybackProgressValue = formatProgressValue(
-    recentZapReplayPlaybackProgress,
-  )
-  const displayedZapReplayProgress =
-    recentZapReplayScrubProgress ?? recentZapReplay.timelineProgress
-  const displayedZapReplayCreatedAt =
-    recentZapReplayScrubProgress !== null &&
-    recentZapReplay.windowStartAt !== null &&
-    recentZapReplay.windowEndAt !== null
-      ? recentZapReplay.windowStartAt +
-        Math.round(
-          (recentZapReplay.windowEndAt - recentZapReplay.windowStartAt) *
-            recentZapReplayScrubProgress,
-        )
-      : recentZapReplay.currentZapCreatedAt
-  const displayedZapReplayProgressValue = formatProgressValue(displayedZapReplayProgress)
-  const recentZapReplayCurrentTimeLabel = formatZapReplayTime(
-    displayedZapReplayCreatedAt,
-  )
-  const recentZapReplayWindowStartLabel = formatZapReplayTime(
-    recentZapReplay.windowStartAt,
-  )
-  const recentZapReplayWindowEndLabel = formatZapReplayTime(
-    recentZapReplay.windowEndAt,
-  )
-  const canSeekRecentZapReplay =
-    recentZapReplay.windowStartAt !== null &&
-    recentZapReplay.windowEndAt !== null &&
-    recentZapReplay.windowEndAt > recentZapReplay.windowStartAt &&
-    recentZapReplay.playableCount > 0
-
-  useEffect(() => {
-    sigmaHostRef.current?.setActivityOverlayPaused(
-      (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay) &&
-        isRecentZapReplayPlaybackHeld,
-    )
-  }, [
-    isRecentZapReplayPlaybackHeld,
-    shouldEnableRecentGraphEventReplay,
-    shouldEnableRecentZapReplay,
-  ])
-
-  const resolveZapReplayPointerProgress = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      const bounds = event.currentTarget.getBoundingClientRect()
-      if (bounds.width <= 0) {
-        return 0
-      }
-      return clampProgress((event.clientX - bounds.left) / bounds.width)
-    },
-    [],
-  )
-
-  const commitZapReplaySeek = useCallback((progress: number) => {
-    const nextProgress = clampProgress(progress)
-    setRecentZapReplaySeekRequest((current) => ({
-      key: current.key + 1,
-      progress: nextProgress,
-    }))
-    setRecentZapReplayScrubProgress(null)
-  }, [])
-
-  const handleZapReplayTimelinePointerDown = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      if (!canSeekRecentZapReplay) {
-        return
-      }
-
-      event.preventDefault()
-      const progress = resolveZapReplayPointerProgress(event)
-      event.currentTarget.setPointerCapture(event.pointerId)
-      setRecentZapReplayScrubProgress(progress)
-    },
-    [canSeekRecentZapReplay, resolveZapReplayPointerProgress],
-  )
-
-  const handleZapReplayTimelinePointerMove = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      if (
-        !canSeekRecentZapReplay ||
-        !event.currentTarget.hasPointerCapture(event.pointerId)
-      ) {
-        return
-      }
-
-      event.preventDefault()
-      setRecentZapReplayScrubProgress(resolveZapReplayPointerProgress(event))
-    },
-    [canSeekRecentZapReplay, resolveZapReplayPointerProgress],
-  )
-
-  const handleZapReplayTimelinePointerUp = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      if (!canSeekRecentZapReplay) {
-        setRecentZapReplayScrubProgress(null)
-        return
-      }
-
-      event.preventDefault()
-      const progress = resolveZapReplayPointerProgress(event)
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      }
-      commitZapReplaySeek(progress)
-    },
-    [canSeekRecentZapReplay, commitZapReplaySeek, resolveZapReplayPointerProgress],
-  )
-
-  const handleZapReplayTimelinePointerCancel = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      }
-      setRecentZapReplayScrubProgress(null)
-    },
-    [],
-  )
-
-  const handleZapReplayTimelineKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (!canSeekRecentZapReplay) {
-        return
-      }
-
-      let nextProgress: number | null = null
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
-        nextProgress = displayedZapReplayProgress - ZAP_REPLAY_KEYBOARD_SEEK_STEP
-      } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
-        nextProgress = displayedZapReplayProgress + ZAP_REPLAY_KEYBOARD_SEEK_STEP
-      } else if (event.key === 'Home') {
-        nextProgress = 0
-      } else if (event.key === 'End') {
-        nextProgress = 1
-      }
-
-      if (nextProgress === null) {
-        return
-      }
-
-      event.preventDefault()
-      commitZapReplaySeek(nextProgress)
-    },
-    [canSeekRecentZapReplay, commitZapReplaySeek, displayedZapReplayProgress],
-  )
 
   useEffect(() => {
     if (!shouldEnableLiveZapFeed || !pauseLiveZapsWhenSceneIsLarge) {
@@ -4206,13 +4556,11 @@ export default function GraphAppV2() {
         activityRootPubkeyRef.current = pubkey
         setZapFeedMode('live')
         setRecentZapReplayPlaybackPaused(false)
-        setRecentZapReplayScrubProgress(null)
         setRecentZapReplayRequest((current) => current + 1)
         setRecentZapReplayRefreshRequest((current) => current + 1)
-        setRecentZapReplaySeekRequest((current) => ({
-          key: current.key + 1,
-          progress: 0,
-        }))
+        setActivityReplayRailState(INITIAL_ACTIVITY_REPLAY_RAIL_STATE)
+        pendingRecentZapActivityEntriesRef.current = []
+        pendingRecentGraphEventActivityEntriesRef.current = []
         setZapActivityLog([])
         setGraphEventActivityLog([])
         setSelectedZapDetailId(null)
@@ -5588,13 +5936,13 @@ export default function GraphAppV2() {
     </div>
   )
 
-  const getZapActorLabel = (pubkey: string) => {
+  const getZapActorLabel = useCallback((pubkey: string) => {
     const normalizedPubkey = pubkey.toLowerCase()
     const node = sceneState.nodesByPubkey[normalizedPubkey]
     const label = node?.label?.trim()
     const zapActorLabel = zapActorLabelsByPubkey[normalizedPubkey]?.trim()
     return label || zapActorLabel || `${pubkey.slice(0, 8)}...`
-  }
+  }, [sceneState.nodesByPubkey, zapActorLabelsByPubkey])
 
   const zapFeedStatus = shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed
     ? 'Live'
@@ -5604,202 +5952,208 @@ export default function GraphAppV2() {
   const canControlRecentZapReplay =
     zapFeedMode === 'recent' &&
     (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay)
-  const canToggleRecentZapReplayPlayback =
-    canControlRecentZapReplay &&
-    (recentZapReplay.phase === 'loading' ||
-      recentZapReplay.phase === 'playing' ||
-      recentZapReplay.playableCount > 0 ||
-      recentGraphEventReplay.phase === 'loading' ||
-      recentGraphEventReplay.phase === 'playing' ||
-      recentGraphEventReplay.playableCount > 0)
-  const renderActivitiesContent = () => {
-    const v3Entries: SigmaActivityPanelV3Entry[] = activityPanelEntries.map((entry) => {
-      const isZap = entry.type === 'zap'
-      const kind: GraphEventKind = isZap ? 'zap' : entry.graphEvent!.kind
-      let sats = 0
-      let text = ''
-      if (isZap) {
-        sats = entry.zap.sats
-        text = entry.zap.comment?.trim() || ''
+  const v3Entries = useMemo(() => {
+    const nextEntries = projectActivityPanelEntries(
+      activityPanelEntries as readonly ActivityPanelProjectionEntry[],
+      getZapActorLabel,
+      previousActivityPanelV3EntriesRef.current,
+    )
+    previousActivityPanelV3EntriesRef.current = nextEntries
+    return nextEntries
+  }, [activityPanelEntries, getZapActorLabel])
+
+  const activityEntryById = useMemo(
+    () => new Map(activityPanelEntries.map((entry) => [entry.id, entry])),
+    [activityPanelEntries],
+  )
+
+  const activityPanelLabels = useMemo(
+    () => ({
+      eyebrow: tSigma('zaps.panel.activityEyebrow'),
+      searchPlaceholder: tSigma('zaps.panel.activitySearchPlaceholder'),
+      searchTitle: tSigma('zaps.panel.activitySearchTitle'),
+      sortByTime: tSigma('zaps.panel.activitySortByTime'),
+      sortByValue: tSigma('zaps.panel.activitySortByValue'),
+      sortAriaLabel: tSigma('zaps.panel.activitySortAria'),
+      historicalWindow: tSigma('zaps.panel.historicalWindow'),
+      collection: tSigma('zaps.panel.collection'),
+      collectionComplete: tSigma('zaps.panel.activityCollectionComplete'),
+      playback: tSigma('zaps.panel.playback'),
+      playLabel: tSigma('zaps.panel.play'),
+      pauseLabel: tSigma('zaps.panel.pause'),
+      cacheLabel: tSigma('zaps.panel.replayCache'),
+      refreshLabel: tSigma('zaps.panel.refresh'),
+      advancedToggle: tSigma('zaps.panel.advancedDetails'),
+      emptyFiltered: tSigma('zaps.panel.activityEmptyFiltered'),
+      clearFilters: tSigma('zaps.panel.activityClearFilters'),
+      outsideView: tSigma('zaps.panel.outsideView'),
+      detailsLabel: tSigma('zaps.panel.activityDetails'),
+      moveReplay: tSigma('zaps.panel.moveReplay', { window: appliedZapReplayWindowText }),
+      isolateHint: tSigma('zaps.panel.activityIsolateHint'),
+      liveLabel: 'Live',
+      replayLabel: 'Replay',
+      timeLocale: locale === 'en' ? 'en-US' : 'es-AR',
+      buckets: {
+        now: tSigma('zaps.panel.activityBucketNow'),
+        last5m: tSigma('zaps.panel.activityBucketLast5m'),
+        last30m: tSigma('zaps.panel.activityBucketLast30m'),
+        lastHour: tSigma('zaps.panel.activityBucketLastHour'),
+        todayEarlier: tSigma('zaps.panel.activityBucketTodayEarlier'),
+        today: tSigma('zaps.panel.activityBucketToday'),
+        before: tSigma('zaps.panel.activityBucketBefore'),
+      },
+    }),
+    [appliedZapReplayWindowText, locale, tSigma],
+  )
+
+  const handleSetActivityToggle = useCallback(
+    (kind: GraphEventKind, value: boolean) => setEventToggle(kind, value),
+    [setEventToggle],
+  )
+
+  const handleIsolateActivityKind = useCallback(
+    (kind: GraphEventKind) => {
+      GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, k === kind))
+    },
+    [setEventToggle],
+  )
+
+  const handleResetActivityKinds = useCallback(() => {
+    GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, true))
+  }, [setEventToggle])
+
+  const handleChangeActivityMode = useCallback(
+    (next: GraphEventFeedMode) => {
+      setZapFeedMode(next)
+      setRecentZapReplayPlaybackPaused(false)
+    },
+    [setRecentZapReplayPlaybackPaused, setZapFeedMode],
+  )
+
+  const handleReplayRecentCache = useCallback(() => {
+    setRecentZapReplayPlaybackPaused(false)
+    setRecentZapReplayRequest((cur) => cur + 1)
+  }, [setRecentZapReplayPlaybackPaused])
+
+  const handleRefreshRecentReplay = useCallback(() => {
+    setRecentZapReplayPlaybackPaused(false)
+    setRecentZapReplayRefreshRequest((cur) => cur + 1)
+  }, [setRecentZapReplayPlaybackPaused])
+
+  const handleChangeRecentReplayLookback = useCallback(
+    (hours: number) => {
+      setRecentZapReplayLookbackHours(clampRecentZapReplayLookbackHours(hours))
+    },
+    [],
+  )
+
+  const handleReplayActivityEntry = useCallback(
+    (entryId: string) => {
+      const original = activityEntryById.get(entryId)
+      if (!original) return
+      if (original.type === 'zap') {
+        handleReplayZapActivity(original.zap)
       } else {
-        const ge = entry.graphEvent!
-        switch (ge.payload.kind) {
-          case 'zap':
-            sats = ge.payload.data.amountSats ?? 0
-            break
-          case 'quote':
-            text = ge.payload.data.quoterContent || ''
-            break
-          case 'comment':
-            text = ge.payload.data.commentContent || ''
-            break
-          case 'repost':
-            text = ge.payload.data.embeddedContent || ''
-            break
-          default:
-            text = ''
-        }
+        handleReplayGraphEventActivity(original.graphEvent)
       }
-      return {
-        id: entry.id,
-        kind,
-        source: entry.source,
-        fromPubkey: entry.fromPubkey,
-        toPubkey: entry.toPubkey,
-        fromLabel: getZapActorLabel(entry.fromPubkey),
-        toLabel: getZapActorLabel(entry.toPubkey),
-        played: entry.played,
-        receivedAt: entry.receivedAt,
-        occurredAt: isZap
-          ? entry.zap.zapCreatedAt * 1_000
-          : entry.graphEvent!.createdAt * 1_000,
-        sats,
-        text,
+    },
+    [activityEntryById, handleReplayGraphEventActivity, handleReplayZapActivity],
+  )
+
+  const handleOpenActivityEntryDetail = useCallback(
+    (entryId: string) => {
+      const original = activityEntryById.get(entryId)
+      if (!original) return
+      if (original.type === 'zap') {
+        handleOpenZapDetail(original.zap.id)
+      } else {
+        handleOpenGraphEventDetail(original.graphEvent.id)
       }
-    })
+    },
+    [activityEntryById, handleOpenGraphEventDetail, handleOpenZapDetail],
+  )
 
-    const advancedMetrics: SigmaActivityPanelReplayMetric[] = [
-      { label: tSigma('zaps.panel.targets'), value: formatInteger(recentZapReplay.targetCount) },
-      {
-        label: tSigma('zaps.panel.batches'),
-        value: `${formatInteger(recentZapReplay.completedBatchCount)}/${formatInteger(recentZapReplay.batchCount)}`,
-      },
-      { label: tSigma('zaps.panel.cache'), value: formatInteger(recentZapReplay.cachedCount) },
-      { label: tSigma('zaps.panel.new'), value: formatInteger(recentZapReplay.fetchedCount) },
-      {
-        label: tSigma('zaps.panel.timeouts'),
-        value: formatInteger(recentZapReplay.timedOutBatchCount),
-        tone: recentZapReplay.timedOutBatchCount > 0 ? 'warn' : undefined,
-      },
-      {
-        label: tSigma('zaps.panel.limit'),
-        value:
-          recentZapReplay.truncatedTargetCount > 0
-            ? tSigma('zaps.panel.omitted', {
-                count: formatInteger(recentZapReplay.truncatedTargetCount),
-              })
-            : tSigma('zaps.panel.ok'),
-        tone: recentZapReplay.truncatedTargetCount > 0 ? 'warn' : 'good',
-      },
-    ]
-
-    const findOriginal = (id: string) => activityPanelEntries.find((e) => e.id === id) ?? null
-
-    return (
-      <SigmaActivityPanelV3
+  const activityPanelContent = useMemo(
+    () => (
+      <SigmaActivityReplayController
+        visible
         entries={v3Entries}
         totalEntryCount={v3Entries.length}
         emptyLabel={tSigma('zaps.panel.empty')}
         toggles={eventToggles}
-        onSetToggle={(kind, value) => setEventToggle(kind, value)}
-        onIsolateKind={(kind) => {
-          GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, k === kind))
-        }}
-        onResetKinds={() => {
-          GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, true))
-        }}
+        onSetToggle={handleSetActivityToggle}
+        onIsolateKind={handleIsolateActivityKind}
+        onResetKinds={handleResetActivityKinds}
         mode={zapFeedMode}
-        onChangeMode={(next) => {
-          setZapFeedMode(next)
-          setRecentZapReplayPlaybackPaused(false)
-        }}
+        onChangeMode={handleChangeActivityMode}
         isLiveActive={shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed}
-        isWorking={recentActivityReplayWorking}
         liveStatusLabel={zapFeedStatus}
         liveFeedback={liveZapFeedFeedback}
-        replayCollectionPct={recentZapReplayCollectionProgressValue}
-        replayPlaybackPct={recentZapReplayPlaybackProgressValue}
-        replayPlaybackPaused={recentZapReplayPlaybackIsPaused}
-        onTogglePlay={() => setRecentZapReplayPlaybackPaused((cur) => !cur)}
-        onReplayCache={() => {
-          setRecentZapReplayPlaybackPaused(false)
-          setRecentZapReplayRequest((cur) => cur + 1)
-        }}
-        onRefresh={() => {
-          setRecentZapReplayPlaybackPaused(false)
-          setRecentZapReplayRefreshRequest((cur) => cur + 1)
-        }}
-        canControlReplay={canControlRecentZapReplay && recentZapReplay.phase !== 'loading'}
-        canTogglePlayback={canToggleRecentZapReplayPlayback}
+        canControlReplay={canControlRecentZapReplay}
         lookbackHours={recentZapReplayLookbackHours}
-        onChangeLookbackHours={(h) =>
-          setRecentZapReplayLookbackHours(clampRecentZapReplayLookbackHours(h))
-        }
-        lookbackMinHours={RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS}
-        lookbackMaxHours={RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS}
+        onChangeLookbackHours={handleChangeRecentReplayLookback}
         appliedLookbackLabel={appliedZapReplayWindowLabel}
-        windowPresets={RECENT_ZAP_REPLAY_WINDOW_PRESETS}
-        timelineProgressPct={displayedZapReplayProgressValue}
-        timelineCurrentLabel={recentZapReplayCurrentTimeLabel}
-        timelineStartLabel={recentZapReplayWindowStartLabel}
-        timelineEndLabel={recentZapReplayWindowEndLabel}
-        canSeekTimeline={canSeekRecentZapReplay}
-        timelineHandlers={{
-          onPointerDown: handleZapReplayTimelinePointerDown,
-          onPointerMove: handleZapReplayTimelinePointerMove,
-          onPointerUp: handleZapReplayTimelinePointerUp,
-          onPointerCancel: handleZapReplayTimelinePointerCancel,
-          onLostPointerCapture: handleZapReplayTimelinePointerCancel,
-          onKeyDown: handleZapReplayTimelineKeyDown,
-        }}
-        isScrubbing={recentZapReplayScrubProgress !== null}
-        advancedMetrics={advancedMetrics}
-        onReplayEntry={(entry) => {
-          const original = findOriginal(entry.id)
-          if (!original) return
-          if (original.type === 'zap') {
-            handleReplayZapActivity(original.zap)
-          } else {
-            handleReplayGraphEventActivity(original.graphEvent)
-          }
-        }}
-        onOpenEntryDetail={(entry) => {
-          const original = findOriginal(entry.id)
-          if (!original) return
-          if (original.type === 'zap') {
-            handleOpenZapDetail(original.zap.id)
-          } else {
-            handleOpenGraphEventDetail(original.graphEvent.id)
-          }
-        }}
-        labels={{
-          eyebrow: tSigma('zaps.panel.activityEyebrow'),
-          searchPlaceholder: tSigma('zaps.panel.activitySearchPlaceholder'),
-          searchTitle: tSigma('zaps.panel.activitySearchTitle'),
-          sortByTime: tSigma('zaps.panel.activitySortByTime'),
-          sortByValue: tSigma('zaps.panel.activitySortByValue'),
-          sortAriaLabel: tSigma('zaps.panel.activitySortAria'),
-          historicalWindow: tSigma('zaps.panel.historicalWindow'),
-          collection: tSigma('zaps.panel.collection'),
-          collectionComplete: tSigma('zaps.panel.activityCollectionComplete'),
-          playback: tSigma('zaps.panel.playback'),
-          playLabel: tSigma('zaps.panel.play'),
-          pauseLabel: tSigma('zaps.panel.pause'),
-          cacheLabel: tSigma('zaps.panel.replayCache'),
-          refreshLabel: tSigma('zaps.panel.refresh'),
-          advancedToggle: tSigma('zaps.panel.advancedDetails'),
-          emptyFiltered: tSigma('zaps.panel.activityEmptyFiltered'),
-          clearFilters: tSigma('zaps.panel.activityClearFilters'),
-          outsideView: tSigma('zaps.panel.outsideView'),
-          detailsLabel: tSigma('zaps.panel.activityDetails'),
-          moveReplay: tSigma('zaps.panel.moveReplay', { window: appliedZapReplayWindowText }),
-          isolateHint: tSigma('zaps.panel.activityIsolateHint'),
-          liveLabel: 'Live',
-          replayLabel: 'Replay',
-          timeLocale: locale === 'en' ? 'en-US' : 'es-AR',
-          buckets: {
-            now: tSigma('zaps.panel.activityBucketNow'),
-            last5m: tSigma('zaps.panel.activityBucketLast5m'),
-            last30m: tSigma('zaps.panel.activityBucketLast30m'),
-            lastHour: tSigma('zaps.panel.activityBucketLastHour'),
-            todayEarlier: tSigma('zaps.panel.activityBucketTodayEarlier'),
-            today: tSigma('zaps.panel.activityBucketToday'),
-            before: tSigma('zaps.panel.activityBucketBefore'),
-          },
-        }}
+        labels={activityPanelLabels}
+        visiblePubkeys={visiblePubkeys}
+        shouldEnableRecentZapReplay={shouldEnableRecentZapReplay}
+        shouldEnableRecentGraphEventReplay={shouldEnableRecentGraphEventReplay}
+        replayableGraphEventKinds={enabledNonZapGraphEventKinds}
+        lookbackHoursApplied={appliedRecentZapReplayLookbackHours}
+        replayKey={recentZapReplayRequest}
+        refreshKey={recentZapReplayRefreshRequest}
+        playbackPaused={recentZapReplayPlaybackPaused}
+        onPlaybackPausedChange={setRecentZapReplayPlaybackPaused}
+        onReplayRequest={handleReplayRecentCache}
+        onRefreshRequest={handleRefreshRecentReplay}
+        onZapReplay={handleRecentZapReplay}
+        onGraphEventReplay={handleRecentGraphEventReplay}
+        onReplayEntry={handleReplayActivityEntry}
+        onOpenEntryDetail={handleOpenActivityEntryDetail}
+        onRailStateChange={handleActivityReplayRailStateChange}
+        onActivityOverlayPausedChange={handleActivityOverlayPausedChange}
+        locale={locale}
+        tSigma={tSigma}
       />
-    )
-  }
+    ),
+    [
+      activityPanelLabels,
+      appliedRecentZapReplayLookbackHours,
+      appliedZapReplayWindowLabel,
+      canControlRecentZapReplay,
+      enabledNonZapGraphEventKinds,
+      eventToggles,
+      handleChangeActivityMode,
+      handleChangeRecentReplayLookback,
+      handleActivityOverlayPausedChange,
+      handleActivityReplayRailStateChange,
+      handleIsolateActivityKind,
+      handleOpenActivityEntryDetail,
+      handleRefreshRecentReplay,
+      handleReplayActivityEntry,
+      handleReplayRecentCache,
+      handleRecentGraphEventReplay,
+      handleRecentZapReplay,
+      handleResetActivityKinds,
+      handleSetActivityToggle,
+      locale,
+      liveZapFeedFeedback,
+      recentZapReplayLookbackHours,
+      recentZapReplayPlaybackPaused,
+      recentZapReplayRefreshRequest,
+      recentZapReplayRequest,
+      visiblePubkeys,
+      shouldEnableRecentGraphEventReplay,
+      shouldEnableRecentZapReplay,
+      shouldEnableLiveGraphEventFeed,
+      shouldEnableLiveZapFeed,
+      tSigma,
+      v3Entries,
+      zapFeedMode,
+      zapFeedStatus,
+    ],
+  )
+
+  const renderActivitiesContent = () => activityPanelContent
 
   const renderNotificationsContent = () => (
     <div className="sg-notifications">
