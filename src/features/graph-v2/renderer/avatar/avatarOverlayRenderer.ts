@@ -95,6 +95,25 @@ interface AvatarNodeMotionSample {
   t: number
 }
 
+interface AvatarOverlayFrameViewport {
+  width: number
+  height: number
+  centerX: number
+  centerY: number
+}
+
+interface AvatarPriorityAttributes {
+  isRoot?: boolean
+  isPinned?: boolean
+  isExpanded?: boolean
+  isSelected?: boolean
+  isNeighbor?: boolean
+}
+
+interface AvatarOverlayRenderScheduler {
+  scheduleRender: () => void
+}
+
 type EffectiveAvatarBudget = AvatarBudget &
   AvatarRuntimeOptions & {
     readonly cacheAllVisibleImages: boolean
@@ -202,6 +221,52 @@ interface AvatarImageSelectionItem {
 
 const resolveAvatarSelectionUrlKey = (item: AvatarImageSelectionItem) =>
   item.urlKey ?? (item.url ? buildAvatarUrlKey(item.pubkey, item.url) : null)
+
+export const createAvatarOverlayFrameViewport = (
+  container: Pick<HTMLElement, 'clientWidth' | 'clientHeight'>,
+): AvatarOverlayFrameViewport => {
+  const width = container.clientWidth
+  const height = container.clientHeight
+  return {
+    width,
+    height,
+    centerX: width / 2,
+    centerY: height / 2,
+  }
+}
+
+export const isAvatarInViewport = (
+  x: number,
+  y: number,
+  r: number,
+  viewport: AvatarOverlayFrameViewport,
+): boolean =>
+  x + r >= 0 &&
+  x - r <= viewport.width &&
+  y + r >= 0 &&
+  y - r <= viewport.height
+
+export const resolveAvatarDrawPriority = (
+  attrs: AvatarPriorityAttributes,
+  viewportPosition: { x: number; y: number },
+  frameViewport: AvatarOverlayFrameViewport,
+): number => {
+  if (attrs.isRoot) return 0
+  if (attrs.isPinned) return 1
+  if (attrs.isExpanded) return 2
+  if (attrs.isSelected) return 3
+  if (attrs.isNeighbor) return 4
+  const dx = viewportPosition.x - frameViewport.centerX
+  const dy = viewportPosition.y - frameViewport.centerY
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  return 5 + dist
+}
+
+export const scheduleAvatarOverlayRender = (
+  sigma: AvatarOverlayRenderScheduler,
+) => {
+  sigma.scheduleRender()
+}
 
 export const retainInflightAvatarPubkeys = <
   T extends AvatarImageSelectionItem,
@@ -681,9 +746,12 @@ export class AvatarOverlayRenderer {
     this.lastFrameTs = nowMs
 
     const budget = this.resolveRuntimeBudget()
+    const frameViewport = createAvatarOverlayFrameViewport(
+      this.sigma.getContainer(),
+    )
     const forcedCtx = this.getForcedOverlayContext()
     if (forcedCtx) {
-      this.clearForcedOverlayContext(forcedCtx)
+      this.clearForcedOverlayContext(forcedCtx, frameViewport)
     }
     const ctx = this.getOverlayContext()
     if (!ctx) {
@@ -761,7 +829,9 @@ export class AvatarOverlayRenderer {
         hasPriorityAvatarSizing,
         zoomedOutMonogram,
       })
-      if (!this.isInViewport(viewport.x, viewport.y, drawRadiusPx)) {
+      if (
+        !isAvatarInViewport(viewport.x, viewport.y, drawRadiusPx, frameViewport)
+      ) {
         return
       }
       seenNodes.add(pubkey)
@@ -815,7 +885,11 @@ export class AvatarOverlayRenderer {
         showBackground: budget.showMonogramBackgrounds,
         showText: budget.showMonogramText,
       }
-      const priority = resolvePriority(nodeAttrs, viewport, this.sigma)
+      const priority = resolveAvatarDrawPriority(
+        nodeAttrs,
+        viewport,
+        frameViewport,
+      )
       const urlMetadata = this.avatarUrlMetadata.resolve(pubkey, nodeAttrs.pictureUrl)
       drawItems.push({
         pubkey,
@@ -902,7 +976,7 @@ export class AvatarOverlayRenderer {
       this.expansionAnimationFrameId = requestAnimationFrame(() => {
         this.expansionAnimationFrameId = null
         if (!this.disposed && !this.isCameraMoving()) {
-          this.sigma.refresh()
+          scheduleAvatarOverlayRender(this.sigma)
         }
       })
     }
@@ -1366,11 +1440,7 @@ export class AvatarOverlayRenderer {
     ctx: CanvasRenderingContext2D,
     items: readonly FocusAuraItem[],
   ) {
-    const itemsByPubkey = new Map<string, FocusAuraItem>()
     for (const item of items) {
-      itemsByPubkey.set(item.pubkey, item)
-    }
-    for (const item of itemsByPubkey.values()) {
       this.drawFocusAura(ctx, item)
     }
   }
@@ -1379,11 +1449,7 @@ export class AvatarOverlayRenderer {
     ctx: CanvasRenderingContext2D,
     items: readonly ExpansionRingItem[],
   ) {
-    const itemsByPubkey = new Map<string, ExpansionRingItem>()
     for (const item of items) {
-      itemsByPubkey.set(item.pubkey, item)
-    }
-    for (const item of itemsByPubkey.values()) {
       this.drawExpansionRing(ctx, item)
     }
   }
@@ -1568,13 +1634,6 @@ export class AvatarOverlayRenderer {
     return clamped
   }
 
-  private isInViewport(x: number, y: number, r: number): boolean {
-    const container = this.sigma.getContainer()
-    const w = container.clientWidth
-    const h = container.clientHeight
-    return x + r >= 0 && x - r <= w && y + r >= 0 && y - r <= h
-  }
-
   private getOverlayContext(): CanvasRenderingContext2D | null {
     const canvases = this.sigma.getCanvases()
     const labels = canvases.labels ?? canvases.mouse ?? null
@@ -1593,27 +1652,10 @@ export class AvatarOverlayRenderer {
     return mouse.getContext('2d')
   }
 
-  private clearForcedOverlayContext(ctx: CanvasRenderingContext2D) {
-    const container = this.sigma.getContainer()
-    ctx.clearRect(0, 0, container.clientWidth, container.clientHeight)
+  private clearForcedOverlayContext(
+    ctx: CanvasRenderingContext2D,
+    frameViewport: AvatarOverlayFrameViewport,
+  ) {
+    ctx.clearRect(0, 0, frameViewport.width, frameViewport.height)
   }
-}
-
-const resolvePriority = (
-  attrs: RenderNodeAttributes,
-  viewport: { x: number; y: number },
-  sigma: Sigma<RenderNodeAttributes, RenderEdgeAttributes>,
-): number => {
-  if (attrs.isRoot) return 0
-  if (attrs.isPinned) return 1
-  if (attrs.isExpanded) return 2
-  if (attrs.isSelected) return 3
-  if (attrs.isNeighbor) return 4
-  const container = sigma.getContainer()
-  const cx = container.clientWidth / 2
-  const cy = container.clientHeight / 2
-  const dx = viewport.x - cx
-  const dy = viewport.y - cy
-  const dist = Math.sqrt(dx * dx + dy * dy)
-  return 5 + dist
 }

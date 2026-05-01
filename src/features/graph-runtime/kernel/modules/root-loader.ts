@@ -13,6 +13,8 @@ import {
   traceAccountFlow,
 } from '@/features/graph-runtime/debug/accountTrace'
 import {
+  logTerminalDetail,
+  logTerminalError,
   logTerminalOk,
   logTerminalWarning,
   summarizeHumanTerminalError,
@@ -324,12 +326,14 @@ export function createRootLoaderModule(
     const discoveredRelayCount = relayUrlAnalysis.discoveredRelayUrls.length
     const droppedByCapCount = relayUrlAnalysis.droppedRelayUrls.length
     const contributingRelayUrls = new Set<string>()
-    const logRootPhase = (
-      phase: string,
+    const operationId = `root:${loadId}`
+    let rootCompletionLogged = false
+    let firstFastContactListAppliedAt: number | null = null
+    const buildRootTerminalFields = (
       fields: Record<string, string | number | boolean | null | undefined> = {},
     ) => {
       const now = ctx.now()
-      logTerminalOk('Carga raiz', phase, {
+      return {
         raiz: rootPubkey.slice(0, 12),
         load_id: loadId,
         duracion_ms: now - loadStartedAt,
@@ -338,7 +342,48 @@ export function createRootLoaderModule(
             ? null
             : firstFastContactListAppliedAt - loadStartedAt,
         ...fields,
-      })
+      }
+    }
+    const logRootPhase = (
+      phase: string,
+      fields: Record<string, string | number | boolean | null | undefined> = {},
+    ) => {
+      logTerminalDetail(
+        'Carga raiz',
+        phase,
+        buildRootTerminalFields(fields),
+        { operationId, phase: 'progreso' },
+      )
+    }
+    const finishRootLoad = (result: LoadRootResult): LoadRootResult => {
+      if (!rootCompletionLogged) {
+        rootCompletionLogged = true
+        const fields = buildRootTerminalFields({
+          estado: result.status,
+          origen: result.loadedFrom,
+          follows: result.discoveredFollowCount,
+          followers: getCurrentInboundFollowerPubkeys(rootPubkey).length,
+          relays: relayUrls.length,
+          relays_con_datos: contributingRelayUrls.size,
+          relays_descubiertos: discoveredRelayCount,
+          relays_descartados: droppedByCapCount,
+        })
+        const options = { operationId, phase: 'cierre' as const }
+        if (result.status === 'error') {
+          logTerminalError('Carga raiz', 'Carga finalizada con error', fields, options)
+        } else if (result.status === 'partial') {
+          logTerminalWarning(
+            'Carga raiz',
+            'Carga finalizada con cobertura parcial',
+            fields,
+            options,
+          )
+        } else {
+          logTerminalOk('Carga raiz', 'Carga finalizada', fields, options)
+        }
+      }
+
+      return finalize(rootPubkey, result)
     }
     const recordContributingEnvelopes = (
       envelopes: readonly RelayEventEnvelope[],
@@ -444,6 +489,20 @@ export function createRootLoaderModule(
         visibleLinkCount: preserveExistingGraph ? followingLoadedCount : null,
       }),
     })
+    logTerminalOk(
+      'Carga raiz',
+      preserveExistingGraph ? 'Reintento iniciado' : 'Carga iniciada',
+      buildRootTerminalFields({
+        relays: relayUrls.length,
+        relays_base: baseRelayUrls.length,
+        relays_bootstrap: bootstrapRelayUrls.length,
+        relays_descubiertos: discoveredRelayCount,
+        relays_descartados: droppedByCapCount,
+        cache_follows: cachedSnapshot.followPubkeys.length,
+        cache_followers: cachedSnapshot.inboundFollowerPubkeys.length,
+      }),
+      { operationId, phase: 'inicio' },
+    )
     if (traceThisRoot && traceConfig) {
       traceAccountFlow('rootLoader.cacheSnapshot', {
         followCount: cachedSnapshot.followPubkeys.length,
@@ -457,7 +516,7 @@ export function createRootLoaderModule(
       })
     }
     if (isStaleLoad(loadId)) {
-      return finalize(rootPubkey, createCancelledResult(relayUrls))
+      return finishRootLoad(createCancelledResult(relayUrls))
     }
     if (!preserveExistingGraph) {
       replaceRootGraph(
@@ -525,7 +584,6 @@ export function createRootLoaderModule(
     }
     let handoffToBackground = false
     let inboundCountProbeResults: RelayCountResult[] = []
-    let firstFastContactListAppliedAt: number | null = null
     const refreshRootRelayListPromise = followerDiscovery.refreshRelayList(
       adapter,
       rootPubkey,
@@ -1537,7 +1595,7 @@ export function createRootLoaderModule(
         }: { collectRemainingRelays: boolean; emitCompletion: boolean },
       ): Promise<LoadRootResult> => {
         const finishLoad = (result: LoadRootResult) =>
-          emitCompletion ? finalize(rootPubkey, result) : result
+          emitCompletion ? finishRootLoad(result) : result
         const contactListResult = initialContactListResult
         let inboundFollowerResult = initialInboundFollowerResult
 
@@ -2039,7 +2097,7 @@ export function createRootLoaderModule(
               activeLoadSession = null
             }
           })
-        return finalize(rootPubkey, {
+        return finishRootLoad({
           status: 'partial',
           loadedFrom: 'live',
           discoveredFollowCount: followingLoadedCount,

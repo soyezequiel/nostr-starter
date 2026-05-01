@@ -440,12 +440,42 @@ test('expandNode reports partial when relays fail without cached contact list', 
     }),
   })
 
-  const result = await expansion.expandNode('target')
+  const originalInfo = console.info
+  const originalWarn = console.warn
+  const terminalLines: string[] = []
+  console.info = (...args: unknown[]) => {
+    terminalLines.push(args.join(' '))
+  }
+  console.warn = (...args: unknown[]) => {
+    terminalLines.push(args.join(' '))
+  }
 
-  assert.equal(result.status, 'partial')
-  assert.equal(store.getState().nodeExpansionStates.target.status, 'partial')
-  assert.equal(store.getState().expandedNodePubkeys.has('target'), true)
-  assert.equal(store.getState().selectedNodePubkey, null)
+  try {
+    const result = await expansion.expandNode('target')
+
+    assert.equal(result.status, 'partial')
+    assert.equal(store.getState().nodeExpansionStates.target.status, 'partial')
+    assert.equal(store.getState().expandedNodePubkeys.has('target'), true)
+    assert.equal(store.getState().selectedNodePubkey, null)
+    assert.ok(
+      terminalLines.some(
+        (line) =>
+          /OK\s+Expansion\s+Expansion iniciada/.test(line) &&
+          line.includes('fase=inicio'),
+      ),
+    )
+    assert.ok(
+      terminalLines.some(
+        (line) =>
+          /AVISO\s+Expansion\s+Expansion finalizada con cobertura parcial/.test(
+            line,
+          ) && line.includes('fase=cierre'),
+      ),
+    )
+  } finally {
+    console.info = originalInfo
+    console.warn = originalWarn
+  }
 })
 
 test('expandNode reports partial when live contact list parsing fails', async () => {

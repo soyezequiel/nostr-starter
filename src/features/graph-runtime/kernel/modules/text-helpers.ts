@@ -1,4 +1,5 @@
 ﻿import type { GraphNode, KeywordMatch } from '@/features/graph-runtime/app/store'
+import { logTerminalDetail } from '@/features/graph-runtime/debug/humanTerminalLog'
 import type { NoteExtractRecord } from '@/features/graph-runtime/db/entities'
 import {
   COVERAGE_RECOVERY_MESSAGE,
@@ -100,10 +101,6 @@ export function logKeywordMatchesToConsole(
   matchesByPubkey: Record<string, KeywordMatch[]>,
   nodes: Record<string, GraphNode>,
 ): void {
-  if (typeof console === 'undefined') {
-    return
-  }
-
   const matchedUsers = Object.entries(matchesByPubkey)
     .map(([pubkey, matches]) => ({
       pubkey,
@@ -124,10 +121,13 @@ export function logKeywordMatchesToConsole(
       return left.pubkey.localeCompare(right.pubkey)
     })
 
-  console.info(
-    `[graph] Keyword "${keyword}" matched ${matchedUsers.length} users.`,
-    matchedUsers,
-  )
+  logTerminalDetail('Keywords', 'Busqueda completada', {
+    keyword,
+    usuarios: matchedUsers.length,
+    top: matchedUsers
+      .slice(0, 5)
+      .map((user) => `${user.label}:${user.hitScore}`),
+  })
 }
 
 export function buildZapLayerMessage({

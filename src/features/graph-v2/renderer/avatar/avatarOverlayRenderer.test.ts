@@ -5,8 +5,11 @@ import {
   DEFAULT_AVATAR_RUNTIME_OPTIONS,
 } from '@/features/graph-v2/renderer/avatar/types'
 import {
+  createAvatarOverlayFrameViewport,
   createAvatarUrlMetadataResolver,
+  isAvatarInViewport,
   retainAvatarDrawItemsForFrame,
+  resolveAvatarDrawPriority,
   resolveAvatarCacheCap,
   resolveAvatarCacheRetentionMode,
   resolveAvatarFrameDrawCap,
@@ -20,11 +23,65 @@ import {
   resolveEffectiveShowAllVisibleImages,
   resolveFastNodeVelocityThresholdPx,
   retainInflightAvatarPubkeys,
+  scheduleAvatarOverlayRender,
   selectAvatarDrawContext,
   selectAvatarDrawItemsForFrame,
   shouldDrawAvatarForRendererFocus,
   shouldDisableAvatarImage,
 } from '@/features/graph-v2/renderer/avatar/avatarOverlayRenderer'
+
+test('avatar frame viewport caches container dimensions for hot-path helpers', () => {
+  let widthReads = 0
+  let heightReads = 0
+  const viewport = createAvatarOverlayFrameViewport({
+    get clientWidth() {
+      widthReads += 1
+      return 300
+    },
+    get clientHeight() {
+      heightReads += 1
+      return 200
+    },
+  })
+
+  assert.deepEqual(viewport, {
+    width: 300,
+    height: 200,
+    centerX: 150,
+    centerY: 100,
+  })
+  assert.equal(isAvatarInViewport(0, 0, 8, viewport), true)
+  assert.equal(isAvatarInViewport(-20, 0, 8, viewport), false)
+  assert.equal(
+    resolveAvatarDrawPriority({}, { x: 153, y: 104 }, viewport),
+    10,
+  )
+  assert.equal(
+    resolveAvatarDrawPriority({ isRoot: true }, { x: 0, y: 0 }, viewport),
+    0,
+  )
+  assert.equal(widthReads, 1)
+  assert.equal(heightReads, 1)
+})
+
+test('avatar overlay expansion animation requests render without full refresh', () => {
+  let renderCalls = 0
+  let refreshCalls = 0
+
+  const sigma = {
+    scheduleRender: () => {
+      renderCalls += 1
+    },
+    refresh: () => {
+      refreshCalls += 1
+    },
+  }
+
+  scheduleAvatarOverlayRender(sigma)
+
+  assert.equal(renderCalls, 1)
+  assert.equal(refreshCalls, 0)
+})
 
 test('avatar URL metadata resolver caches and caps parsed URL metadata', () => {
   const resolver = createAvatarUrlMetadataResolver(2)

@@ -38,6 +38,9 @@ import {
   buildExpandedStructureMessage,
 } from '@/features/graph-runtime/kernel/modules/text-helpers'
 import {
+  logTerminalDetail,
+  logTerminalError,
+  logTerminalOk,
   logTerminalWarning,
   summarizeHumanTerminalError,
 } from '@/features/graph-runtime/debug/humanTerminalLog'
@@ -617,6 +620,7 @@ export function createNodeExpansionModule(
 
   async function expandNodeOnce(pubkey: string, options?: { force?: boolean }): Promise<ExpandNodeResult> {
     const state = ctx.store.getState()
+    const operationId = `node:${pubkey.slice(0, 12)}`
 
     const finalizeExpansion = async (
       result: ExpandNodeResult,
@@ -638,6 +642,26 @@ export function createNodeExpansionModule(
         await Promise.allSettled(promises)
       }
       setTerminalState(pubkey, result.status, result.message, startedAt)
+      const fields = {
+        nodo: pubkey.slice(0, 12),
+        estado: result.status,
+        follows: result.discoveredFollowCount,
+        rechazados: result.rejectedPubkeys.length,
+        duracion_ms: ctx.now() - startedAt,
+      }
+      const logOptions = { operationId, phase: 'cierre' as const }
+      if (result.status === 'error') {
+        logTerminalError('Expansion', 'Expansion finalizada con error', fields, logOptions)
+      } else if (result.status === 'partial') {
+        logTerminalWarning(
+          'Expansion',
+          'Expansion finalizada con cobertura parcial',
+          fields,
+          logOptions,
+        )
+      } else {
+        logTerminalOk('Expansion', 'Expansion finalizada', fields, logOptions)
+      }
       return result
     }
 
@@ -713,6 +737,17 @@ export function createNodeExpansionModule(
       1,
       'Preparando expansion del vecindario seleccionado...',
       startedAt,
+    )
+    logTerminalOk(
+      'Expansion',
+      options?.force ? 'Expansion forzada iniciada' : 'Expansion iniciada',
+      {
+        nodo: pubkey.slice(0, 12),
+        relays: relayUrls.length,
+        relays_cache: expandedNodeRelayHints.length,
+        cap_nodos: state.graphCaps.maxNodes,
+      },
+      { operationId, phase: 'inicio' },
     )
 
 
@@ -831,6 +866,7 @@ export function createNodeExpansionModule(
             cachedContactList.follows,
             [],
             {
+              operationId,
               relayUrls,
               relayHints: mergeExpansionRelayHints(
                 expandedNodeRelayHints,
@@ -878,6 +914,7 @@ export function createNodeExpansionModule(
           [],
           inboundFollowerEvidence.followerPubkeys,
           {
+            operationId,
             relayUrls,
             authoredHasPartialSignals: authoredRelayHadPartialSignals,
             inboundHasPartialSignals: inboundFollowerEvidence.partial,
@@ -920,6 +957,7 @@ export function createNodeExpansionModule(
             cachedContactList.follows,
             [],
             {
+              operationId,
               relayUrls,
               relayHints: mergeExpansionRelayHints(
                 expandedNodeRelayHints,
@@ -968,6 +1006,7 @@ export function createNodeExpansionModule(
           [],
           inboundFollowerEvidence.followerPubkeys,
           {
+            operationId,
             relayUrls,
             authoredHasPartialSignals: true,
             inboundHasPartialSignals: inboundFollowerEvidence.partial,
@@ -1026,6 +1065,7 @@ export function createNodeExpansionModule(
           cachedContactListBeforePersist.follows,
           [],
           {
+            operationId,
             relayUrls,
             relayHints: mergeExpansionRelayHints(
               expandedNodeRelayHints,
@@ -1066,6 +1106,7 @@ export function createNodeExpansionModule(
         parsedContactList.followPubkeys,
         [],
         {
+          operationId,
           relayUrls,
           relayHints: mergeExpansionRelayHints(
             expandedNodeRelayHints,
@@ -1094,10 +1135,15 @@ export function createNodeExpansionModule(
         ),
       ])
     } catch (error) {
-      logTerminalWarning('Expansion', 'La expansion quedo parcial', {
-        nodo: pubkey.slice(0, 12),
-        motivo: summarizeHumanTerminalError(error),
-      })
+      logTerminalWarning(
+        'Expansion',
+        'La expansion quedo parcial',
+        {
+          nodo: pubkey.slice(0, 12),
+          motivo: summarizeHumanTerminalError(error),
+        },
+        { operationId, phase: 'cierre' },
+      )
       const message = buildRecoverableExpansionMessage(pubkey, error)
       setTerminalState(pubkey, 'partial', message, startedAt)
       return {
@@ -1124,6 +1170,7 @@ export function createNodeExpansionModule(
       authoredLoadedFromCache?: boolean
       previewMessage?: string
       deferTerminalState?: boolean
+      operationId?: string
     },
   ): ExpandNodeResult {
     const state = ctx.store.getState()
@@ -1239,6 +1286,20 @@ export function createNodeExpansionModule(
     const acceptedNodesCount =
       outboundNodeResult.acceptedPubkeys.length +
       inboundNodeResult.acceptedPubkeys.length
+    logTerminalDetail(
+      'Expansion',
+      'Estructura integrada',
+      {
+        nodo: pubkey.slice(0, 12),
+        follows: followPubkeys.length,
+        followers: discoveredFollowerCount,
+        nodos_aceptados: acceptedNodesCount,
+        rechazados: rejectedPubkeys.length,
+        parcial: hasPartialSignals,
+        cap_nodos: state.graphCaps.maxNodes,
+      },
+      { operationId: options.operationId, phase: 'progreso' },
+    )
     const expansionMessage = buildExpandedStructureMessage({
       pubkey,
       discoveredFollowCount: followPubkeys.length,

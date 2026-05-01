@@ -259,13 +259,42 @@ test('loadRoot incluye relay hints del contact list cacheado en el set de discov
     },
   })
 
-  await rootLoader.loadRoot('root', { useDefaultRelays: true })
-  await flushMicrotasks()
+  const originalInfo = console.info
+  const originalWarn = console.warn
+  const terminalLines: string[] = []
+  console.info = (...args: unknown[]) => {
+    terminalLines.push(args.join(' '))
+  }
+  console.warn = (...args: unknown[]) => {
+    terminalLines.push(args.join(' '))
+  }
+
+  try {
+    await rootLoader.loadRoot('root', { useDefaultRelays: true })
+    await flushMicrotasks()
+  } finally {
+    console.info = originalInfo
+    console.warn = originalWarn
+  }
 
   const relayUrls = (store.getState() as { relayUrls: string[] }).relayUrls
   assert.ok(
     relayUrls.includes(cachedRelayHint),
     `expected cached relay hint ${cachedRelayHint} in session relays, got ${JSON.stringify(relayUrls)}`,
+  )
+  assert.ok(
+    terminalLines.some(
+      (line) =>
+        /OK\s+Carga raiz\s+Carga iniciada/.test(line) &&
+        line.includes('fase=inicio'),
+    ),
+  )
+  assert.ok(
+    terminalLines.some(
+      (line) =>
+        /(?:OK|AVISO)\s+Carga raiz\s+Carga finalizada/.test(line) &&
+        line.includes('fase=cierre'),
+    ),
   )
 
   const inboundCalls = captured.calls.filter((call) => {

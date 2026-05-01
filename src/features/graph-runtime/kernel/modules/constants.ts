@@ -1,3 +1,5 @@
+import { logTerminalDetail } from '@/features/graph-runtime/debug/humanTerminalLog'
+
 // devicePerformance imports removidos: tuning universal no necesita deteccion.
 
 export const DEFAULT_SESSION_RELAY_URLS = [
@@ -132,18 +134,14 @@ export function getKernelNetworkTuning(): KernelNetworkTuning {
   const isMobile = detectIsMobileForTuning()
   cachedKernelTuning = isMobile ? MOBILE_KERNEL_TUNING : DESKTOP_KERNEL_TUNING
   // Log unico para diagnostico — permite verificar en DevTools del celular.
-  if (typeof console !== 'undefined') {
-    console.info(
-      `[kernel-tuning] Perfil de red: ${isMobile ? 'MOBILE' : 'DESKTOP'}`,
-      {
-        connectMs: cachedKernelTuning.nodeExpandConnectTimeoutMs,
-        pageMs: cachedKernelTuning.nodeExpandPageTimeoutMs,
-        hardMs: cachedKernelTuning.nodeExpandHardTimeoutMs,
-        retries: cachedKernelTuning.nodeExpandRetryCount,
-        viewport: typeof window !== 'undefined' ? window.innerWidth : 'N/A',
-      },
-    )
-  }
+  logTerminalDetail('Red', 'Perfil de red seleccionado', {
+    perfil: isMobile ? 'mobile' : 'desktop',
+    connect_ms: cachedKernelTuning.nodeExpandConnectTimeoutMs,
+    page_ms: cachedKernelTuning.nodeExpandPageTimeoutMs,
+    hard_ms: cachedKernelTuning.nodeExpandHardTimeoutMs,
+    reintentos: cachedKernelTuning.nodeExpandRetryCount,
+    viewport: typeof window !== 'undefined' ? window.innerWidth : 'sin_dom',
+  })
   return cachedKernelTuning
 }
 
