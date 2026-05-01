@@ -3520,6 +3520,27 @@
     transform: translateX(100%);
   }
 }
+
+@keyframes sg-activity-v3-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+@keyframes sg-activity-v3-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes sg-activity-v3-slide-in {
+  0%   { transform: translateY(-6px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+[data-graph-v2] [data-component="sigma-activity-panel-v3"] {
+  --border-hair: color-mix(in oklab, var(--sg-stroke) 60%, transparent);
+}
+[data-graph-v2] [data-component="sigma-activity-panel-v3"] *::-webkit-scrollbar { width: 8px; height: 8px; }
+[data-graph-v2] [data-component="sigma-activity-panel-v3"] *::-webkit-scrollbar-thumb {
+  background: var(--sg-stroke); border-radius: 8px;
+}
+[data-graph-v2] [data-component="sigma-activity-panel-v3"] *::-webkit-scrollbar-track { background: transparent; }
 [data-graph-v2] .sg-loading-overlay__label {
   margin: 0;
   font-family: var(--sg-font-ui);

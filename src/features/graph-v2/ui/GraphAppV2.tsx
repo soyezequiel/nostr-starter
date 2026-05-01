@@ -32,7 +32,6 @@ import type {
   SavedRootProfileSnapshot,
 } from '@/features/graph-runtime/app/store/types'
 import {
-  GRAPH_EVENT_KIND_COLORS,
   GRAPH_EVENT_KIND_DESCRIPTIONS,
   GRAPH_EVENT_KIND_LABELS,
   GRAPH_EVENT_KINDS,
@@ -239,6 +238,17 @@ import {
   requestBrowserSiteDataClear,
 } from '@/lib/dev/clearSiteCache'
 import { fetchProfileByPubkey, type NostrProfile } from '@/lib/nostr'
+import SigmaActivityPanelV3, {
+  type SigmaActivityPanelV3Entry,
+  type SigmaActivityPanelReplayMetric,
+} from '@/features/graph-v2/ui/SigmaActivityPanelV3'
+
+const RECENT_ZAP_REPLAY_WINDOW_PRESETS = [
+  { hours: 6, label: '6 h' },
+  { hours: 24, label: '24 h' },
+  { hours: 72, label: '3 d' },
+  { hours: 168, label: '7 d' },
+]
 
 type SigmaSettingsTab = 'performance' | 'visuals' | 'zaps' | 'relays' | 'dev'
 type NotificationSource = 'action' | 'zap'
@@ -629,29 +639,6 @@ const selectRuntimeInspectorStoreState = (state: AppStore) => ({
 
 const formatInteger = (value: number) => INTEGER_FORMATTER.format(value)
 
-const getGraphEventCardValue = (entry: GraphEventActivityLogEntry): string => {
-  switch (entry.payload.kind) {
-    case 'like':
-      return entry.payload.data.reaction || '+'
-    case 'repost':
-      return entry.payload.data.repostedKind
-        ? `kind ${entry.payload.data.repostedKind}`
-        : 'repost'
-    case 'save':
-      return entry.payload.data.listIdentifier
-        ? `lista ${entry.payload.data.listIdentifier}`
-        : 'bookmark'
-    case 'quote':
-      return 'quote'
-    case 'comment':
-      return 'comment'
-    case 'zap':
-      return entry.payload.data.amountSats
-        ? `${formatInteger(entry.payload.data.amountSats)} sats`
-        : 'zap'
-  }
-}
-
 const resolveZapActorProfileLabel = (profile: NostrProfile) =>
   profile.displayName?.trim() ||
   profile.name?.trim() ||
@@ -700,7 +687,6 @@ const clampProgress = (value: number) => {
 }
 
 const formatProgressValue = (value: number) => Math.round(clampProgress(value) * 100)
-const formatProgressPercent = (value: number) => `${formatProgressValue(value)}%`
 
 const clampPercentValue = (value: number) => {
   if (!Number.isFinite(value)) return 0
@@ -3925,10 +3911,6 @@ export default function GraphAppV2() {
   const recentZapReplayPlaybackProgressValue = formatProgressValue(
     recentZapReplayPlaybackProgress,
   )
-  const recentZapReplayStatusDetail =
-    locale === 'en'
-      ? tSigma('zaps.panel.configuredWindow', { window: appliedZapReplayWindowLabel })
-      : recentZapReplay.message ?? `Ventana activa: ${appliedZapReplayWindowLabel}.`
   const displayedZapReplayProgress =
     recentZapReplayScrubProgress ?? recentZapReplay.timelineProgress
   const displayedZapReplayCreatedAt =
@@ -3967,10 +3949,6 @@ export default function GraphAppV2() {
     shouldEnableRecentGraphEventReplay,
     shouldEnableRecentZapReplay,
   ])
-
-  const recentZapReplayTimelineClassName = `sg-activity-replay-timeline__rail${
-    recentZapReplayScrubProgress !== null ? ' sg-activity-replay-timeline__rail--scrubbing' : ''
-  }`
 
   const resolveZapReplayPointerProgress = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
@@ -5623,9 +5601,6 @@ export default function GraphAppV2() {
     : zapFeedMode === 'recent'
       ? selectedZapReplayWindowLabel
       : tSigma('zaps.panel.statusPaused')
-  const recentZapReplayCollectionClassName = `sg-activity-replay-collection sg-activity-replay-collection--${recentZapReplayCollection.status}${
-    recentZapReplayCollection.isIndeterminate ? ' sg-activity-replay-collection--waiting' : ''
-  }`
   const canControlRecentZapReplay =
     zapFeedMode === 'recent' &&
     (shouldEnableRecentZapReplay || shouldEnableRecentGraphEventReplay)
@@ -5637,363 +5612,181 @@ export default function GraphAppV2() {
       recentGraphEventReplay.phase === 'loading' ||
       recentGraphEventReplay.phase === 'playing' ||
       recentGraphEventReplay.playableCount > 0)
-  const recentZapReplayPlayButtonLabel = recentZapReplayPlaybackIsPaused
-    ? tSigma('zaps.panel.resumeReplay')
-    : tSigma('zaps.panel.pauseReplay')
+  const renderActivitiesContent = () => {
+    const v3Entries: SigmaActivityPanelV3Entry[] = activityPanelEntries.map((entry) => {
+      const isZap = entry.type === 'zap'
+      const kind: GraphEventKind = isZap ? 'zap' : entry.graphEvent!.kind
+      let sats = 0
+      let text = ''
+      if (isZap) {
+        sats = entry.zap.sats
+        text = entry.zap.comment?.trim() || ''
+      } else {
+        const ge = entry.graphEvent!
+        switch (ge.payload.kind) {
+          case 'zap':
+            sats = ge.payload.data.amountSats ?? 0
+            break
+          case 'quote':
+            text = ge.payload.data.quoterContent || ''
+            break
+          case 'comment':
+            text = ge.payload.data.commentContent || ''
+            break
+          case 'repost':
+            text = ge.payload.data.embeddedContent || ''
+            break
+          default:
+            text = ''
+        }
+      }
+      return {
+        id: entry.id,
+        kind,
+        source: entry.source,
+        fromPubkey: entry.fromPubkey,
+        toPubkey: entry.toPubkey,
+        fromLabel: getZapActorLabel(entry.fromPubkey),
+        toLabel: getZapActorLabel(entry.toPubkey),
+        played: entry.played,
+        receivedAt: entry.receivedAt,
+        sats,
+        text,
+      }
+    })
 
-  const renderActivitiesContent = () => (
-    <div className="sg-activity-feed">
-      <div className="sg-activity-feed__head">
-        <div className="sg-activity-feed__summary">
-          <span className="sg-section-label">Actividad visible</span>
-          <strong>
-            {activityPanelEntries.length} actividad{activityPanelEntries.length === 1 ? '' : 'es'}
-          </strong>
-        </div>
-        <div className="sg-activity-feed__actions">
-          <span
-            className={`sg-activity-feed__status${shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed ? ' sg-activity-feed__status--live' : ''}${recentActivityReplayWorking ? ' sg-activity-feed__status--working' : ''}`}
-          >
-            {zapFeedStatus}
-          </span>
-        </div>
-      </div>
+    const advancedMetrics: SigmaActivityPanelReplayMetric[] = [
+      { label: tSigma('zaps.panel.targets'), value: formatInteger(recentZapReplay.targetCount) },
+      {
+        label: tSigma('zaps.panel.batches'),
+        value: `${formatInteger(recentZapReplay.completedBatchCount)}/${formatInteger(recentZapReplay.batchCount)}`,
+      },
+      { label: tSigma('zaps.panel.cache'), value: formatInteger(recentZapReplay.cachedCount) },
+      { label: tSigma('zaps.panel.new'), value: formatInteger(recentZapReplay.fetchedCount) },
+      {
+        label: tSigma('zaps.panel.timeouts'),
+        value: formatInteger(recentZapReplay.timedOutBatchCount),
+        tone: recentZapReplay.timedOutBatchCount > 0 ? 'warn' : undefined,
+      },
+      {
+        label: tSigma('zaps.panel.limit'),
+        value:
+          recentZapReplay.truncatedTargetCount > 0
+            ? tSigma('zaps.panel.omitted', {
+                count: formatInteger(recentZapReplay.truncatedTargetCount),
+              })
+            : tSigma('zaps.panel.ok'),
+        tone: recentZapReplay.truncatedTargetCount > 0 ? 'warn' : 'good',
+      },
+    ]
 
-      <div className="sg-activity-console">
-        <div className="sg-activity-console__mode" role="group" aria-label={tSigma('zaps.panel.modeAria')}>
-          <button
-            aria-pressed={zapFeedMode === 'live'}
-            className={`sg-activity-console__mode-btn${zapFeedMode === 'live' ? ' sg-activity-console__mode-btn--active' : ''}`}
-            onClick={() => {
-              setZapFeedMode('live')
-              setRecentZapReplayPlaybackPaused(false)
-            }}
-            type="button"
-          >
-            Live
-          </button>
-          <button
-            aria-pressed={zapFeedMode === 'recent'}
-            className={`sg-activity-console__mode-btn${zapFeedMode === 'recent' ? ' sg-activity-console__mode-btn--active' : ''}`}
-            onClick={() => {
-              setZapFeedMode('recent')
-              setRecentZapReplayPlaybackPaused(false)
-            }}
-            type="button"
-          >
-            Replay
-          </button>
-        </div>
-      </div>
+    const findOriginal = (id: string) => activityPanelEntries.find((e) => e.id === id) ?? null
 
-      {zapFeedMode === 'recent' ? (
-        <div
-          aria-live={recentActivityReplayWorking ? 'polite' : 'off'}
-          className={`sg-activity-replay-console${recentActivityReplayWorking ? ' sg-activity-replay-console--working' : ''}`}
-        >
-          <div className="sg-activity-replay-console__head">
-            <span className="sg-activity-replay-console__dot" aria-hidden="true" />
-            <div>
-              <strong>{recentZapReplayStatusLabel}</strong>
-              <span>
-                {recentActivityReplayWorking
-                  ? tSigma('zaps.panel.keepWorking')
-                  : tSigma('zaps.panel.configuredWindow', { window: appliedZapReplayWindowText })}
-              </span>
-            </div>
-            <span className="sg-activity-replay-console__percent">
-              {recentZapReplayPlaybackProgressValue}%
-            </span>
-          </div>
-
-          <div className="sg-activity-replay-window">
-            <div className="sg-slider-row__head">
-              <span className="sg-slider-row__lbl">{tSigma('zaps.panel.historicalWindow')}</span>
-              <span className="sg-slider-row__val">{selectedZapReplayWindowLabel}</span>
-            </div>
-            <input
-              aria-label={tSigma('zaps.panel.recentHoursAria')}
-              className="sg-slider"
-              max={RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS}
-              min={RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS}
-              onChange={(event) => {
-                setRecentZapReplayLookbackHours(
-                  clampRecentZapReplayLookbackHours(
-                    Number.parseInt(event.target.value, 10),
-                  ),
-                )
-              }}
-              step={1}
-              type="range"
-              value={recentZapReplayLookbackHours}
-            />
-          </div>
-
-          <div className={recentZapReplayCollectionClassName}>
-            <div className="sg-activity-replay-section-head">
-              <span>{tSigma('zaps.panel.collection')}</span>
-              <span>{recentZapReplayCollectionProgressValue}%</span>
-            </div>
-            <div
-              aria-label={tSigma('zaps.panel.collectionProgressAria')}
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={recentZapReplayCollectionProgressValue}
-              className="sg-activity-replay-collection__bar"
-              role="progressbar"
-            >
-              <span style={{ width: `${recentZapReplayCollectionProgressValue}%` }} />
-            </div>
-            <details className="sg-activity-replay-details">
-              <summary>{tSigma('zaps.panel.advancedDetails')}</summary>
-              <dl className="sg-activity-replay-metrics">
-                <div>
-                  <dt>{tSigma('zaps.panel.targets')}</dt>
-                  <dd>{formatInteger(recentZapReplay.targetCount)}</dd>
-                </div>
-                <div>
-                  <dt>{tSigma('zaps.panel.batches')}</dt>
-                  <dd>
-                    {formatInteger(recentZapReplay.completedBatchCount)}/{formatInteger(recentZapReplay.batchCount)}
-                  </dd>
-                </div>
-                <div>
-                  <dt>{tSigma('zaps.panel.cache')}</dt>
-                  <dd>{formatInteger(recentZapReplay.cachedCount)}</dd>
-                </div>
-                <div>
-                  <dt>{tSigma('zaps.panel.new')}</dt>
-                  <dd>{formatInteger(recentZapReplay.fetchedCount)}</dd>
-                </div>
-                <div>
-                  <dt>{tSigma('zaps.panel.timeouts')}</dt>
-                  <dd>{formatInteger(recentZapReplay.timedOutBatchCount)}</dd>
-                </div>
-                <div>
-                  <dt>{tSigma('zaps.panel.limit')}</dt>
-                  <dd>
-                    {recentZapReplay.truncatedTargetCount > 0
-                      ? tSigma('zaps.panel.omitted', { count: formatInteger(recentZapReplay.truncatedTargetCount) })
-                      : tSigma('zaps.panel.ok')}
-                  </dd>
-                </div>
-              </dl>
-            </details>
-            {enabledNonZapGraphEventKinds.length > 0 ? (
-              <p className="sg-activity-replay-console__detail">
-                Actividad extra: {formatInteger(recentGraphEventReplay.playableCount)} reproducibles,
-                {' '}
-                {formatInteger(recentGraphEventReplay.playedCount)} visibles,
-                {' '}
-                {formatInteger(recentGraphEventReplay.droppedCount)} fuera de vista.
-              </p>
-            ) : null}
-          </div>
-
-          <div className="sg-activity-replay-playback">
-            <div className="sg-activity-replay-section-head">
-              <span>{tSigma('zaps.panel.playback')}</span>
-              <span>
-                {tSigma('zaps.panel.playbackSummary', {
-                  visible: formatInteger(
-                    recentZapReplay.playedCount + recentGraphEventReplay.playedCount,
-                  ),
-                  dropped: formatInteger(
-                    recentZapReplay.droppedCount + recentGraphEventReplay.droppedCount,
-                  ),
-                })}
-              </span>
-            </div>
-            <div className="sg-activity-replay-controls">
-              <button
-                aria-label={recentZapReplayPlayButtonLabel}
-                className="sg-activity-replay-transport"
-                disabled={!canToggleRecentZapReplayPlayback}
-                onClick={() => {
-                  setRecentZapReplayPlaybackPaused((current) => !current)
-                }}
-                title={recentZapReplayPlayButtonLabel}
-                type="button"
-              >
-                {recentZapReplayPlaybackIsPaused ? <PlayIcon /> : <PauseIcon />}
-                <span>{recentZapReplayPlaybackIsPaused ? tSigma('zaps.panel.play') : tSigma('zaps.panel.pause')}</span>
-              </button>
-              <button
-                className="sg-mini-action"
-                disabled={!canControlRecentZapReplay || recentZapReplay.phase === 'loading'}
-                onClick={() => {
-                  setRecentZapReplayPlaybackPaused(false)
-                  setRecentZapReplayRequest((current) => current + 1)
-                }}
-                type="button"
-              >
-                {tSigma('zaps.panel.replayCache')}
-              </button>
-              <button
-                className="sg-mini-action"
-                disabled={!canControlRecentZapReplay || recentZapReplay.phase === 'loading'}
-                onClick={() => {
-                  setRecentZapReplayPlaybackPaused(false)
-                  setRecentZapReplayRefreshRequest((current) => current + 1)
-                }}
-                type="button"
-              >
-                {tSigma('zaps.panel.refresh')}
-              </button>
-            </div>
-
-            <div className="sg-activity-replay-timeline">
-              <div className="sg-activity-replay-timeline__head">
-                <span>{tSigma('zaps.panel.timeline')}</span>
-                <span>{displayedZapReplayProgressValue}% - {recentZapReplayCurrentTimeLabel}</span>
-              </div>
-              <div
-                aria-disabled={!canSeekRecentZapReplay}
-                aria-label={tSigma('zaps.panel.moveReplay', { window: appliedZapReplayWindowText })}
-                aria-valuemax={100}
-                aria-valuemin={0}
-                aria-valuenow={displayedZapReplayProgressValue}
-                className={recentZapReplayTimelineClassName}
-                onKeyDown={handleZapReplayTimelineKeyDown}
-                onLostPointerCapture={handleZapReplayTimelinePointerCancel}
-                onPointerCancel={handleZapReplayTimelinePointerCancel}
-                onPointerDown={handleZapReplayTimelinePointerDown}
-                onPointerMove={handleZapReplayTimelinePointerMove}
-                onPointerUp={handleZapReplayTimelinePointerUp}
-                role="slider"
-                tabIndex={canSeekRecentZapReplay ? 0 : -1}
-              >
-                <span className="sg-activity-replay-timeline__tick sg-activity-replay-timeline__tick--start" />
-                <span className="sg-activity-replay-timeline__tick sg-activity-replay-timeline__tick--end" />
-                <span
-                  className="sg-activity-replay-timeline__fill"
-                  style={{
-                    width: formatProgressPercent(displayedZapReplayProgress),
-                  }}
-                />
-                <span
-                  className="sg-activity-replay-timeline__marker"
-                  style={{
-                    left: formatProgressPercent(displayedZapReplayProgress),
-                  }}
-                />
-              </div>
-              <div className="sg-activity-replay-timeline__labels">
-                <span>
-                  <strong>{tSigma('zaps.panel.start')}</strong>
-                  <time>{recentZapReplayWindowStartLabel}</time>
-                </span>
-                <span>
-                  <strong>{tSigma('zaps.panel.current')}</strong>
-                  <time>{recentZapReplayCurrentTimeLabel}</time>
-                </span>
-                <span>
-                  <strong>{tSigma('zaps.panel.end')}</strong>
-                  <time>{recentZapReplayWindowEndLabel}</time>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <p className="sg-activity-replay-console__detail">{recentZapReplayStatusDetail}</p>
-          {recentGraphEventReplay.message ? (
-            <p className="sg-activity-replay-console__detail">
-              Actividad: {recentGraphEventReplay.message}
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        liveZapFeedFeedback ? (
-          <p className="sg-activity-feed__feedback">{liveZapFeedFeedback}</p>
-        ) : null
-      )}
-
-      {activityPanelEntries.length > 0 ? (
-        <div className="sg-activity-feed__list">
-          {activityPanelEntries.map((entry) => {
-            const isZapEntry = entry.type === 'zap'
-            const graphEvent = entry.graphEvent
-            const kind = isZapEntry ? 'zap' : graphEvent!.kind
-            const title = isZapEntry
-              ? `${formatInteger(entry.zap.sats)} sats`
-              : getGraphEventCardValue(graphEvent!)
-            const kindLabel = isZapEntry
-              ? 'Zap'
-              : GRAPH_EVENT_KIND_SINGULAR_LABELS[kind]
-            const color = GRAPH_EVENT_KIND_COLORS[kind]
-            const replay = () => {
-              if (isZapEntry) {
-                handleReplayZapActivity(entry.zap)
-              } else {
-                handleReplayGraphEventActivity(graphEvent!)
-              }
-            }
-            const openDetails = () => {
-              if (isZapEntry) {
-                handleOpenZapDetail(entry.zap.id)
-              } else {
-                handleOpenGraphEventDetail(graphEvent!.id)
-              }
-            }
-
-            return (
-              <article
-                aria-label={`${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
-                className={`sg-activity-feed__item${entry.played ? '' : ' sg-activity-feed__item--dropped'}`}
-                key={entry.id}
-                onClick={replay}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return
-                  event.preventDefault()
-                  replay()
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="sg-activity-feed__meta">
-                  <span>{ZAP_ACTIVITY_SOURCE_LABELS[entry.source]}</span>
-                  <time dateTime={new Date(entry.receivedAt).toISOString()}>
-                    {NOTIFICATION_TIME_FORMATTER.format(entry.receivedAt)}
-                  </time>
-                </div>
-                <div className="sg-activity-feed__amount" style={{ color }}>
-                  <span>{kindLabel}</span>
-                  <span aria-hidden="true">{' - '}</span>
-                  <span>{title}</span>
-                </div>
-                <p>
-                  <span>{getZapActorLabel(entry.fromPubkey)}</span>
-                  <span aria-hidden="true">{'->'}</span>
-                  <span>{getZapActorLabel(entry.toPubkey)}</span>
-                </p>
-                <div className="sg-activity-feed__item-actions">
-                  <span className="sg-activity-feed__result">
-                    {entry.played ? tSigma('zaps.panel.shownInGraph') : tSigma('zaps.panel.outsideView')}
-                  </span>
-                  <button
-                    aria-label={`Ver detalles de ${kindLabel} de ${getZapActorLabel(entry.fromPubkey)} a ${getZapActorLabel(entry.toPubkey)}`}
-                    className="sg-activity-feed__details-btn"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      openDetails()
-                    }}
-                    onKeyDown={(event) => event.stopPropagation()}
-                    type="button"
-                  >
-                    Detalles
-                  </button>
-                </div>
-              </article>
-            )
-          })}
-        </div>
-      ) : (
-        <p className="sg-activity-feed__empty">
-          {tSigma('zaps.panel.empty')}
-        </p>
-      )}
-    </div>
-  )
+    return (
+      <SigmaActivityPanelV3
+        entries={v3Entries}
+        totalEntryCount={v3Entries.length}
+        emptyLabel={tSigma('zaps.panel.empty')}
+        toggles={eventToggles}
+        onSetToggle={(kind, value) => setEventToggle(kind, value)}
+        onIsolateKind={(kind) => {
+          GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, k === kind))
+        }}
+        onResetKinds={() => {
+          GRAPH_EVENT_KINDS.forEach((k) => setEventToggle(k, true))
+        }}
+        mode={zapFeedMode}
+        onChangeMode={(next) => {
+          setZapFeedMode(next)
+          setRecentZapReplayPlaybackPaused(false)
+        }}
+        isLiveActive={shouldEnableLiveZapFeed || shouldEnableLiveGraphEventFeed}
+        isWorking={recentActivityReplayWorking}
+        liveStatusLabel={zapFeedStatus}
+        liveFeedback={liveZapFeedFeedback}
+        replayCollectionPct={recentZapReplayCollectionProgressValue}
+        replayPlaybackPct={recentZapReplayPlaybackProgressValue}
+        replayPlaybackPaused={recentZapReplayPlaybackIsPaused}
+        onTogglePlay={() => setRecentZapReplayPlaybackPaused((cur) => !cur)}
+        onReplayCache={() => {
+          setRecentZapReplayPlaybackPaused(false)
+          setRecentZapReplayRequest((cur) => cur + 1)
+        }}
+        onRefresh={() => {
+          setRecentZapReplayPlaybackPaused(false)
+          setRecentZapReplayRefreshRequest((cur) => cur + 1)
+        }}
+        canControlReplay={canControlRecentZapReplay && recentZapReplay.phase !== 'loading'}
+        canTogglePlayback={canToggleRecentZapReplayPlayback}
+        lookbackHours={recentZapReplayLookbackHours}
+        onChangeLookbackHours={(h) =>
+          setRecentZapReplayLookbackHours(clampRecentZapReplayLookbackHours(h))
+        }
+        lookbackMinHours={RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS}
+        lookbackMaxHours={RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS}
+        appliedLookbackLabel={appliedZapReplayWindowLabel}
+        windowPresets={RECENT_ZAP_REPLAY_WINDOW_PRESETS}
+        timelineProgressPct={displayedZapReplayProgressValue}
+        timelineCurrentLabel={recentZapReplayCurrentTimeLabel}
+        timelineStartLabel={recentZapReplayWindowStartLabel}
+        timelineEndLabel={recentZapReplayWindowEndLabel}
+        canSeekTimeline={canSeekRecentZapReplay}
+        timelineHandlers={{
+          onPointerDown: handleZapReplayTimelinePointerDown,
+          onPointerMove: handleZapReplayTimelinePointerMove,
+          onPointerUp: handleZapReplayTimelinePointerUp,
+          onPointerCancel: handleZapReplayTimelinePointerCancel,
+          onLostPointerCapture: handleZapReplayTimelinePointerCancel,
+          onKeyDown: handleZapReplayTimelineKeyDown,
+        }}
+        isScrubbing={recentZapReplayScrubProgress !== null}
+        advancedMetrics={advancedMetrics}
+        onReplayEntry={(entry) => {
+          const original = findOriginal(entry.id)
+          if (!original) return
+          if (original.type === 'zap') {
+            handleReplayZapActivity(original.zap)
+          } else {
+            handleReplayGraphEventActivity(original.graphEvent)
+          }
+        }}
+        onOpenEntryDetail={(entry) => {
+          const original = findOriginal(entry.id)
+          if (!original) return
+          if (original.type === 'zap') {
+            handleOpenZapDetail(original.zap.id)
+          } else {
+            handleOpenGraphEventDetail(original.graphEvent.id)
+          }
+        }}
+        labels={{
+          eyebrow: 'Actividad',
+          searchPlaceholder: '@actor, palabra clave…',
+          searchTitle: 'Buscar',
+          sortByTime: 'Tiempo',
+          sortByValue: 'Valor',
+          sortAriaLabel: 'Ordenar',
+          historicalWindow: tSigma('zaps.panel.historicalWindow'),
+          collection: tSigma('zaps.panel.collection'),
+          collectionComplete: 'completa ✓',
+          playback: tSigma('zaps.panel.playback'),
+          playLabel: tSigma('zaps.panel.play'),
+          pauseLabel: tSigma('zaps.panel.pause'),
+          cacheLabel: tSigma('zaps.panel.replayCache'),
+          refreshLabel: tSigma('zaps.panel.refresh'),
+          advancedToggle: tSigma('zaps.panel.advancedDetails'),
+          emptyFiltered: 'Sin actividad para estos filtros',
+          clearFilters: 'Limpiar filtros',
+          outsideView: tSigma('zaps.panel.outsideView'),
+          detailsLabel: 'Detalles',
+          moveReplay: tSigma('zaps.panel.moveReplay', { window: appliedZapReplayWindowText }),
+          isolateHint: 'shift-click para aislar',
+          liveLabel: 'Live',
+          replayLabel: 'Replay',
+        }}
+      />
+    )
+  }
 
   const renderNotificationsContent = () => (
     <div className="sg-notifications">

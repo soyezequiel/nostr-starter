@@ -18,7 +18,7 @@ import { traceZapFlow } from '@/features/graph-runtime/debug/zapTrace'
 const SECONDS_PER_HOUR = 60 * 60
 
 export const RECENT_ZAP_REPLAY_MIN_LOOKBACK_HOURS = 1
-export const RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS = 24
+export const RECENT_ZAP_REPLAY_MAX_LOOKBACK_HOURS = 168
 export const RECENT_ZAP_REPLAY_DEFAULT_LOOKBACK_HOURS = 24
 
 const RECENT_ZAP_REPLAY_TARGET_LIMIT = 1024
