@@ -3,6 +3,8 @@
   "eyebrow": "La Crypta IDENTITY",
   "heroDescription": "Explore how people connect. Load a Nostr ID, inspect its relationships, watch live zaps, open profiles, and understand the surrounding network.",
   "exploreCta": "Explore connections",
+  "betaCta": "Open beta",
+  "betaCtaAriaLabel": "Open the Nostr Explorer beta",
   "interactiveGraph": "Interactive graph",
   "signalMarks": {
     "relationships": {

@@ -3,6 +3,8 @@
   "eyebrow": "La Crypta IDENTITY",
   "heroDescription": "Explorá las conexiones de las personas. Cargá un ID de Nostr, explorá sus relaciones, mirá los zaps en vivo, entrá a los perfiles y entendé su red.",
   "exploreCta": "Explorar conexiones",
+  "betaCta": "Acceder a la beta",
+  "betaCtaAriaLabel": "Acceder a la beta de Nostr Explorer",
   "interactiveGraph": "Grafo interactivo",
   "signalMarks": {
     "relationships": {

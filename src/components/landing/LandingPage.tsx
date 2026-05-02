@@ -18,6 +18,8 @@ const ecosystem = [
 ]
 
 const DEVELOPER_ZAP_LIGHTNING_ADDRESS = 'naranja@walletofsatoshi.com'
+const NOSTR_EXPLORER_BETA_URL =
+  'https://nostr-en-el-espacio-git-main-beta-ezequiels-projects-411f98ff.vercel.app/es/labs/sigma'
 
 export default function LandingPage() {
   const t = useTranslations('landing')
@@ -152,6 +154,15 @@ export default function LandingPage() {
                   href={localizePathname('/labs/sigma', locale)}
                 >
                   {t('exploreCta')}
+                </Link>
+                <Link
+                  aria-label={t('betaCtaAriaLabel')}
+                  className="inline-flex min-h-12 items-center justify-center rounded-full border border-[#ff4b5d]/45 bg-[#ffffff08] px-6 text-base font-bold text-[#f6f1e8] transition hover:border-[#ff7b88] hover:bg-[#ff4b5d]/14 hover:text-[#ff9aa4] focus:outline-none focus:ring-2 focus:ring-[#ff9aa4] focus:ring-offset-2 focus:ring-offset-[#060606]"
+                  href={NOSTR_EXPLORER_BETA_URL}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {t('betaCta')}
                 </Link>
                 <DeveloperZapButton
                   lightningAddress={DEVELOPER_ZAP_LIGHTNING_ADDRESS}
